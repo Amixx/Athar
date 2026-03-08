@@ -28,18 +28,26 @@ def diff(old: dict, new: dict) -> dict:
     old_ids = set(old_entities.keys())
     new_ids = set(new_entities.keys())
 
+    # Find openings that are filled by a door/window — these are implementation
+    # details, not user-facing changes.  Standalone voids (no fill) are kept.
+    filled_openings = _filled_opening_guids(old, new)
+
     added = [
         _summary(guid, new_entities[guid])
         for guid in sorted(new_ids - old_ids)
+        if guid not in filled_openings
     ]
 
     deleted = [
         _summary(guid, old_entities[guid])
         for guid in sorted(old_ids - new_ids)
+        if guid not in filled_openings
     ]
 
     changed = []
     for guid in sorted(old_ids & new_ids):
+        if guid in filled_openings:
+            continue
         changes = _diff_entity(old_entities[guid], new_entities[guid],
                                all_entities=new_entities)
         if changes:
@@ -67,6 +75,20 @@ def diff(old: dict, new: dict) -> dict:
             "unchanged": len(old_ids & new_ids) - len(changed),
         },
     }
+
+
+def _filled_opening_guids(old: dict, new: dict) -> set[str]:
+    """Collect IfcOpeningElement GUIDs that are filled by a door/window.
+
+    An opening with a fill relationship in either model version is an
+    intermediary (wall→opening→door/window) — not interesting on its own.
+    Standalone voids with no fill in either version are kept.
+    """
+    filled = set()
+    for model in (old, new):
+        for fill in model.get("relationships", {}).get("fills", []):
+            filled.add(fill["opening_guid"])
+    return filled
 
 
 def _detect_bulk_movements(changed: list[dict],
