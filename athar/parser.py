@@ -14,7 +14,13 @@ def parse(filepath: str) -> dict:
         {
             "metadata": { schema, timestamp, author, organization,
                           application, originating_system },
-            "entities": { guid: entity_dict, ... }
+            "entities": { guid: entity_dict, ... },
+            "relationships": {
+                "voids": [ {element_guid, opening_guid}, ... ],
+                "fills": [ {opening_guid, element_guid}, ... ],
+                "aggregates": [ {parent_guid, child_guids}, ... ],
+                "spatial_children": { container_guid: [child_guids] },
+            },
         }
     """
     ifc = ifcopenshell.open(filepath)
@@ -30,6 +36,72 @@ def parse(filepath: str) -> dict:
     return {
         "metadata": _extract_metadata(ifc),
         "entities": entities,
+        "relationships": _extract_relationships(ifc),
+    }
+
+
+def _extract_relationships(ifc) -> dict:
+    """Extract structural relationships between entities.
+
+    Returns hosting (voids/fills), aggregation, and spatial containment
+    relationships needed for scene model construction.
+    """
+    # IfcRelVoidsElement: wall → opening
+    voids = []
+    for rel in ifc.by_type("IfcRelVoidsElement"):
+        element = rel.RelatingBuildingElement
+        opening = rel.RelatedOpeningElement
+        if hasattr(element, "GlobalId") and hasattr(opening, "GlobalId"):
+            voids.append({
+                "element_guid": element.GlobalId,
+                "opening_guid": opening.GlobalId,
+            })
+
+    # IfcRelFillsElement: opening → door/window
+    fills = []
+    for rel in ifc.by_type("IfcRelFillsElement"):
+        opening = rel.RelatingOpeningElement
+        filler = rel.RelatedBuildingElement
+        if hasattr(opening, "GlobalId") and hasattr(filler, "GlobalId"):
+            fills.append({
+                "opening_guid": opening.GlobalId,
+                "element_guid": filler.GlobalId,
+            })
+
+    # IfcRelAggregates: parent → children (e.g. stair → flights + members)
+    aggregates = []
+    for rel in ifc.by_type("IfcRelAggregates"):
+        parent = rel.RelatingObject
+        if not hasattr(parent, "GlobalId"):
+            continue
+        child_guids = [
+            c.GlobalId for c in rel.RelatedObjects
+            if hasattr(c, "GlobalId")
+        ]
+        if child_guids:
+            aggregates.append({
+                "parent_guid": parent.GlobalId,
+                "child_guids": child_guids,
+            })
+
+    # IfcRelContainedInSpatialStructure: spatial container → elements
+    spatial_children: dict[str, list[str]] = {}
+    for rel in ifc.by_type("IfcRelContainedInSpatialStructure"):
+        container = rel.RelatingStructure
+        if not hasattr(container, "GlobalId"):
+            continue
+        guids = [
+            e.GlobalId for e in rel.RelatedElements
+            if hasattr(e, "GlobalId")
+        ]
+        if guids:
+            spatial_children.setdefault(container.GlobalId, []).extend(guids)
+
+    return {
+        "voids": voids,
+        "fills": fills,
+        "aggregates": aggregates,
+        "spatial_children": spatial_children,
     }
 
 

@@ -38,7 +38,7 @@ python -m athar some-folder/ --report version-history.md
 python -m athar some-folder/ --report report.md --verbose
 ```
 
-See a [sample report](docs/sample-report.md) for what the output looks like.
+See the [sample report](docs/SAMPLE_REPORT.md) for what the output looks like.
 
 ## Testing
 

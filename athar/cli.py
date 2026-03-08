@@ -12,6 +12,7 @@ from athar.parser import parse
 from athar.differ import diff
 from athar.folder import scan_folder
 from athar.report import report_two_file, report_folder
+from athar.scene import build_scene, human_class
 
 
 # ANSI color helpers — disabled when stdout is not a TTY
@@ -135,13 +136,26 @@ def main():
         parser.error("Provide either two IFC files or a single folder")
 
 
+def _build_labels(*parsed_models) -> dict:
+    """Build guid → scene label lookup from parsed model versions."""
+    labels = {}
+    for parsed in parsed_models:
+        if parsed:
+            scene = build_scene(parsed)
+            for guid, el in scene["elements"].items():
+                labels[guid] = el["label"]
+    return labels
+
+
 def _two_file_mode(old_path: str, new_path: str, args):
     old_model = parse(old_path)
     new_model = parse(new_path)
     result = diff(old_model, new_model)
 
     if args.report:
-        md = report_two_file(result, old_path, new_path, verbose=args.verbose)
+        labels = _build_labels(old_model, new_model)
+        md = report_two_file(result, old_path, new_path, verbose=args.verbose,
+                             labels=labels)
         with open(args.report, "w") as f:
             f.write(md)
         print(f"Report written to {args.report}", file=sys.stderr)
@@ -199,11 +213,14 @@ def _folder_mode(folder: str, args):
         # Step-by-step diffs
         for i in range(len(group) - 1):
             result = diff(parsed[i], parsed[i + 1])
-            step_data.append({
+            step_entry = {
                 "old_name": group[i].name,
                 "new_name": group[i + 1].name,
                 "result": result,
-            })
+            }
+            if args.report:
+                step_entry["labels"] = _build_labels(parsed[i], parsed[i + 1])
+            step_data.append(step_entry)
 
             if args.report:
                 pass  # will write report at end
@@ -238,11 +255,15 @@ def _folder_mode(folder: str, args):
                 print()
 
         if report_groups is not None:
+            cumulative_labels = None
+            if cumulative:
+                cumulative_labels = _build_labels(parsed[0], parsed[-1])
             report_groups.append({
                 "label": group_label,
                 "files": group,
                 "steps": step_data,
                 "cumulative": cumulative,
+                "cumulative_labels": cumulative_labels,
                 "parsed_first_meta": parsed[0]["metadata"],
             })
 
@@ -258,6 +279,7 @@ def _folder_mode(folder: str, args):
 
 def _group_label(group: list[Path]) -> str:
     """Derive a human label for a group of version files."""
+    import re
     names = [p.stem for p in group]
     if len(names) == 1:
         return names[0]
@@ -266,8 +288,11 @@ def _group_label(group: list[Path]) -> str:
     for name in names[1:]:
         while not name.startswith(prefix) and prefix:
             prefix = prefix[:-1]
-    # Clean trailing separators
-    label = prefix.rstrip("-_ ")
+    # Strip version suffixes: _v3, -rev1, _version2, trailing digits, etc.
+    label = re.sub(r'[-_ ]*(v|ver|version|rev|r)\d*$', '', prefix, flags=re.IGNORECASE)
+    # Strip any remaining trailing separators or digits
+    label = re.sub(r'[-_ ]+\d*$', '', label)
+    label = label.rstrip("-_ ")
     return label if label else group[0].stem
 
 
@@ -332,7 +357,7 @@ def _print_changes(result: dict, indent: str = "", short: bool = False):
     # Bulk movements — compact summary
     for bm in result.get("bulk_movements", []):
         class_parts = ", ".join(
-            f"{count} {cls}" for cls, count in bm["class_breakdown"].items()
+            f"{count} {human_class(cls)}" for cls, count in bm["class_breakdown"].items()
         )
         groups = bm.get("groups", [])
         group_suffix = f" in '{groups[0]}'" if groups else ""
@@ -343,19 +368,19 @@ def _print_changes(result: dict, indent: str = "", short: bool = False):
     if result["added"]:
         print(_bold(_green(f"{indent}ADDED:")))
         for e in result["added"]:
-            print(_green(f"{indent}  + [{e['ifc_class']}] {e['name'] or '(unnamed)'} ({e['guid']})"))
+            print(_green(f"{indent}  + [{human_class(e['ifc_class'])}] {e['name'] or '(unnamed)'} ({e['guid']})"))
         print()
 
     if result["deleted"]:
         print(_bold(_red(f"{indent}DELETED:")))
         for e in result["deleted"]:
-            print(_red(f"{indent}  - [{e['ifc_class']}] {e['name'] or '(unnamed)'} ({e['guid']})"))
+            print(_red(f"{indent}  - [{human_class(e['ifc_class'])}] {e['name'] or '(unnamed)'} ({e['guid']})"))
         print()
 
     if result["changed"]:
         print(_bold(_yellow(f"{indent}CHANGED:")))
         for e in result["changed"]:
-            print(_yellow(f"{indent}  ~ [{e['ifc_class']}] {e['name'] or '(unnamed)'} ({e['guid']})"))
+            print(_yellow(f"{indent}  ~ [{human_class(e['ifc_class'])}] {e['name'] or '(unnamed)'} ({e['guid']})"))
             for c in e["changes"]:
                 if c["field"] == "placement":
                     desc = c.get("description", "(matrix changed)")
@@ -372,7 +397,7 @@ def _print_class_breakdown(result: dict, indent: str = ""):
     # Bulk movements
     for bm in result.get("bulk_movements", []):
         class_parts = ", ".join(
-            f"{count} {cls}" for cls, count in bm["class_breakdown"].items()
+            f"{count} {human_class(cls)}" for cls, count in bm["class_breakdown"].items()
         )
         groups = bm.get("groups", [])
         group_suffix = f" in '{groups[0]}'" if groups else ""
@@ -384,7 +409,7 @@ def _print_class_breakdown(result: dict, indent: str = ""):
         entities = result[section]
         if not entities:
             continue
-        counts = Counter(e["ifc_class"] for e in entities)
+        counts = Counter(human_class(e["ifc_class"]) for e in entities)
         parts = ", ".join(
             f"{count} {cls}" for cls, count in counts.most_common()
         )
