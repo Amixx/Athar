@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections import Counter
 
+from athar.matcher import match_entities
 from athar.placement import describe_placement_change
 
 # Relative tolerance for floating-point comparisons
@@ -25,8 +26,13 @@ def diff(old: dict, new: dict) -> dict:
     """
     old_entities = old["entities"]
     new_entities = new["entities"]
-    old_ids = set(old_entities.keys())
-    new_ids = set(new_entities.keys())
+
+    # Build entity alignment (GUID-based or content-based fallback)
+    alignment = match_entities(old, new)
+    old_to_new = alignment["old_to_new"]
+
+    matched_old = set(old_to_new.keys())
+    matched_new = set(old_to_new.values())
 
     # Find openings that are filled by a door/window — these are implementation
     # details, not user-facing changes.  Standalone voids (no fill) are kept.
@@ -34,31 +40,34 @@ def diff(old: dict, new: dict) -> dict:
 
     added = [
         _summary(guid, new_entities[guid])
-        for guid in sorted(new_ids - old_ids)
+        for guid in sorted(set(new_entities) - matched_new)
         if guid not in filled_openings
     ]
 
     deleted = [
         _summary(guid, old_entities[guid])
-        for guid in sorted(old_ids - new_ids)
+        for guid in sorted(set(old_entities) - matched_old)
         if guid not in filled_openings
     ]
 
     changed = []
-    for guid in sorted(old_ids & new_ids):
-        if guid in filled_openings:
+    for old_guid in sorted(matched_old):
+        new_guid = old_to_new[old_guid]
+        if old_guid in filled_openings or new_guid in filled_openings:
             continue
-        changes = _diff_entity(old_entities[guid], new_entities[guid],
+        changes = _diff_entity(old_entities[old_guid], new_entities[new_guid],
                                all_entities=new_entities)
         if changes:
-            entry = _summary(guid, new_entities[guid])
+            entry = _summary(new_guid, new_entities[new_guid])
             entry["changes"] = changes
+            if old_guid != new_guid:
+                entry["old_guid"] = old_guid
             changed.append(entry)
 
     # Detect bulk movements: many entities moved by the same vector
     bulk_movements, remaining_changed = _detect_bulk_movements(changed, new_entities)
 
-    return {
+    result = {
         "metadata": {
             "old": old["metadata"],
             "new": new["metadata"],
@@ -72,9 +81,15 @@ def diff(old: dict, new: dict) -> dict:
             "deleted": len(deleted),
             "changed": len(remaining_changed),
             "bulk_moved": sum(len(bm["entities"]) for bm in bulk_movements),
-            "unchanged": len(old_ids & new_ids) - len(changed),
+            "unchanged": len(matched_old) - len(changed),
         },
     }
+
+    if alignment["method"] == "content_fallback":
+        result["match_method"] = "content_fallback"
+        result["guid_overlap"] = alignment["guid_overlap"]
+
+    return result
 
 
 def _filled_opening_guids(old: dict, new: dict) -> set[str]:
