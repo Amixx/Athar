@@ -6,6 +6,16 @@
 
 Entities are matched across file revisions by **GlobalId** — the stable IFC identifier that persists across saves and exports.
 
+**Content-based fallback for regenerated GUIDs**: Some authoring tools regenerate GlobalIds on re-export, IFC roundtripping, or copy/paste operations (see [Zhao et al. 2020](https://onlinelibrary.wiley.com/doi/10.1155/2020/8782740), [buildingSMART forum discussion](https://forums.buildingsmart.org/t/guids-in-an-bim-project/2593)). When Athar detects low GUID overlap between two files (<30% of old GUIDs present in the new file), it automatically activates a three-stage content-based matching pipeline:
+
+1. **Exact signature match**: Entities with a unique combination of (ifc_class, name, type_name, container, groups, properties) are matched directly.
+2. **Positional disambiguation**: When multiple entities share the same content signature (e.g., 20 identical windows), placement position is used to break ties.
+3. **Fuzzy scoring**: Remaining unmatched entities are scored on name, type, container, group overlap, property overlap, and placement proximity. Only high-confidence matches with clear winners are accepted.
+
+The matcher is conservative: ambiguous cases are left unmatched (appearing as add+delete in the diff) rather than risking a wrong pairing. When content-based matching is used, the diff output includes `match_method: "content_fallback"` and `guid_overlap` fields.
+
+Folder mode also uses a content-based fallback for version grouping: when GUID overlap is low, files are grouped by `(ifc_class, name)` fingerprint overlap instead.
+
 ### What it compares
 
 - IFC class and name
