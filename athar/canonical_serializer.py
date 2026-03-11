@@ -7,11 +7,24 @@ from typing import Any
 
 
 def serialize_records(records: list[dict[str, Any]]) -> str:
-    """Serialize records deterministically (sorted by id)."""
-    ordered = sorted(records, key=lambda r: r.get("id", ""))
+    """Serialize records deterministically (G:, then H:, then C:)."""
+    ordered = sorted(records, key=_record_sort_key)
     lines = [json.dumps(rec, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
              for rec in ordered]
     return "\n".join(lines)
+
+
+def _record_sort_key(record: dict[str, Any]) -> tuple[int, str]:
+    entity_id = record.get("id", "")
+    if entity_id.startswith("G:"):
+        tier = 0
+    elif entity_id.startswith("H:"):
+        tier = 1
+    elif entity_id.startswith("C:"):
+        tier = 2
+    else:
+        tier = 3
+    return (tier, entity_id)
 
 
 def build_entity_record(
