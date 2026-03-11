@@ -22,6 +22,24 @@ def build_feature_vector(entity: dict) -> dict[str, Any]:
     }
 
 
+def blocking_key(entity_type: str | None, features: dict[str, Any]) -> tuple[str | None, int, int, int, int]:
+    """Coarse deterministic blocking key for secondary matching.
+
+    Uses buckets to stay tolerant to small edits while reducing candidate fanout.
+    """
+    degree = int(features.get("degree", 0))
+    edge_count = len(features.get("edge_labels", set()))
+    attr_count = len(features.get("attribute_paths", set()))
+    literal_count = len(features.get("literal_tokens", set()))
+    return (
+        entity_type,
+        min(8, degree // 2),
+        min(8, edge_count // 2),
+        min(8, attr_count // 4),
+        min(8, literal_count // 4),
+    )
+
+
 def fallback_signature_block_match(
     old_steps: list[int],
     new_steps: list[int],

@@ -8,6 +8,7 @@ from typing import Any
 from .matcher_graph_scoring import (
     SECONDARY_ASSIGNMENT_MAX,
     assignment_block_match,
+    blocking_key,
     build_feature_vector,
     fallback_signature_block_match,
 )
@@ -108,14 +109,13 @@ def secondary_match_unresolved(
         if not old_steps or not new_steps:
             continue
 
-        if len(old_steps) > SECONDARY_ASSIGNMENT_MAX or len(new_steps) > SECONDARY_ASSIGNMENT_MAX:
-            block_matches, block_diagnostics, block_ambiguous = fallback_signature_block_match(
-                old_steps, new_steps, old_features, new_features
-            )
-        else:
-            block_matches, block_diagnostics, block_ambiguous = assignment_block_match(
-                old_steps, new_steps, old_features, new_features
-            )
+        block_matches, block_diagnostics, block_ambiguous = _match_entity_type_block(
+            key,
+            old_steps,
+            new_steps,
+            old_features,
+            new_features,
+        )
 
         for old_step, new_step in block_matches.items():
             matches[old_step] = new_step
@@ -159,3 +159,69 @@ def _is_root(entity: dict | None) -> bool:
     if not entity:
         return False
     return bool(entity.get("global_id"))
+
+
+def _match_entity_type_block(
+    entity_type: str | None,
+    old_steps: list[int],
+    new_steps: list[int],
+    old_features: dict[int, dict[str, Any]],
+    new_features: dict[int, dict[str, Any]],
+) -> tuple[dict[int, int], dict[int, dict[str, Any]], int]:
+    old_by_block: defaultdict[tuple[str | None, int, int, int, int], list[int]] = defaultdict(list)
+    new_by_block: defaultdict[tuple[str | None, int, int, int, int], list[int]] = defaultdict(list)
+    for step in old_steps:
+        old_by_block[blocking_key(entity_type, old_features[step])].append(step)
+    for step in new_steps:
+        new_by_block[blocking_key(entity_type, new_features[step])].append(step)
+
+    matches: dict[int, int] = {}
+    diagnostics: dict[int, dict[str, Any]] = {}
+    ambiguous = 0
+    matched_old: set[int] = set()
+    matched_new: set[int] = set()
+    considered_old: set[int] = set()
+    considered_new: set[int] = set()
+
+    for key in sorted(set(old_by_block) & set(new_by_block)):
+        block_old = sorted(old_by_block[key])
+        block_new = sorted(new_by_block[key])
+        considered_old.update(block_old)
+        considered_new.update(block_new)
+        block_matches, block_diagnostics, block_ambiguous = _run_block_match(
+            block_old,
+            block_new,
+            old_features,
+            new_features,
+        )
+        matches.update(block_matches)
+        diagnostics.update(block_diagnostics)
+        ambiguous += block_ambiguous
+        matched_old.update(block_matches)
+        matched_new.update(block_matches.values())
+
+    residual_old = [step for step in old_steps if step not in considered_old and step not in matched_old]
+    residual_new = [step for step in new_steps if step not in considered_new and step not in matched_new]
+    if residual_old and residual_new:
+        residual_matches, residual_diagnostics, residual_ambiguous = _run_block_match(
+            sorted(residual_old),
+            sorted(residual_new),
+            old_features,
+            new_features,
+        )
+        matches.update(residual_matches)
+        diagnostics.update(residual_diagnostics)
+        ambiguous += residual_ambiguous
+
+    return matches, diagnostics, ambiguous
+
+
+def _run_block_match(
+    old_steps: list[int],
+    new_steps: list[int],
+    old_features: dict[int, dict[str, Any]],
+    new_features: dict[int, dict[str, Any]],
+) -> tuple[dict[int, int], dict[int, dict[str, Any]], int]:
+    if len(old_steps) > SECONDARY_ASSIGNMENT_MAX or len(new_steps) > SECONDARY_ASSIGNMENT_MAX:
+        return fallback_signature_block_match(old_steps, new_steps, old_features, new_features)
+    return assignment_block_match(old_steps, new_steps, old_features, new_features)

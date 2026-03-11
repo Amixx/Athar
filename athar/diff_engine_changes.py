@@ -64,17 +64,11 @@ def make_class_delta_change(
     entity_id: str,
     old_items: list[dict],
     new_items: list[dict],
-    old_rooted_owners: dict[int, set[str]],
-    new_rooted_owners: dict[int, set[str]],
+    owner_ids: set[str],
     profile: str,
 ) -> dict[str, Any]:
     exemplar_entity = (new_items[0]["entity"] if new_items else old_items[0]["entity"])
     class_id = f"C:{entity_id[2:]}"
-    owners: set[str] = set()
-    for item in old_items:
-        owners.update(old_rooted_owners.get(item["step_id"], set()))
-    for item in new_items:
-        owners.update(new_rooted_owners.get(item["step_id"], set()))
     return {
         "change_id": f"chg-{change_id:06d}",
         "op": "CLASS_DELTA",
@@ -89,7 +83,7 @@ def make_class_delta_change(
         "field_ops": [],
         "old_snapshot": None,
         "new_snapshot": None,
-        "rooted_owners": summarize_rooted_owners(owners),
+        "rooted_owners": summarize_rooted_owners(owner_ids),
         "change_categories": [],
         "equivalence_class": {
             "id": class_id,
