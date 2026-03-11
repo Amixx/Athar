@@ -9,6 +9,7 @@ from .graph_parser import count_dangling_refs
 from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
 from .root_remap import plan_root_remap
 from .diff_engine_markers import RootedOwnerProjector
+from .diff_engine_stats import build_stats
 
 _VOLATILE_ATTRIBUTE_NAMES = frozenset({"OwnerHistory"})
 _VOLATILE_REF_PATH_PREFIXES = ("/OwnerHistory",)
@@ -19,7 +20,12 @@ def prepare_diff_context(old_graph: dict, new_graph: dict, *, profile: str) -> d
     _validate_schema(old_graph, new_graph)
 
     remap = plan_root_remap(old_graph, new_graph)
-    old_ids, old_identity = _assign_ids(old_graph, profile=profile, root_remap=remap["old_to_new"])
+    old_ids, old_identity = _assign_ids(
+        old_graph,
+        profile=profile,
+        root_remap=remap["old_to_new"],
+        root_remap_diagnostics=remap.get("diagnostics", {}),
+    )
     new_ids, new_identity = _assign_ids(new_graph, profile=profile)
     root_pairs = _match_root_steps(old_graph, new_graph, remap["old_to_new"])
     exact_pairs = _match_steps_by_unique_id(old_ids, new_ids)
@@ -77,19 +83,20 @@ def prepare_diff_context(old_graph: dict, new_graph: dict, *, profile: str) -> d
             "old_schema": old_graph["metadata"]["schema"],
             "new_schema": new_graph["metadata"]["schema"],
         },
-        "stats": {
-            "old_entities": len(old_graph.get("entities", {})),
-            "new_entities": len(new_graph.get("entities", {})),
-            "matched": _matched_occurrence_count(old_by_id, new_by_id),
-            "ambiguous": remap["ambiguous"] + path_propagation["ambiguous"] + secondary["ambiguous"],
-            "ambiguous_by_stage": {
-                "root_remap": remap["ambiguous"],
-                "path_propagation": path_propagation["ambiguous"],
-                "secondary_match": secondary["ambiguous"],
-            },
-            "old_dangling_refs": _dangling_ref_count(old_graph),
-            "new_dangling_refs": _dangling_ref_count(new_graph),
-        },
+        "stats": build_stats(
+            old_graph=old_graph,
+            new_graph=new_graph,
+            old_by_id=old_by_id,
+            new_by_id=new_by_id,
+            remap_ambiguous=remap["ambiguous"],
+            path_ambiguous=path_propagation["ambiguous"],
+            secondary_ambiguous=secondary["ambiguous"],
+            remap_matches=len(remap["old_to_new"]),
+            path_matches=len(path_propagation["old_to_new"]),
+            secondary_matches=len(secondary["old_to_new"]),
+            old_dangling_refs=_dangling_ref_count(old_graph),
+            new_dangling_refs=_dangling_ref_count(new_graph),
+        ),
     }
 
 
@@ -218,6 +225,7 @@ def _assign_ids(
     *,
     profile: str,
     root_remap: dict[str, str] | None = None,
+    root_remap_diagnostics: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[int, str], dict[int, dict[str, Any]]]:
     entities = graph.get("entities", {})
     id_graph = _graph_for_profile(graph, profile=profile)
@@ -230,12 +238,18 @@ def _assign_ids(
         gid = entity.get("global_id")
         if gid and guid_index.get(gid, 0) == 1:
             mapped_gid = (root_remap or {}).get(gid, gid)
+            remap_diag = (root_remap_diagnostics or {}).get(gid, {})
             ids[step_id] = f"G:{mapped_gid}"
             identity[step_id] = {
                 "match_method": "root_remap" if mapped_gid != gid else "exact_guid",
                 "match_confidence": 1.0,
                 "matched_on": (
-                    {"stage": "root_remap", "from": gid, "to": mapped_gid}
+                    {
+                        "stage": "root_remap",
+                        "from": gid,
+                        "to": mapped_gid,
+                        **({"remap_stage": remap_diag.get("stage")} if remap_diag.get("stage") else {}),
+                    }
                     if mapped_gid != gid
                     else {"stage": "guid", "guid": gid}
                 ),
@@ -277,13 +291,6 @@ def _index_by_identity(
             }),
         })
     return by_id
-
-
-def _matched_occurrence_count(old_by_id: dict[str, list[dict]], new_by_id: dict[str, list[dict]]) -> int:
-    total = 0
-    for entity_id in set(old_by_id) & set(new_by_id):
-        total += min(len(old_by_id[entity_id]), len(new_by_id[entity_id]))
-    return total
 
 
 def _identity_priority(match_method: str) -> int:

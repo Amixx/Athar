@@ -195,7 +195,7 @@ def _match_entity_type_block(
             new_features,
         )
         matches.update(block_matches)
-        diagnostics.update(block_diagnostics)
+        diagnostics.update(_with_block_diagnostics(block_diagnostics, block_stage="coarse_block", block_key=key))
         ambiguous += block_ambiguous
         matched_old.update(block_matches)
         matched_new.update(block_matches.values())
@@ -210,7 +210,7 @@ def _match_entity_type_block(
             new_features,
         )
         matches.update(residual_matches)
-        diagnostics.update(residual_diagnostics)
+        diagnostics.update(_with_block_diagnostics(residual_diagnostics, block_stage="residual", block_key=None))
         ambiguous += residual_ambiguous
 
     return matches, diagnostics, ambiguous
@@ -225,3 +225,28 @@ def _run_block_match(
     if len(old_steps) > SECONDARY_ASSIGNMENT_MAX or len(new_steps) > SECONDARY_ASSIGNMENT_MAX:
         return fallback_signature_block_match(old_steps, new_steps, old_features, new_features)
     return assignment_block_match(old_steps, new_steps, old_features, new_features)
+
+
+def _with_block_diagnostics(
+    diagnostics: dict[int, dict[str, Any]],
+    *,
+    block_stage: str,
+    block_key: tuple[str | None, int, int, int, int] | None,
+) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
+    for step_id, diag in diagnostics.items():
+        matched_on = dict(diag.get("matched_on") or {})
+        matched_on["block_stage"] = block_stage
+        if block_key is not None:
+            matched_on["blocking_key"] = {
+                "entity_type": block_key[0],
+                "degree_bucket": block_key[1],
+                "edge_bucket": block_key[2],
+                "attribute_bucket": block_key[3],
+                "literal_bucket": block_key[4],
+            }
+        out[step_id] = {
+            **diag,
+            "matched_on": matched_on,
+        }
+    return out

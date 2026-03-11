@@ -41,6 +41,7 @@ def plan_root_remap(
             "method": "disabled_guid_overlap",
             "guid_overlap": overlap,
             "old_to_new": {},
+            "diagnostics": {},
             "ambiguous": 0,
         }
 
@@ -50,6 +51,7 @@ def plan_root_remap(
     new_colors = wl_refine_colors(new_graph)
 
     old_to_new: dict[str, str] = {}
+    diagnostics: dict[str, dict[str, Any]] = {}
     ambiguous = 0
 
     for signature in sorted(set(old_by_sig) | set(new_by_sig)):
@@ -60,8 +62,9 @@ def plan_root_remap(
             new_gid = new_ids[0]
             if old_gid != new_gid:
                 old_to_new[old_gid] = new_gid
+                diagnostics[old_gid] = {"stage": "signature_unique"}
         elif old_ids and new_ids:
-            bucket_matches, bucket_ambiguous = _disambiguate_ambiguous_bucket(
+            bucket_matches, bucket_diagnostics, bucket_ambiguous = _disambiguate_ambiguous_bucket(
                 old_roots=old_roots,
                 new_roots=new_roots,
                 old_colors=old_colors,
@@ -70,6 +73,7 @@ def plan_root_remap(
                 new_ids=new_ids,
             )
             old_to_new.update(bucket_matches)
+            diagnostics.update(bucket_diagnostics)
             ambiguous += bucket_ambiguous
 
     return {
@@ -77,6 +81,7 @@ def plan_root_remap(
         "method": "signature_unique",
         "guid_overlap": overlap,
         "old_to_new": old_to_new,
+        "diagnostics": diagnostics,
         "ambiguous": ambiguous,
     }
 
@@ -168,7 +173,7 @@ def _disambiguate_ambiguous_bucket(
     new_colors: dict[int, str],
     old_ids: list[str],
     new_ids: list[str],
-) -> tuple[dict[str, str], int]:
+) -> tuple[dict[str, str], dict[str, dict[str, Any]], int]:
     old_by_sig: defaultdict[str, list[str]] = defaultdict(list)
     new_by_sig: defaultdict[str, list[str]] = defaultdict(list)
     for gid in old_ids:
@@ -177,6 +182,7 @@ def _disambiguate_ambiguous_bucket(
         new_by_sig[_neighbor_signature(new_roots[gid], new_colors)].append(gid)
 
     matches: dict[str, str] = {}
+    diagnostics: dict[str, dict[str, Any]] = {}
     matched_old: set[str] = set()
     matched_new: set[str] = set()
     for signature in sorted(set(old_by_sig) & set(new_by_sig)):
@@ -189,11 +195,12 @@ def _disambiguate_ambiguous_bucket(
             matched_new.add(new_gid)
             if old_gid != new_gid:
                 matches[old_gid] = new_gid
+                diagnostics[old_gid] = {"stage": "neighbor_signature"}
 
     unresolved_old = [gid for gid in old_ids if gid not in matched_old]
     unresolved_new = [gid for gid in new_ids if gid not in matched_new]
     ambiguous = min(len(unresolved_old), len(unresolved_new))
-    return matches, ambiguous
+    return matches, diagnostics, ambiguous
 
 
 def _neighbor_signature(entity: dict, colors: dict[int, str]) -> str:

@@ -126,6 +126,9 @@ def test_secondary_match_unresolved_matches_unique_block():
     assert result["ambiguous"] == 0
     assert result["diagnostics"][20]["matched_on"]["stage"] in {"scored_assignment", "signature_unique"}
     assert result["diagnostics"][20]["match_confidence"] > 0.0
+    assert result["diagnostics"][20]["matched_on"]["block_stage"] in {"coarse_block", "residual"}
+    if result["diagnostics"][20]["matched_on"]["block_stage"] == "coarse_block":
+        assert "blocking_key" in result["diagnostics"][20]["matched_on"]
 
 
 def test_secondary_match_unresolved_rejects_ambiguous_block():
