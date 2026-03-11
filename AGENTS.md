@@ -22,6 +22,7 @@ The core engine is responsible for parsing IFC files, aligning entities across m
 - `athar/semantic_signature.py` — Soft signature (`S:`) for candidate blocking. Uses attribute/aggregate shape and typed edge signatures while ignoring literal values.
 - `athar/canonical_serializer.py` — Deterministic serializer for low-level identity/class records with total ordering by ID.
 - `athar/diff_engine.py` — Core diff engine skeleton that merges identity sets and emits `base_changes` in the new wire format.
+- `athar/__main__.py` — CLI supports `--engine graph` (graph-based core) and `--engine legacy` (current GUID-centric pipeline).
 
 ### Higher Layers (`athar_layers/`)
 
