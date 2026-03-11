@@ -11,6 +11,34 @@ _REPARENT_RELATION_TYPES = frozenset({
 })
 
 
+class RootedOwnerProjector:
+    """Lazy rooted-owner projection.
+
+    Owner closure is materialized only when a change asks for owner summaries.
+    """
+
+    def __init__(self, graph: dict, ids: dict[int, str]) -> None:
+        self._graph = graph
+        self._ids = ids
+        self._owners_by_step: dict[int, set[str]] | None = None
+
+    def owners_for_step(self, step_id: int) -> set[str]:
+        owners = self._materialize()
+        return owners.get(step_id, set())
+
+    def owners_for_steps(self, step_ids: list[int]) -> set[str]:
+        owners = self._materialize()
+        merged: set[str] = set()
+        for step_id in step_ids:
+            merged.update(owners.get(step_id, set()))
+        return merged
+
+    def _materialize(self) -> dict[int, set[str]]:
+        if self._owners_by_step is None:
+            self._owners_by_step = compute_rooted_owner_index(self._graph, self._ids)
+        return self._owners_by_step
+
+
 def build_derived_markers(
     *,
     old_graph: dict,

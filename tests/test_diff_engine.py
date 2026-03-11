@@ -1,4 +1,5 @@
-from athar.diff_engine import diff_graphs
+from athar.diff_engine import diff_graphs, stream_diff_graphs
+from athar.diff_engine_markers import RootedOwnerProjector
 
 
 def _graph_with_entities(entities: dict[int, dict]) -> dict:
@@ -534,3 +535,56 @@ def test_diff_engine_raw_exact_reports_owner_history_entity_value_churn():
         op["path"] == "/attributes/ChangeAction/value" and op["old"] == "ADDED" and op["new"] == "MODIFIED"
         for op in change["field_ops"]
     )
+
+
+def test_diff_engine_lazy_owner_projection_skips_materialization_on_zero_diff(monkeypatch):
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+    })
+
+    calls = {"count": 0}
+    original = RootedOwnerProjector._materialize
+
+    def wrapped(self):
+        calls["count"] += 1
+        return original(self)
+
+    monkeypatch.setattr(RootedOwnerProjector, "_materialize", wrapped)
+    diff = diff_graphs(old_graph, new_graph)
+    assert diff["base_changes"] == []
+    assert calls["count"] == 0
+
+
+def test_diff_engine_rejects_cross_schema_pairs():
+    old_graph = {"metadata": {"schema": "IFC4"}, "entities": {}}
+    new_graph = {"metadata": {"schema": "IFC2X3"}, "entities": {}}
+
+    try:
+        diff_graphs(old_graph, new_graph)
+        assert False, "expected ValueError for schema mismatch"
+    except ValueError as exc:
+        assert "Schema mismatch" in str(exc)
+
+
+def test_stream_diff_graphs_rejects_cross_schema_pairs():
+    old_graph = {"metadata": {"schema": "IFC4"}, "entities": {}}
+    new_graph = {"metadata": {"schema": "IFC2X3"}, "entities": {}}
+
+    try:
+        list(stream_diff_graphs(old_graph, new_graph))
+        assert False, "expected ValueError for schema mismatch"
+    except ValueError as exc:
+        assert "Schema mismatch" in str(exc)

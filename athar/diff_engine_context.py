@@ -8,7 +8,7 @@ from .canonical_ids import structural_hash, wl_refine_colors
 from .graph_parser import count_dangling_refs
 from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
 from .root_remap import plan_root_remap
-from .diff_engine_markers import compute_rooted_owner_index
+from .diff_engine_markers import RootedOwnerProjector
 
 _VOLATILE_ATTRIBUTE_NAMES = frozenset({"OwnerHistory"})
 _VOLATILE_REF_PATH_PREFIXES = ("/OwnerHistory",)
@@ -58,8 +58,8 @@ def prepare_diff_context(old_graph: dict, new_graph: dict, *, profile: str) -> d
 
     old_by_id = _index_by_identity(old_graph, old_ids, old_identity)
     new_by_id = _index_by_identity(new_graph, new_ids, new_identity)
-    old_rooted_owners = compute_rooted_owner_index(old_graph, old_ids)
-    new_rooted_owners = compute_rooted_owner_index(new_graph, new_ids)
+    old_owner_projector = RootedOwnerProjector(old_graph, old_ids)
+    new_owner_projector = RootedOwnerProjector(new_graph, new_ids)
 
     return {
         "version": "2",
@@ -70,8 +70,8 @@ def prepare_diff_context(old_graph: dict, new_graph: dict, *, profile: str) -> d
         "new_ids": new_ids,
         "old_by_id": old_by_id,
         "new_by_id": new_by_id,
-        "old_rooted_owners": old_rooted_owners,
-        "new_rooted_owners": new_rooted_owners,
+        "old_owner_projector": old_owner_projector,
+        "new_owner_projector": new_owner_projector,
         "schema_policy": {
             "mode": "same_schema_only",
             "old_schema": old_graph["metadata"]["schema"],

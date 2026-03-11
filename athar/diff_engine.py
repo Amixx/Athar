@@ -159,8 +159,8 @@ def _iter_base_changes(context: dict[str, Any]):
     profile = context["profile"]
     old_by_id = context["old_by_id"]
     new_by_id = context["new_by_id"]
-    old_rooted_owners = context["old_rooted_owners"]
-    new_rooted_owners = context["new_rooted_owners"]
+    old_owner_projector = context["old_owner_projector"]
+    new_owner_projector = context["new_owner_projector"]
 
     change_id = 0
     for entity_id in sorted(set(old_by_id) | set(new_by_id)):
@@ -168,13 +168,14 @@ def _iter_base_changes(context: dict[str, Any]):
         new_items = sorted(new_by_id.get(entity_id, []), key=lambda item: item["step_id"])
         if should_emit_class_delta(entity_id, old_items, new_items):
             change_id += 1
+            owner_ids = old_owner_projector.owners_for_steps([item["step_id"] for item in old_items])
+            owner_ids.update(new_owner_projector.owners_for_steps([item["step_id"] for item in new_items]))
             yield make_class_delta_change(
                 change_id,
                 entity_id=entity_id,
                 old_items=old_items,
                 new_items=new_items,
-                old_rooted_owners=old_rooted_owners,
-                new_rooted_owners=new_rooted_owners,
+                owner_ids=owner_ids,
                 profile=profile,
             )
             continue
@@ -197,8 +198,8 @@ def _iter_base_changes(context: dict[str, Any]):
                 new_ent=new_ent,
                 identity=resolve_identity(old_item, new_item),
                 rooted_owners=summarize_rooted_owners(
-                    old_rooted_owners.get(old_item["step_id"], set())
-                    | new_rooted_owners.get(new_item["step_id"], set())
+                    old_owner_projector.owners_for_step(old_item["step_id"])
+                    | new_owner_projector.owners_for_step(new_item["step_id"])
                 ),
                 profile=profile,
             )
@@ -215,7 +216,7 @@ def _iter_base_changes(context: dict[str, Any]):
                 new_ent=None,
                 identity=resolve_identity(old_item, None),
                 rooted_owners=summarize_rooted_owners(
-                    old_rooted_owners.get(old_item["step_id"], set())
+                    old_owner_projector.owners_for_step(old_item["step_id"])
                 ),
                 profile=profile,
             )
@@ -232,7 +233,7 @@ def _iter_base_changes(context: dict[str, Any]):
                 new_ent=new_ent,
                 identity=resolve_identity(None, new_item),
                 rooted_owners=summarize_rooted_owners(
-                    new_rooted_owners.get(new_item["step_id"], set())
+                    new_owner_projector.owners_for_step(new_item["step_id"])
                 ),
                 profile=profile,
             )
