@@ -14,28 +14,28 @@ Requires Python 3.10+ and [ifcopenshell](https://ifcopenshell.org/).
 
 ## Usage
 
-```bash
-# Two-file diff (JSON output)
-python -m athar old.ifc new.ifc
+### Full Tool (Summary, Folder mode, Reports)
 
-# Human-readable summary
-python -m athar old.ifc new.ifc --summary
+```bash
+# Two-file diff summary
+python -m athar_layers old.ifc new.ifc
 
 # Verbose summary (per-entity details)
-python -m athar old.ifc new.ifc --summary --verbose
+python -m athar_layers old.ifc new.ifc --summary --verbose
 
-# Write JSON output to file
-python -m athar old.ifc new.ifc -o diff.json
+# Folder mode — auto-groups versions and diffs them
+python -m athar_layers some-folder/
 
-# Folder mode — auto-groups versions and diffs them (summary by default)
-python -m athar some-folder/
+# Export a Markdown report
+python -m athar_layers old.ifc new.ifc --report diff-report.md
+python -m athar_layers some-folder/ --report version-history.md
+```
 
-# Export a Markdown report (great for sharing with architects/BIM managers)
-python -m athar old.ifc new.ifc --report diff-report.md
-python -m athar some-folder/ --report version-history.md
+### Core Engine (Raw JSON)
 
-# Verbose report with per-entity details
-python -m athar some-folder/ --report report.md --verbose
+```bash
+# Two-file diff (JSON output for computers)
+python -m athar old.ifc new.ifc
 ```
 
 See the [sample report](docs/SAMPLE_REPORT.md) for what the output looks like.

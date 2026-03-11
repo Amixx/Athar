@@ -13,6 +13,7 @@ import pytest
 
 from athar.parser import parse
 from athar.differ import diff
+from athar_layers.placement import enrich_diff
 
 V1 = "tests/fixtures/house_v1.ifc"
 V2 = "tests/fixtures/house_v2.ifc"
@@ -42,12 +43,16 @@ def parsed_v3():
 
 @pytest.fixture(scope="module")
 def diff_v1_v2(parsed_v1, parsed_v2):
-    return diff(parsed_v1, parsed_v2)
+    result = diff(parsed_v1, parsed_v2)
+    enrich_diff(result, parsed_v2["entities"])
+    return result
 
 
 @pytest.fixture(scope="module")
 def diff_v2_v3(parsed_v2, parsed_v3):
-    return diff(parsed_v2, parsed_v3)
+    result = diff(parsed_v2, parsed_v3)
+    enrich_diff(result, parsed_v3["entities"])
+    return result
 
 
 # --- v1 → v2: Renovation phase ---
@@ -188,6 +193,7 @@ class TestV1ToV3:
 
     def test_cumulative_deletions(self, parsed_v1, parsed_v3):
         result = diff(parsed_v1, parsed_v3)
+        enrich_diff(result, parsed_v3["entities"])
         deleted_guids = {e["guid"] for e in result["deleted"]}
 
         # All 3 windows from v1→v2
@@ -201,6 +207,7 @@ class TestV1ToV3:
 
     def test_cumulative_changes(self, parsed_v1, parsed_v3):
         result = diff(parsed_v1, parsed_v3)
+        enrich_diff(result, parsed_v3["entities"])
         changed_guids = {e["guid"] for e in result["changed"]}
 
         # Door moved in v2→v3 should appear in changed or bulk_movements

@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from athar.scene import clean_name, human_class
+from .scene import clean_name, human_class
 
 
 def _parse_timestamp(ts: str | None) -> datetime | None:

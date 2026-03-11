@@ -11,7 +11,7 @@ OUTPUT = ROOT / "docs" / "SAMPLE_REPORT.md"
 
 def main():
     result = subprocess.run(
-        ["python", "-m", "athar", str(FIXTURES), "--report", str(OUTPUT)],
+        ["python", "-m", "athar_layers", str(FIXTURES), "--report", str(OUTPUT)],
         cwd=ROOT,
         capture_output=True,
         text=True,
