@@ -153,3 +153,46 @@ def test_secondary_match_unresolved_rejects_ambiguous_block():
     result = secondary_match_unresolved(old_graph, new_graph)
     assert result["old_to_new"] == {}
     assert result["ambiguous"] == 2
+
+
+def test_secondary_match_unresolved_uses_scored_assignment_for_swapped_pairs():
+    old_graph = _graph({
+        20: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {
+                "Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "1"}]},
+                "Tag": {"kind": "string", "value": "A"},
+            },
+            "refs": [],
+        },
+        21: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {
+                "Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "9"}]},
+                "Tag": {"kind": "string", "value": "B"},
+            },
+            "refs": [],
+        },
+    })
+    new_graph = _graph({
+        220: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {
+                "Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "9"}]},
+                "Tag": {"kind": "string", "value": "B"},
+            },
+            "refs": [],
+        },
+        221: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {
+                "Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "1"}]},
+                "Tag": {"kind": "string", "value": "A"},
+            },
+            "refs": [],
+        },
+    })
+
+    result = secondary_match_unresolved(old_graph, new_graph)
+    assert result["old_to_new"] == {20: 221, 21: 220}
+    assert result["ambiguous"] == 0
