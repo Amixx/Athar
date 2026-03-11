@@ -10,9 +10,10 @@ from pathlib import Path
 
 from athar.parser import parse
 from athar.differ import diff
-from athar.folder import scan_folder
-from athar.report import report_two_file, report_folder
-from athar.scene import build_scene, human_class
+from .folder import scan_folder
+from .report import report_two_file, report_folder
+from .scene import build_scene, human_class
+from .placement import enrich_diff
 
 
 # ANSI color helpers — disabled when stdout is not a TTY
@@ -131,6 +132,9 @@ def main():
         _folder_mode(args.paths[0], args)
     # Two-file mode
     elif len(args.paths) == 2:
+        if not args.summary and not args.output and not args.report:
+            args.summary = True
+            args.short = not args.verbose
         _two_file_mode(args.paths[0], args.paths[1], args)
     else:
         parser.error("Provide either two IFC files or a single folder")
@@ -151,6 +155,7 @@ def _two_file_mode(old_path: str, new_path: str, args):
     old_model = parse(old_path)
     new_model = parse(new_path)
     result = diff(old_model, new_model)
+    enrich_diff(result, new_model["entities"])
 
     if args.report:
         labels = _build_labels(old_model, new_model)
@@ -213,6 +218,7 @@ def _folder_mode(folder: str, args):
         # Step-by-step diffs
         for i in range(len(group) - 1):
             result = diff(parsed[i], parsed[i + 1])
+            enrich_diff(result, parsed[i+1]["entities"])
             step_entry = {
                 "old_name": group[i].name,
                 "new_name": group[i + 1].name,
@@ -243,6 +249,7 @@ def _folder_mode(folder: str, args):
         cumulative = None
         if len(group) > 2:
             cumulative = diff(parsed[0], parsed[-1])
+            enrich_diff(cumulative, parsed[-1]["entities"])
             if args.report:
                 pass  # will write report at end
             elif args.summary:

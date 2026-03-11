@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 
 from athar.parser import parse
-from athar.scene import build_scene, print_scene
+from athar_layers.scene import build_scene, print_scene
 
 
 def main():

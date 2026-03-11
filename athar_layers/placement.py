@@ -135,3 +135,28 @@ def _nearest_named(
             best_name = name
 
     return best_name
+
+
+def enrich_diff(result: dict, new_entities: dict):
+    """Add human-readable placement descriptions to a raw diff result.
+
+    Modifies the result dict in-place.
+    """
+    # Bulk movements
+    for bm in result.get("bulk_movements", []):
+        dx, dy, dz = bm["displacement"]
+        bm["description"] = describe_placement_change(
+            [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+            [[1, 0, 0, dx], [0, 1, 0, dy], [0, 0, 1, dz], [0, 0, 0, 1]],
+        )
+
+    # Individual changes
+    for e in result["changed"]:
+        for c in e["changes"]:
+            if c["field"] == "placement":
+                old_m = c.get("old")
+                new_m = c.get("new")
+                if old_m and new_m:
+                    c["description"] = describe_placement_change(
+                        old_m, new_m, all_entities=new_entities
+                    )

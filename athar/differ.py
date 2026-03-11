@@ -6,7 +6,6 @@ import math
 from collections import Counter
 
 from athar.matcher import match_entities
-from athar.placement import describe_placement_change
 
 # Relative tolerance for floating-point comparisons
 _RTOL = 1e-6
@@ -149,18 +148,12 @@ def _detect_bulk_movements(changed: list[dict],
     bulk_movements = []
     for (dx, dy, dz), entities in groups.items():
         if len(entities) >= _BULK_THRESHOLD:
-            desc = describe_placement_change(
-                # Construct dummy matrices to get the description
-                [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
-                [[1, 0, 0, dx], [0, 1, 0, dy], [0, 0, 1, dz], [0, 0, 0, 1]],
-            )
             class_counts = Counter(e["ifc_class"] for e in entities)
             # Find common groups across all entities in this bulk movement
             entity_guids = [e["guid"] for e in entities]
             common_groups = _find_common_groups(entity_guids, new_entities)
             bm_entry = {
                 "displacement": [dx, dy, dz],
-                "description": desc,
                 "count": len(entities),
                 "class_breakdown": dict(class_counts.most_common()),
                 "entities": [
@@ -224,11 +217,6 @@ def _diff_entity(old: dict, new: dict,
             "old": old.get("placement"),
             "new": new.get("placement"),
         }
-        if old.get("placement") and new.get("placement"):
-            entry["description"] = describe_placement_change(
-                old["placement"], new["placement"],
-                all_entities=all_entities,
-            )
         changes.append(entry)
 
     # Compare attributes

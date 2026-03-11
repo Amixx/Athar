@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from athar.parser import parse
 from athar.differ import diff
+from athar_layers.placement import enrich_diff
 
 
 def find_ifc_files(folder: str) -> list[Path]:
@@ -94,6 +95,7 @@ def main():
     for i in range(len(files) - 1):
         print(f"Step {i + 1}: ", end="")
         result = diff(parsed[i], parsed[i + 1])
+        enrich_diff(result, parsed[i+1]["entities"])
         print(format_summary(result, files[i], files[i + 1]))
         print()
 
@@ -103,6 +105,7 @@ def main():
         print(f"CUMULATIVE (first → last)")
         print(f"{'='*60}\n")
         result = diff(parsed[0], parsed[-1])
+        enrich_diff(result, parsed[-1]["entities"])
         print(format_summary(result, files[0], files[-1]))
         print()
 
