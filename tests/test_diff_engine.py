@@ -588,3 +588,39 @@ def test_stream_diff_graphs_rejects_cross_schema_pairs():
         assert False, "expected ValueError for schema mismatch"
     except ValueError as exc:
         assert "Schema mismatch" in str(exc)
+
+
+def test_diff_engine_stats_include_ambiguity_breakdown_by_stage():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {},
+            "refs": [
+                {"path": "/HasParts", "target": 2, "target_type": "IfcBuildingElementPart"},
+                {"path": "/HasParts", "target": 3, "target_type": "IfcBuildingElementPart"},
+            ],
+        },
+        2: {"entity_type": "IfcBuildingElementPart", "attributes": {}, "refs": []},
+        3: {"entity_type": "IfcBuildingElementPart", "attributes": {}, "refs": []},
+    })
+    new_graph = _graph_with_entities({
+        11: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {},
+            "refs": [
+                {"path": "/HasParts", "target": 12, "target_type": "IfcBuildingElementPart"},
+                {"path": "/HasParts", "target": 13, "target_type": "IfcBuildingElementPart"},
+            ],
+        },
+        12: {"entity_type": "IfcBuildingElementPart", "attributes": {}, "refs": []},
+        13: {"entity_type": "IfcBuildingElementPart", "attributes": {}, "refs": []},
+    })
+
+    diff = diff_graphs(old_graph, new_graph)
+    by_stage = diff["stats"]["ambiguous_by_stage"]
+    assert set(by_stage) == {"root_remap", "path_propagation", "secondary_match"}
+    assert diff["stats"]["ambiguous"] == (
+        by_stage["root_remap"] + by_stage["path_propagation"] + by_stage["secondary_match"]
+    )
