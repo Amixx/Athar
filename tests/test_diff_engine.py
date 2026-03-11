@@ -38,3 +38,50 @@ def test_diff_engine_add_remove_modify():
     diff = diff_graphs(old_graph, new_graph)
     ops = sorted([change["op"] for change in diff["base_changes"]])
     assert ops == ["ADD", "MODIFY", "REMOVE"]
+
+
+def test_diff_engine_uses_root_remap_on_low_guid_overlap():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {
+                "Name": {"kind": "string", "value": "Wall A"},
+                "ObjectPlacement": {"kind": "ref", "id": 10},
+            },
+            "refs": [
+                {"path": "/ObjectPlacement", "target": 10, "target_type": "IfcLocalPlacement"}
+            ],
+        },
+        10: {
+            "entity_type": "IfcLocalPlacement",
+            "attributes": {"RelativePlacement": {"kind": "null"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "ZZZ",
+            "attributes": {
+                "Name": {"kind": "string", "value": "Wall A"},
+                "ObjectPlacement": {"kind": "ref", "id": 11},
+            },
+            "refs": [
+                {"path": "/ObjectPlacement", "target": 11, "target_type": "IfcLocalPlacement"}
+            ],
+        },
+        11: {
+            "entity_type": "IfcLocalPlacement",
+            "attributes": {"RelativePlacement": {"kind": "null"}},
+            "refs": [],
+        },
+    })
+
+    diff = diff_graphs(old_graph, new_graph)
+    assert len(diff["base_changes"]) == 1
+    change = diff["base_changes"][0]
+    assert change["op"] == "MODIFY"
+    assert change["old_entity_id"] == "G:ZZZ"
+    assert change["new_entity_id"] == "G:ZZZ"
+    assert change["identity"]["match_method"] == "root_remap"
