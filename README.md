@@ -36,6 +36,9 @@ python -m athar_layers some-folder/ --report version-history.md
 ```bash
 # Two-file diff (JSON output for computers)
 python -m athar old.ifc new.ifc
+
+# Graph-based diff engine (new core work-in-progress)
+python -m athar old.ifc new.ifc --engine graph --profile semantic_stable
 ```
 
 See the [sample report](docs/SAMPLE_REPORT.md) for what the output looks like.
