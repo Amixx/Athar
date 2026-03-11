@@ -168,8 +168,8 @@ def _match_entity_type_block(
     old_features: dict[int, dict[str, Any]],
     new_features: dict[int, dict[str, Any]],
 ) -> tuple[dict[int, int], dict[int, dict[str, Any]], int]:
-    old_by_block: defaultdict[tuple[str | None, int, int, int, int], list[int]] = defaultdict(list)
-    new_by_block: defaultdict[tuple[str | None, int, int, int, int], list[int]] = defaultdict(list)
+    old_by_block: defaultdict[tuple[str | None, int, int, int, int, int], list[int]] = defaultdict(list)
+    new_by_block: defaultdict[tuple[str | None, int, int, int, int, int], list[int]] = defaultdict(list)
     for step in old_steps:
         old_by_block[blocking_key(entity_type, old_features[step])].append(step)
     for step in new_steps:
@@ -231,7 +231,7 @@ def _with_block_diagnostics(
     diagnostics: dict[int, dict[str, Any]],
     *,
     block_stage: str,
-    block_key: tuple[str | None, int, int, int, int] | None,
+    block_key: tuple[str | None, int, int, int, int, int] | None,
 ) -> dict[int, dict[str, Any]]:
     out: dict[int, dict[str, Any]] = {}
     for step_id, diag in diagnostics.items():
@@ -244,6 +244,7 @@ def _with_block_diagnostics(
                 "edge_bucket": block_key[2],
                 "attribute_bucket": block_key[3],
                 "literal_bucket": block_key[4],
+                "neighborhood_bucket": block_key[5],
             }
         out[step_id] = {
             **diag,
