@@ -5,7 +5,7 @@ import json
 import argparse
 
 from athar.differ import diff
-from athar.diff_engine import diff_files, stream_diff_result
+from athar.diff_engine import diff_files, stream_diff_files, stream_diff_result
 from athar.parser import parse
 
 def main():
@@ -40,6 +40,16 @@ def main():
 
     try:
         if args.engine == "graph":
+            if args.stream != "none":
+                for line in stream_diff_files(
+                    args.old,
+                    args.new,
+                    profile=args.profile,
+                    mode=args.stream,
+                    chunk_size=args.chunk_size,
+                ):
+                    print(line)
+                return
             result = diff_files(args.old, args.new, profile=args.profile)
         else:
             old_model = parse(args.old)
