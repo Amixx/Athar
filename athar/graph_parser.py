@@ -1,4 +1,4 @@
-"""Full-graph IFC parser for the low-level diff layer.
+"""Full-graph IFC parser for the graph diff engine.
 
 This extracts every instance with explicit attributes, plus a typed
 edge list labeled by canonical JSON-Pointer-like paths.
@@ -20,7 +20,7 @@ from .canonical_values import (
 
 
 def parse_graph(filepath: str, *, profile: str = PROFILE_RAW_EXACT) -> dict:
-    """Parse a full IFC model into a low-level graph-friendly IR."""
+    """Parse a full IFC model into graph-friendly IR."""
     ifc = ifcopenshell.open(filepath)
     entities: dict[int, dict] = {}
 

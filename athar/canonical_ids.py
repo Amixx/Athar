@@ -1,4 +1,4 @@
-"""Structural identity helpers for the low-level diff layer.
+"""Structural identity helpers for the graph diff engine.
 
 This provides a deterministic, GUID-free structural hash (H) seed that
 ignores STEP IDs and inverse attributes. It is a correctness-first
@@ -10,9 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
-from math import ceil, log2
 from typing import Any
 
+_DEFAULT_WL_ROUNDS = 8
 
 def structural_payload(entity: dict) -> dict:
     """Build a canonical payload for structural hashing."""
@@ -53,9 +53,7 @@ def wl_refine_colors(
     adjacency = _build_adjacency(entities)
     colors = {step_id: structural_hash(entity) for step_id, entity in entities.items()}
 
-    rounds = max_rounds
-    if rounds is None:
-        rounds = min(32, 8 + ceil(log2(len(entities) + 1)))
+    rounds = _DEFAULT_WL_ROUNDS if max_rounds is None else max_rounds
 
     for _ in range(rounds):
         next_colors: dict[int, str] = {}
