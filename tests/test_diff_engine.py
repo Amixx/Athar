@@ -414,3 +414,79 @@ def test_diff_engine_stats_include_dangling_ref_counts():
     diff = diff_graphs(old_graph, new_graph)
     assert diff["stats"]["old_dangling_refs"] == 1
     assert diff["stats"]["new_dangling_refs"] == 0
+
+
+def test_diff_engine_semantic_stable_ignores_owner_history_churn():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {
+                "Name": {"kind": "string", "value": "Wall A"},
+                "OwnerHistory": {"kind": "ref", "id": 10},
+            },
+            "refs": [{"path": "/OwnerHistory", "target": 10, "target_type": "IfcOwnerHistory"}],
+        },
+        10: {
+            "entity_type": "IfcOwnerHistory",
+            "attributes": {"ChangeAction": {"kind": "string", "value": "MODIFIED"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {
+                "Name": {"kind": "string", "value": "Wall A"},
+                "OwnerHistory": {"kind": "ref", "id": 11},
+            },
+            "refs": [{"path": "/OwnerHistory", "target": 11, "target_type": "IfcOwnerHistory"}],
+        },
+        11: {
+            "entity_type": "IfcOwnerHistory",
+            "attributes": {"ChangeAction": {"kind": "string", "value": "MODIFIED"}},
+            "refs": [],
+        },
+    })
+    diff = diff_graphs(old_graph, new_graph, profile="semantic_stable")
+    assert diff["base_changes"] == []
+
+
+def test_diff_engine_raw_exact_keeps_owner_history_churn():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {
+                "Name": {"kind": "string", "value": "Wall A"},
+                "OwnerHistory": {"kind": "ref", "id": 10},
+            },
+            "refs": [{"path": "/OwnerHistory", "target": 10, "target_type": "IfcOwnerHistory"}],
+        },
+        10: {
+            "entity_type": "IfcOwnerHistory",
+            "attributes": {"ChangeAction": {"kind": "string", "value": "MODIFIED"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {
+                "Name": {"kind": "string", "value": "Wall A"},
+                "OwnerHistory": {"kind": "ref", "id": 11},
+            },
+            "refs": [{"path": "/OwnerHistory", "target": 11, "target_type": "IfcOwnerHistory"}],
+        },
+        11: {
+            "entity_type": "IfcOwnerHistory",
+            "attributes": {"ChangeAction": {"kind": "string", "value": "MODIFIED"}},
+            "refs": [],
+        },
+    })
+    diff = diff_graphs(old_graph, new_graph, profile="raw_exact")
+    assert len(diff["base_changes"]) == 1
+    assert diff["base_changes"][0]["op"] == "MODIFY"
+    assert diff["base_changes"][0]["identity"]["match_method"] == "exact_guid"

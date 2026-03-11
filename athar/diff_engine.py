@@ -15,6 +15,8 @@ _REPARENT_RELATION_TYPES = frozenset({
     "IfcRelAggregates",
     "IfcRelNests",
 })
+_VOLATILE_ATTRIBUTE_NAMES = frozenset({"OwnerHistory"})
+_VOLATILE_REF_PATH_PREFIXES = ("/OwnerHistory",)
 
 
 def diff_files(old_path: str, new_path: str, *, profile: str = "semantic_stable") -> dict:
@@ -84,6 +86,7 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
                 new_items=new_items,
                 old_rooted_owners=old_rooted_owners,
                 new_rooted_owners=new_rooted_owners,
+                profile=profile,
             ))
             continue
 
@@ -94,7 +97,7 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
             new_item = new_items[i]
             old_ent = old_item["entity"]
             new_ent = new_item["entity"]
-            if _entities_equal(entity_id, old_ent, new_ent):
+            if _entities_equal(entity_id, old_ent, new_ent, profile=profile):
                 continue
             change_id += 1
             base_changes.append(_make_change(
@@ -109,6 +112,7 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
                     old_rooted_owners.get(old_item["step_id"], set())
                     | new_rooted_owners.get(new_item["step_id"], set())
                 ),
+                profile=profile,
             ))
 
         for old_item in old_items[paired:]:
@@ -125,6 +129,7 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
                 rooted_owners=_summarize_rooted_owners(
                     old_rooted_owners.get(old_item["step_id"], set())
                 ),
+                profile=profile,
             ))
 
         for new_item in new_items[paired:]:
@@ -141,6 +146,7 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
                 rooted_owners=_summarize_rooted_owners(
                     new_rooted_owners.get(new_item["step_id"], set())
                 ),
+                profile=profile,
             ))
 
     derived_markers = _build_derived_markers(
@@ -369,25 +375,28 @@ def _apply_step_matches(
         }
 
 
-def _entities_equal(entity_id: str, old_ent: dict, new_ent: dict) -> bool:
+def _entities_equal(entity_id: str, old_ent: dict, new_ent: dict, *, profile: str) -> bool:
+    old_norm = _entity_for_profile(old_ent, profile=profile)
+    new_norm = _entity_for_profile(new_ent, profile=profile)
     # H identities are STEP-ID independent signatures; compare the same way
     # to avoid false MODIFYs from pure renumbering.
     if entity_id.startswith("H:"):
-        return structural_hash(old_ent) == structural_hash(new_ent)
+        return structural_hash(old_norm) == structural_hash(new_norm)
     return (
-        old_ent.get("entity_type") == new_ent.get("entity_type")
-        and old_ent.get("attributes") == new_ent.get("attributes")
-        and old_ent.get("refs") == new_ent.get("refs")
+        old_norm.get("entity_type") == new_norm.get("entity_type")
+        and old_norm.get("attributes") == new_norm.get("attributes")
+        and old_norm.get("refs") == new_norm.get("refs")
     )
 
 
-def _snapshot(entity: dict | None) -> dict | None:
+def _snapshot(entity: dict | None, *, profile: str) -> dict | None:
     if entity is None:
         return None
+    normalized = _entity_for_profile(entity, profile=profile)
     return {
-        "entity_type": entity.get("entity_type"),
-        "attributes": entity.get("attributes"),
-        "refs": entity.get("refs"),
+        "entity_type": normalized.get("entity_type"),
+        "attributes": normalized.get("attributes"),
+        "refs": normalized.get("refs"),
     }
 
 
@@ -401,10 +410,15 @@ def _make_change(
     new_ent: dict | None,
     identity: dict[str, Any],
     rooted_owners: dict[str, Any],
+    profile: str,
 ) -> dict[str, Any]:
     field_ops = []
     if op == "MODIFY":
-        field_ops = _diff_values(_snapshot(old_ent), _snapshot(new_ent), path="")
+        field_ops = _diff_values(
+            _snapshot(old_ent, profile=profile),
+            _snapshot(new_ent, profile=profile),
+            path="",
+        )
     return {
         "change_id": f"chg-{change_id:06d}",
         "op": op,
@@ -417,8 +431,8 @@ def _make_change(
             "matched_on": identity.get("matched_on"),
         },
         "field_ops": field_ops,
-        "old_snapshot": _snapshot(old_ent) if op == "REMOVE" else None,
-        "new_snapshot": _snapshot(new_ent) if op == "ADD" else None,
+        "old_snapshot": _snapshot(old_ent, profile=profile) if op == "REMOVE" else None,
+        "new_snapshot": _snapshot(new_ent, profile=profile) if op == "ADD" else None,
         "rooted_owners": rooted_owners,
         "change_categories": [],
         "equivalence_class": None,
@@ -433,6 +447,7 @@ def _make_class_delta_change(
     new_items: list[dict],
     old_rooted_owners: dict[int, set[str]],
     new_rooted_owners: dict[int, set[str]],
+    profile: str,
 ) -> dict[str, Any]:
     exemplar_entity = (new_items[0]["entity"] if new_items else old_items[0]["entity"])
     class_id = f"C:{entity_id[2:]}"
@@ -461,7 +476,7 @@ def _make_class_delta_change(
             "id": class_id,
             "old_count": len(old_items),
             "new_count": len(new_items),
-            "exemplar": _snapshot(exemplar_entity),
+            "exemplar": _snapshot(exemplar_entity, profile=profile),
         },
     }
 
@@ -675,6 +690,27 @@ def _compute_rooted_owner_index(
 def _summarize_rooted_owners(owner_ids: set[str], *, sample_size: int = 5) -> dict[str, Any]:
     ordered = sorted(owner_ids)
     return {"sample": ordered[:sample_size], "total": len(ordered)}
+
+
+def _entity_for_profile(entity: dict, *, profile: str) -> dict:
+    if profile != "semantic_stable":
+        return entity
+
+    attributes = {
+        name: value
+        for name, value in (entity.get("attributes") or {}).items()
+        if name not in _VOLATILE_ATTRIBUTE_NAMES
+    }
+    refs = [
+        ref
+        for ref in (entity.get("refs") or [])
+        if not any(str(ref.get("path", "")).startswith(prefix) for prefix in _VOLATILE_REF_PATH_PREFIXES)
+    ]
+    return {
+        "entity_type": entity.get("entity_type"),
+        "attributes": attributes,
+        "refs": refs,
+    }
 
 
 def _dangling_ref_count(graph: dict) -> int:
