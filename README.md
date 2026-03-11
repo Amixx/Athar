@@ -57,6 +57,8 @@ See [docs/DETAILS.md](docs/DETAILS.md) for detailed documentation on comparison 
 
 Foundational canonical value normalization for the upcoming diff engine lives in `athar/canonical_values.py`, with an executable reference in `scripts/explore/canonical_reference_impl.py`. This establishes deterministic ordering for SET/BAG aggregates and preserves wrapper/select type information so hashing stays stable across STEP reorder/renumber. Full-instance extraction (explicit attributes + typed edge paths) is in progress in `athar/graph_parser.py`, and GUID-free structural hash seeds (`H:` payloads) plus WL refinement scaffolding are implemented in `athar/canonical_ids.py`. Soft candidate blocking signatures (`S:`) live in `athar/semantic_signature.py`, deterministic record serialization is in `athar/canonical_serializer.py`, and an initial diff engine skeleton is in `athar/diff_engine.py`.
 
+Low-overlap rooted GUID churn now has Phase 2.5 scaffolding in `athar/root_remap.py`: deterministic GUID-overlap gating (`<30%`), GUID-independent root signatures, unique bucket remaps, and explicit ambiguity rejection. `athar/diff_engine.py` applies this remap before identity merge and emits `identity.match_method="root_remap"` when used.
+
 ## License
 
 MIT
