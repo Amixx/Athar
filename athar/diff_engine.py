@@ -63,6 +63,8 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
 
     old_by_id = _index_by_identity(old_graph, old_ids, old_methods)
     new_by_id = _index_by_identity(new_graph, new_ids, new_methods)
+    old_rooted_owners = _compute_rooted_owner_index(old_graph, old_ids)
+    new_rooted_owners = _compute_rooted_owner_index(new_graph, new_ids)
 
     base_changes = []
     change_id = 0
@@ -77,6 +79,8 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
                 entity_id=entity_id,
                 old_items=old_items,
                 new_items=new_items,
+                old_rooted_owners=old_rooted_owners,
+                new_rooted_owners=new_rooted_owners,
             ))
             continue
 
@@ -98,6 +102,10 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
                 old_ent=old_ent,
                 new_ent=new_ent,
                 match_method=_resolve_match_method(old_item, new_item),
+                rooted_owners=_summarize_rooted_owners(
+                    old_rooted_owners.get(old_item["step_id"], set())
+                    | new_rooted_owners.get(new_item["step_id"], set())
+                ),
             ))
 
         for old_item in old_items[paired:]:
@@ -111,6 +119,9 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
                 old_ent=old_ent,
                 new_ent=None,
                 match_method=_resolve_match_method(old_item, None),
+                rooted_owners=_summarize_rooted_owners(
+                    old_rooted_owners.get(old_item["step_id"], set())
+                ),
             ))
 
         for new_item in new_items[paired:]:
@@ -124,6 +135,9 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
                 old_ent=None,
                 new_ent=new_ent,
                 match_method=_resolve_match_method(None, new_item),
+                rooted_owners=_summarize_rooted_owners(
+                    new_rooted_owners.get(new_item["step_id"], set())
+                ),
             ))
 
     derived_markers = _build_derived_markers(
@@ -335,6 +349,7 @@ def _make_change(
     old_ent: dict | None,
     new_ent: dict | None,
     match_method: str,
+    rooted_owners: dict[str, Any],
 ) -> dict[str, Any]:
     field_ops = []
     if op == "MODIFY":
@@ -352,7 +367,7 @@ def _make_change(
         "field_ops": field_ops,
         "old_snapshot": _snapshot(old_ent) if op == "REMOVE" else None,
         "new_snapshot": _snapshot(new_ent) if op == "ADD" else None,
-        "rooted_owners": {"sample": [], "total": 0},
+        "rooted_owners": rooted_owners,
         "change_categories": [],
         "equivalence_class": None,
     }
@@ -364,9 +379,16 @@ def _make_class_delta_change(
     entity_id: str,
     old_items: list[dict],
     new_items: list[dict],
+    old_rooted_owners: dict[int, set[str]],
+    new_rooted_owners: dict[int, set[str]],
 ) -> dict[str, Any]:
     exemplar_entity = (new_items[0]["entity"] if new_items else old_items[0]["entity"])
     class_id = f"C:{entity_id[2:]}"
+    owners: set[str] = set()
+    for item in old_items:
+        owners.update(old_rooted_owners.get(item["step_id"], set()))
+    for item in new_items:
+        owners.update(new_rooted_owners.get(item["step_id"], set()))
     return {
         "change_id": f"chg-{change_id:06d}",
         "op": "CLASS_DELTA",
@@ -380,7 +402,7 @@ def _make_class_delta_change(
         "field_ops": [],
         "old_snapshot": None,
         "new_snapshot": None,
-        "rooted_owners": {"sample": [], "total": 0},
+        "rooted_owners": _summarize_rooted_owners(owners),
         "change_categories": [],
         "equivalence_class": {
             "id": class_id,
@@ -560,3 +582,43 @@ def _build_change_index(base_changes: list[dict[str, Any]]) -> dict[str, list[st
                 continue
             index.setdefault(entity_id, []).append(change_id)
     return index
+
+
+def _compute_rooted_owner_index(
+    graph: dict,
+    ids: dict[int, str],
+) -> dict[int, set[str]]:
+    entities = graph.get("entities", {})
+    adjacency: dict[int, list[int]] = {}
+    for step_id, entity in entities.items():
+        targets = [
+            ref.get("target")
+            for ref in entity.get("refs", [])
+            if ref.get("target") in entities
+        ]
+        adjacency[step_id] = sorted(set(targets))
+
+    owners_by_step: dict[int, set[str]] = {step_id: set() for step_id in entities}
+    root_steps = sorted(
+        [step_id for step_id, entity_id in ids.items() if entity_id.startswith("G:")],
+        key=lambda step_id: ids[step_id],
+    )
+    for root_step in root_steps:
+        root_id = ids[root_step]
+        stack = [root_step]
+        seen: set[int] = set()
+        while stack:
+            step = stack.pop()
+            if step in seen:
+                continue
+            seen.add(step)
+            owners_by_step.setdefault(step, set()).add(root_id)
+            for target in adjacency.get(step, []):
+                if target not in seen:
+                    stack.append(target)
+    return owners_by_step
+
+
+def _summarize_rooted_owners(owner_ids: set[str], *, sample_size: int = 5) -> dict[str, Any]:
+    ordered = sorted(owner_ids)
+    return {"sample": ordered[:sample_size], "total": len(ordered)}

@@ -337,3 +337,43 @@ def test_diff_engine_does_not_emit_reparent_for_non_qualified_relation_type():
 
     diff = diff_graphs(old_graph, new_graph)
     assert diff["derived_markers"] == []
+
+
+def test_diff_engine_sets_rooted_owners_for_shared_removed_node_with_sampling_cap():
+    old_entities = {}
+    for idx in range(1, 7):
+        old_entities[idx] = {
+            "entity_type": "IfcWall",
+            "global_id": f"ROOT_{idx}",
+            "attributes": {},
+            "refs": [{"path": "/Representation", "target": 100, "target_type": "IfcCartesianPoint"}],
+        }
+    old_entities[100] = {
+        "entity_type": "IfcCartesianPoint",
+        "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "1"}]}},
+        "refs": [],
+    }
+    new_entities = {}
+    for idx in range(1, 7):
+        new_entities[idx + 200] = {
+            "entity_type": "IfcWall",
+            "global_id": f"ROOT_{idx}",
+            "attributes": {},
+            "refs": [],
+        }
+
+    diff = diff_graphs(_graph_with_entities(old_entities), _graph_with_entities(new_entities))
+    removed = [
+        change for change in diff["base_changes"]
+        if change["op"] == "REMOVE" and (change["old_entity_id"] or "").startswith("H:")
+    ]
+    assert len(removed) == 1
+    owners = removed[0]["rooted_owners"]
+    assert owners["total"] == 6
+    assert owners["sample"] == [
+        "G:ROOT_1",
+        "G:ROOT_2",
+        "G:ROOT_3",
+        "G:ROOT_4",
+        "G:ROOT_5",
+    ]
