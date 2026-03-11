@@ -18,7 +18,7 @@ The core engine is responsible for parsing IFC files, aligning entities across m
 - `athar/__main__.py` — Minimal CLI for the core engine. Diffs two files and prints raw JSON to stdout.
 - `athar/canonical_values.py` — Deterministic canonicalization of scalar and aggregate values for the low-level diff reimplementation. Preserves wrapper/select type information, enforces deterministic ordering for SET/BAG, and uses profile-driven float normalization.
 - `athar/graph_parser.py` — Full-instance graph extractor for the low-level diff layer. Emits explicit attributes in canonical form plus a typed edge list labeled with JSON-Pointer-like paths.
-- `athar/canonical_ids.py` — Structural hash helpers for low-level identity (`H:`) seeds. Computes deterministic payloads that ignore STEP IDs and inverse attributes.
+- `athar/canonical_ids.py` — Structural hash helpers for low-level identity (`H:`) seeds and WL-style refinement scaffolding. Computes deterministic payloads that ignore STEP IDs and inverse attributes.
 
 ### Higher Layers (`athar_layers/`)
 
