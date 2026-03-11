@@ -12,6 +12,8 @@ import json
 from collections import Counter, defaultdict
 from typing import Any
 
+from .canonical_ids import wl_refine_colors
+
 GUID_OVERLAP_THRESHOLD = 0.30
 _VOLATILE_ROOT_ATTRS = frozenset({"GlobalId", "OwnerHistory"})
 _VOLATILE_ROOT_REF_PATHS = frozenset({"/OwnerHistory"})
@@ -44,6 +46,8 @@ def plan_root_remap(
 
     old_by_sig = _group_roots_by_signature(old_roots)
     new_by_sig = _group_roots_by_signature(new_roots)
+    old_colors = wl_refine_colors(old_graph)
+    new_colors = wl_refine_colors(new_graph)
 
     old_to_new: dict[str, str] = {}
     ambiguous = 0
@@ -57,7 +61,16 @@ def plan_root_remap(
             if old_gid != new_gid:
                 old_to_new[old_gid] = new_gid
         elif old_ids and new_ids:
-            ambiguous += min(len(old_ids), len(new_ids))
+            bucket_matches, bucket_ambiguous = _disambiguate_ambiguous_bucket(
+                old_roots=old_roots,
+                new_roots=new_roots,
+                old_colors=old_colors,
+                new_colors=new_colors,
+                old_ids=old_ids,
+                new_ids=new_ids,
+            )
+            old_to_new.update(bucket_matches)
+            ambiguous += bucket_ambiguous
 
     return {
         "enabled": True,
@@ -145,3 +158,58 @@ def _edge_signature(refs: list[dict]) -> list[dict[str, Any]]:
     ]
     edges.sort(key=lambda item: (item["path"], item["target_type"] or "", item["count"]))
     return edges
+
+
+def _disambiguate_ambiguous_bucket(
+    *,
+    old_roots: dict[str, dict],
+    new_roots: dict[str, dict],
+    old_colors: dict[int, str],
+    new_colors: dict[int, str],
+    old_ids: list[str],
+    new_ids: list[str],
+) -> tuple[dict[str, str], int]:
+    old_by_sig: defaultdict[str, list[str]] = defaultdict(list)
+    new_by_sig: defaultdict[str, list[str]] = defaultdict(list)
+    for gid in old_ids:
+        old_by_sig[_neighbor_signature(old_roots[gid], old_colors)].append(gid)
+    for gid in new_ids:
+        new_by_sig[_neighbor_signature(new_roots[gid], new_colors)].append(gid)
+
+    matches: dict[str, str] = {}
+    matched_old: set[str] = set()
+    matched_new: set[str] = set()
+    for signature in sorted(set(old_by_sig) & set(new_by_sig)):
+        old_group = sorted(old_by_sig[signature])
+        new_group = sorted(new_by_sig[signature])
+        if len(old_group) == 1 and len(new_group) == 1:
+            old_gid = old_group[0]
+            new_gid = new_group[0]
+            matched_old.add(old_gid)
+            matched_new.add(new_gid)
+            if old_gid != new_gid:
+                matches[old_gid] = new_gid
+
+    unresolved_old = [gid for gid in old_ids if gid not in matched_old]
+    unresolved_new = [gid for gid in new_ids if gid not in matched_new]
+    ambiguous = min(len(unresolved_old), len(unresolved_new))
+    return matches, ambiguous
+
+
+def _neighbor_signature(entity: dict, colors: dict[int, str]) -> str:
+    counts: Counter[tuple[str, str | None, str]] = Counter()
+    for ref in entity.get("refs", []):
+        path = ref.get("path", "")
+        if path in _VOLATILE_ROOT_REF_PATHS:
+            continue
+        target = ref.get("target")
+        target_color = colors.get(target, "MISSING") if isinstance(target, int) else "MISSING"
+        counts[(path, ref.get("target_type"), target_color)] += 1
+
+    payload = [
+        {"path": path, "target_type": target_type, "target_color": target_color, "count": count}
+        for (path, target_type, target_color), count in counts.items()
+    ]
+    payload.sort(key=lambda item: (item["path"], item["target_type"] or "", item["target_color"], item["count"]))
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()

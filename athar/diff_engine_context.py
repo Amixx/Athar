@@ -82,6 +82,11 @@ def prepare_diff_context(old_graph: dict, new_graph: dict, *, profile: str) -> d
             "new_entities": len(new_graph.get("entities", {})),
             "matched": _matched_occurrence_count(old_by_id, new_by_id),
             "ambiguous": remap["ambiguous"] + path_propagation["ambiguous"] + secondary["ambiguous"],
+            "ambiguous_by_stage": {
+                "root_remap": remap["ambiguous"],
+                "path_propagation": path_propagation["ambiguous"],
+                "secondary_match": secondary["ambiguous"],
+            },
             "old_dangling_refs": _dangling_ref_count(old_graph),
             "new_dangling_refs": _dangling_ref_count(new_graph),
         },
