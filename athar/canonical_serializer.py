@@ -1,4 +1,4 @@
-"""Deterministic serializer for low-level identity records."""
+"""Deterministic serializer for engine identity records."""
 
 from __future__ import annotations
 

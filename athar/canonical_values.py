@@ -1,4 +1,4 @@
-"""Canonical value normalization for the low-level diff layer.
+"""Canonical value normalization for the graph diff engine.
 
 This module intentionally focuses on deterministic, schema-driven
 canonicalization. Entity references must be handled by the caller.

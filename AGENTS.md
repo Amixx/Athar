@@ -6,7 +6,7 @@ Semantic IFC diff tool. Compares BIM models at the entity/property level, not te
 
 ## Architecture
 
-Athar is split into a core diff engine and higher-level integration layers.
+Athar contains the core diff engine plus a transitional integration package.
 
 ### Core Engine (`athar/`)
 
@@ -16,18 +16,19 @@ The core engine is responsible for parsing IFC files, aligning entities across m
 - `athar/matcher.py` — Entity alignment across two parsed models. Primary matching by GlobalId. When GUID overlap is low (<30%), activates a three-stage content-based fallback: (1) exact unique content signature match (ifc_class + name + type_name + container + groups + properties hash), (2) positional disambiguation for duplicate signatures using quantized placement (50mm cells), (3) fuzzy scoring on remaining candidates (weighted: placement proximity 0.30, props overlap 0.25, name 0.15, type_name 0.15, container 0.10, groups 0.05) with threshold + margin guards. Conservative: ambiguous cases left unmatched. Returns `{old_to_new: {old_guid: new_guid}, method: "guid"|"content_fallback", guid_overlap: float}`.
 - `athar/differ.py` — Compares two parsed models. Uses `matcher.match_entities()` for entity alignment (supports both GUID and content-based matching). Produces added/deleted/changed/bulk_movements buckets with per-property granularity. Includes file metadata from both sides in the output. Output is raw JSON "for computers".
 - `athar/__main__.py` — Minimal CLI for the core engine. Diffs two files and prints raw JSON to stdout.
-- `athar/canonical_values.py` — Deterministic canonicalization of scalar and aggregate values for the low-level diff reimplementation. Preserves wrapper/select type information, enforces deterministic ordering for SET/BAG, and uses profile-driven float normalization.
-- `athar/graph_parser.py` — Full-instance graph extractor for the low-level diff layer. Emits explicit attributes in canonical form plus a typed edge list labeled with JSON-Pointer-like paths.
-- `athar/canonical_ids.py` — Structural hash helpers for low-level identity (`H:`) seeds and WL-style refinement scaffolding. Computes deterministic payloads that ignore STEP IDs and inverse attributes.
+- `athar/canonical_values.py` — Deterministic canonicalization of scalar and aggregate values for the graph engine. Preserves wrapper/select type information, enforces deterministic ordering for SET/BAG, and uses profile-driven float normalization.
+- `athar/graph_parser.py` — Full-instance graph extractor for the engine. Emits explicit attributes in canonical form plus a typed edge list labeled with JSON-Pointer-like paths.
+- `athar/canonical_ids.py` — Structural hash helpers for engine identity (`H:`) seeds and WL-style refinement scaffolding. Computes deterministic payloads that ignore STEP IDs and inverse attributes.
 - `athar/semantic_signature.py` — Soft signature (`S:`) for candidate blocking. Uses attribute/aggregate shape and typed edge signatures while ignoring literal values.
 - `athar/root_remap.py` — Phase 2.5 rooted remap scaffolding for low GUID overlap. Builds GUID-independent root signatures, applies deterministic unique-bucket remaps, and rejects ambiguous buckets.
-- `athar/canonical_serializer.py` — Deterministic serializer for low-level identity/class records with total ordering by ID.
-- `athar/diff_engine.py` — Core diff engine skeleton that merges identity sets and emits `base_changes` in the new wire format. Integrates rooted remap planning before ID assignment and records `match_method` (`exact_guid`, `root_remap`, `exact_hash`) per change.
+- `athar/matcher_graph.py` — Matching stages for graph diffing. Implements deterministic typed-path propagation from matched root pairs (unique 1:1 buckets only) and a conservative secondary matcher for unresolved non-root entities via semantic-signature blocking with explicit ambiguity rejection.
+- `athar/canonical_serializer.py` — Deterministic serializer for identity/class records with total ordering by ID.
+- `athar/diff_engine.py` — Core diff engine skeleton that merges identity sets and emits `base_changes` in the new wire format. Integrates rooted remap planning + typed-path propagation + secondary matching before ID assignment/merge, records `match_method` (`exact_guid`, `root_remap`, `path_propagation`, `secondary_match`, `exact_hash`) per change, and emits recursive field-level `field_ops` for `MODIFY`.
 - `athar/__main__.py` — CLI supports `--engine graph` (graph-based core) and `--engine legacy` (current GUID-centric pipeline).
 
 ### Higher Layers (`athar_layers/`)
 
-Integration layers that build upon the core engine for human-readable output, scene modeling, and folder-level versioning.
+Integration layers that build upon the core engine for human-readable output, scene modeling, and folder-level versioning. This package is transitional and may be moved out of this repository.
 
 Detailed information for these components can be found in [athar_layers/AGENTS.md](athar_layers/AGENTS.md).
 
@@ -40,8 +41,8 @@ Detailed information for these components can be found in [athar_layers/AGENTS.m
 ## Conventions
 
 - Python 3.10+
-- Core engine (`athar/`) must not depend on higher layers (`athar_layers/`).
-- Higher layers enrich the raw JSON output from the core engine for human consumption.
+- Engine modules (`athar/`) must not depend on integration/presentation modules (`athar_layers/`).
+- Integration/presentation layers enrich the raw JSON output from the engine for human consumption.
 - Use `ifcopenshell` for all IFC parsing. Do not parse STEP files as text.
 - Match entities across files by GlobalId (the stable identifier across revisions).
 - Keep diffing deterministic and algorithmic — no AI in the diff pipeline itself.

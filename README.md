@@ -37,7 +37,7 @@ python -m athar_layers some-folder/ --report version-history.md
 # Two-file diff (JSON output for computers)
 python -m athar old.ifc new.ifc
 
-# Graph-based diff engine (new core work-in-progress)
+# Graph engine (WIP)
 python -m athar old.ifc new.ifc --engine graph --profile semantic_stable
 ```
 
@@ -53,11 +53,13 @@ python -m pytest tests/
 
 See [docs/DETAILS.md](docs/DETAILS.md) for detailed documentation on comparison logic, folder mode, file metadata, helper scripts, and test data.
 
-## Low-Level Diff Reimplementation (WIP)
+## Engine Reimplementation (WIP)
 
-Foundational canonical value normalization for the upcoming diff engine lives in `athar/canonical_values.py`, with an executable reference in `scripts/explore/canonical_reference_impl.py`. This establishes deterministic ordering for SET/BAG aggregates and preserves wrapper/select type information so hashing stays stable across STEP reorder/renumber. Full-instance extraction (explicit attributes + typed edge paths) is in progress in `athar/graph_parser.py`, and GUID-free structural hash seeds (`H:` payloads) plus WL refinement scaffolding are implemented in `athar/canonical_ids.py`. Soft candidate blocking signatures (`S:`) live in `athar/semantic_signature.py`, deterministic record serialization is in `athar/canonical_serializer.py`, and an initial diff engine skeleton is in `athar/diff_engine.py`.
+Foundational canonical value normalization for the engine lives in `athar/canonical_values.py`, with an executable reference in `scripts/explore/canonical_reference_impl.py`. This establishes deterministic ordering for SET/BAG aggregates and preserves wrapper/select type information so hashing stays stable across STEP reorder/renumber. Full-instance extraction (explicit attributes + typed edge paths) is in progress in `athar/graph_parser.py`, and GUID-free structural hash seeds (`H:` payloads) plus WL refinement scaffolding are implemented in `athar/canonical_ids.py`. Soft candidate blocking signatures (`S:`) live in `athar/semantic_signature.py`, deterministic record serialization is in `athar/canonical_serializer.py`, and an initial diff engine skeleton is in `athar/diff_engine.py`.
 
-Low-overlap rooted GUID churn now has Phase 2.5 scaffolding in `athar/root_remap.py`: deterministic GUID-overlap gating (`<30%`), GUID-independent root signatures, unique bucket remaps, and explicit ambiguity rejection. `athar/diff_engine.py` applies this remap before identity merge and emits `identity.match_method="root_remap"` when used.
+Low-overlap rooted GUID churn now has Phase 2.5 scaffolding in `athar/root_remap.py`: deterministic GUID-overlap gating (`<30%`), GUID-independent root signatures, unique bucket remaps, and explicit ambiguity rejection. `athar/matcher_graph.py` now adds deterministic typed-path propagation from matched root pairs for unique non-root buckets, plus a conservative secondary matcher for unresolved non-root residues using semantic-signature blocking and ambiguity rejection. `athar/diff_engine.py` applies remap + propagation + secondary matching before identity merge, emits `identity.match_method` (`root_remap`, `path_propagation`, `secondary_match`, `exact_guid`, `exact_hash`), and now emits recursive field-level `field_ops` paths for `MODIFY` changes.
+
+`athar_layers/` remains in-repo for now as a presentation/integration package, but the engine work is centered in `athar/` and is intended to stand on its own.
 
 ## License
 
