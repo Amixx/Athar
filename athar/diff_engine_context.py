@@ -1,0 +1,378 @@
+"""Context building and identity/matching helpers for graph diff."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .canonical_ids import structural_hash, wl_refine_colors
+from .graph_parser import count_dangling_refs
+from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
+from .root_remap import plan_root_remap
+from .diff_engine_markers import compute_rooted_owner_index
+
+_VOLATILE_ATTRIBUTE_NAMES = frozenset({"OwnerHistory"})
+_VOLATILE_REF_PATH_PREFIXES = ("/OwnerHistory",)
+_VOLATILE_ENTITY_TYPES = frozenset({"IfcOwnerHistory"})
+
+
+def prepare_diff_context(old_graph: dict, new_graph: dict, *, profile: str) -> dict[str, Any]:
+    _validate_schema(old_graph, new_graph)
+
+    remap = plan_root_remap(old_graph, new_graph)
+    old_ids, old_identity = _assign_ids(old_graph, profile=profile, root_remap=remap["old_to_new"])
+    new_ids, new_identity = _assign_ids(new_graph, profile=profile)
+    root_pairs = _match_root_steps(old_graph, new_graph, remap["old_to_new"])
+    exact_pairs = _match_steps_by_unique_id(old_ids, new_ids)
+    pre_old = set(root_pairs) | set(exact_pairs)
+    pre_new = set(root_pairs.values()) | set(exact_pairs.values())
+    path_propagation = propagate_matches_by_typed_path(
+        old_graph,
+        new_graph,
+        root_pairs,
+        pre_matched_old=pre_old,
+        pre_matched_new=pre_new,
+    )
+    _apply_step_matches(
+        old_ids,
+        old_identity,
+        new_ids,
+        path_propagation["old_to_new"],
+        method="path_propagation",
+        diagnostics=path_propagation.get("diagnostics", {}),
+    )
+    matched_after_path = _match_steps_by_unique_id(old_ids, new_ids)
+    secondary = secondary_match_unresolved(
+        old_graph,
+        new_graph,
+        pre_matched_old=set(matched_after_path),
+        pre_matched_new=set(matched_after_path.values()),
+    )
+    _apply_step_matches(
+        old_ids,
+        old_identity,
+        new_ids,
+        secondary["old_to_new"],
+        method="secondary_match",
+        diagnostics=secondary.get("diagnostics", {}),
+    )
+
+    old_by_id = _index_by_identity(old_graph, old_ids, old_identity)
+    new_by_id = _index_by_identity(new_graph, new_ids, new_identity)
+    old_rooted_owners = compute_rooted_owner_index(old_graph, old_ids)
+    new_rooted_owners = compute_rooted_owner_index(new_graph, new_ids)
+
+    return {
+        "version": "2",
+        "profile": profile,
+        "old_graph": old_graph,
+        "new_graph": new_graph,
+        "old_ids": old_ids,
+        "new_ids": new_ids,
+        "old_by_id": old_by_id,
+        "new_by_id": new_by_id,
+        "old_rooted_owners": old_rooted_owners,
+        "new_rooted_owners": new_rooted_owners,
+        "schema_policy": {
+            "mode": "same_schema_only",
+            "old_schema": old_graph["metadata"]["schema"],
+            "new_schema": new_graph["metadata"]["schema"],
+        },
+        "stats": {
+            "old_entities": len(old_graph.get("entities", {})),
+            "new_entities": len(new_graph.get("entities", {})),
+            "matched": _matched_occurrence_count(old_by_id, new_by_id),
+            "ambiguous": remap["ambiguous"] + path_propagation["ambiguous"] + secondary["ambiguous"],
+            "old_dangling_refs": _dangling_ref_count(old_graph),
+            "new_dangling_refs": _dangling_ref_count(new_graph),
+        },
+    }
+
+
+def build_result(
+    context: dict[str, Any],
+    *,
+    base_changes: list[dict[str, Any]],
+    derived_markers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        **result_header(context),
+        "base_changes": base_changes,
+        "derived_markers": derived_markers,
+    }
+
+
+def result_header(context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "version": context["version"],
+        "profile": context["profile"],
+        "schema_policy": context["schema_policy"],
+        "stats": context["stats"],
+    }
+
+
+def index_change(change_index: dict[str, list[str]], change: dict[str, Any]) -> None:
+    change_id = change["change_id"]
+    for entity_id in (change.get("old_entity_id"), change.get("new_entity_id")):
+        if entity_id is None:
+            continue
+        change_index.setdefault(entity_id, []).append(change_id)
+
+
+def entities_equal(entity_id: str, old_ent: dict, new_ent: dict, *, profile: str) -> bool:
+    old_norm = entity_for_profile(old_ent, profile=profile)
+    new_norm = entity_for_profile(new_ent, profile=profile)
+    if entity_id.startswith("H:"):
+        return structural_hash(old_norm) == structural_hash(new_norm)
+    return (
+        old_norm.get("entity_type") == new_norm.get("entity_type")
+        and old_norm.get("attributes") == new_norm.get("attributes")
+        and old_norm.get("refs") == new_norm.get("refs")
+    )
+
+
+def should_emit_class_delta(
+    entity_id: str,
+    old_items: list[dict],
+    new_items: list[dict],
+) -> bool:
+    if not entity_id.startswith("H:"):
+        return False
+    if not old_items or not new_items:
+        return False
+    if len(old_items) == len(new_items):
+        return False
+
+    all_methods = [
+        item.get("identity", {}).get("match_method")
+        for item in old_items + new_items
+    ]
+    return all(method == "exact_hash" for method in all_methods)
+
+
+def resolve_identity(old_item: dict | None, new_item: dict | None) -> dict[str, Any]:
+    old_identity = (old_item or {}).get("identity")
+    new_identity = (new_item or {}).get("identity")
+    if old_identity is None and new_identity is None:
+        return {"match_method": "exact_hash", "match_confidence": 1.0, "matched_on": None}
+    if old_identity is None:
+        return dict(new_identity)
+    if new_identity is None:
+        return dict(old_identity)
+
+    old_method = old_identity.get("match_method", "exact_hash")
+    new_method = new_identity.get("match_method", "exact_hash")
+    old_priority = _identity_priority(old_method)
+    new_priority = _identity_priority(new_method)
+    if old_priority > new_priority:
+        return dict(old_identity)
+    if new_priority > old_priority:
+        return dict(new_identity)
+
+    if old_identity.get("match_confidence", 0.0) >= new_identity.get("match_confidence", 0.0):
+        return dict(old_identity)
+    return dict(new_identity)
+
+
+def entity_for_profile(entity: dict, *, profile: str) -> dict:
+    if profile != "semantic_stable":
+        return entity
+
+    if entity.get("entity_type") in _VOLATILE_ENTITY_TYPES:
+        return {
+            "entity_type": entity.get("entity_type"),
+            "attributes": {},
+            "refs": [],
+        }
+
+    attributes = {
+        name: value
+        for name, value in (entity.get("attributes") or {}).items()
+        if name not in _VOLATILE_ATTRIBUTE_NAMES
+    }
+    refs = [
+        ref
+        for ref in (entity.get("refs") or [])
+        if not any(str(ref.get("path", "")).startswith(prefix) for prefix in _VOLATILE_REF_PATH_PREFIXES)
+    ]
+    return {
+        "entity_type": entity.get("entity_type"),
+        "attributes": attributes,
+        "refs": refs,
+    }
+
+
+def _validate_schema(old_graph: dict, new_graph: dict) -> None:
+    old_schema = old_graph.get("metadata", {}).get("schema")
+    new_schema = new_graph.get("metadata", {}).get("schema")
+    if old_schema != new_schema:
+        raise ValueError(f"Schema mismatch: {old_schema} vs {new_schema}")
+
+
+def _assign_ids(
+    graph: dict,
+    *,
+    profile: str,
+    root_remap: dict[str, str] | None = None,
+) -> tuple[dict[int, str], dict[int, dict[str, Any]]]:
+    entities = graph.get("entities", {})
+    id_graph = _graph_for_profile(graph, profile=profile)
+    id_entities = id_graph.get("entities", {})
+    colors = wl_refine_colors(id_graph)
+    guid_index = _guid_index(entities)
+    ids: dict[int, str] = {}
+    identity: dict[int, dict[str, Any]] = {}
+    for step_id, entity in entities.items():
+        gid = entity.get("global_id")
+        if gid and guid_index.get(gid, 0) == 1:
+            mapped_gid = (root_remap or {}).get(gid, gid)
+            ids[step_id] = f"G:{mapped_gid}"
+            identity[step_id] = {
+                "match_method": "root_remap" if mapped_gid != gid else "exact_guid",
+                "match_confidence": 1.0,
+                "matched_on": (
+                    {"stage": "root_remap", "from": gid, "to": mapped_gid}
+                    if mapped_gid != gid
+                    else {"stage": "guid", "guid": gid}
+                ),
+            }
+        else:
+            hash_entity = id_entities.get(step_id, entity)
+            ids[step_id] = f"H:{colors.get(step_id) or structural_hash(hash_entity)}"
+            identity[step_id] = {
+                "match_method": "exact_hash",
+                "match_confidence": 1.0,
+                "matched_on": {"stage": "structural_hash"},
+            }
+    return ids, identity
+
+
+def _guid_index(entities: dict[int, dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entity in entities.values():
+        gid = entity.get("global_id")
+        if gid:
+            counts[gid] = counts.get(gid, 0) + 1
+    return counts
+
+
+def _index_by_identity(
+    graph: dict,
+    ids: dict[int, str],
+    identity: dict[int, dict[str, Any]],
+) -> dict[str, list[dict]]:
+    by_id: dict[str, list[dict]] = {}
+    for step_id, entity in graph.get("entities", {}).items():
+        by_id.setdefault(ids[step_id], []).append({
+            "step_id": step_id,
+            "entity": entity,
+            "identity": identity.get(step_id, {
+                "match_method": "exact_hash",
+                "match_confidence": 1.0,
+                "matched_on": None,
+            }),
+        })
+    return by_id
+
+
+def _matched_occurrence_count(old_by_id: dict[str, list[dict]], new_by_id: dict[str, list[dict]]) -> int:
+    total = 0
+    for entity_id in set(old_by_id) & set(new_by_id):
+        total += min(len(old_by_id[entity_id]), len(new_by_id[entity_id]))
+    return total
+
+
+def _identity_priority(match_method: str) -> int:
+    order = {
+        "root_remap": 5,
+        "path_propagation": 4,
+        "secondary_match": 3,
+        "exact_guid": 2,
+        "exact_hash": 1,
+    }
+    return order.get(match_method, 0)
+
+
+def _match_root_steps(
+    old_graph: dict,
+    new_graph: dict,
+    root_remap: dict[str, str],
+) -> dict[int, int]:
+    old_roots = _unique_guid_step_index(old_graph.get("entities", {}))
+    new_roots = _unique_guid_step_index(new_graph.get("entities", {}))
+    pairs: dict[int, int] = {}
+    for old_gid, old_step in sorted(old_roots.items()):
+        mapped_gid = root_remap.get(old_gid, old_gid)
+        new_step = new_roots.get(mapped_gid)
+        if new_step is not None:
+            pairs[old_step] = new_step
+    return pairs
+
+
+def _unique_guid_step_index(entities: dict[int, dict]) -> dict[str, int]:
+    counts = _guid_index(entities)
+    out: dict[str, int] = {}
+    for step_id, entity in entities.items():
+        gid = entity.get("global_id")
+        if gid and counts.get(gid, 0) == 1:
+            out[gid] = step_id
+    return out
+
+
+def _match_steps_by_unique_id(old_ids: dict[int, str], new_ids: dict[int, str]) -> dict[int, int]:
+    old_by_id: dict[str, list[int]] = {}
+    new_by_id: dict[str, list[int]] = {}
+    for step_id, entity_id in old_ids.items():
+        old_by_id.setdefault(entity_id, []).append(step_id)
+    for step_id, entity_id in new_ids.items():
+        new_by_id.setdefault(entity_id, []).append(step_id)
+
+    pairs: dict[int, int] = {}
+    for entity_id in sorted(set(old_by_id) & set(new_by_id)):
+        old_steps = old_by_id[entity_id]
+        new_steps = new_by_id[entity_id]
+        if len(old_steps) == 1 and len(new_steps) == 1:
+            pairs[old_steps[0]] = new_steps[0]
+    return pairs
+
+
+def _apply_step_matches(
+    old_ids: dict[int, str],
+    old_identity: dict[int, dict[str, Any]],
+    new_ids: dict[int, str],
+    step_matches: dict[int, int],
+    *,
+    method: str,
+    diagnostics: dict[int, dict[str, Any]] | None = None,
+) -> None:
+    for old_step, new_step in step_matches.items():
+        new_entity_id = new_ids.get(new_step)
+        if new_entity_id is None:
+            continue
+        old_ids[old_step] = new_entity_id
+        diag = (diagnostics or {}).get(old_step, {})
+        old_identity[old_step] = {
+            "match_method": method,
+            "match_confidence": float(diag.get("match_confidence", 1.0)),
+            "matched_on": diag.get("matched_on"),
+        }
+
+
+def _graph_for_profile(graph: dict, *, profile: str) -> dict:
+    if profile != "semantic_stable":
+        return graph
+    entities = {
+        step_id: entity_for_profile(entity, profile=profile)
+        for step_id, entity in graph.get("entities", {}).items()
+    }
+    return {"entities": entities}
+
+
+def _dangling_ref_count(graph: dict) -> int:
+    meta_count = (
+        graph.get("metadata", {})
+        .get("diagnostics", {})
+        .get("dangling_refs")
+    )
+    if isinstance(meta_count, int):
+        return meta_count
+    return count_dangling_refs(graph)

@@ -1,23 +1,22 @@
-"""Core diff engine skeleton built on graph parsing and canonical IDs."""
+"""Core diff engine orchestration built on graph parsing and canonical IDs."""
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from .canonical_ids import structural_hash, wl_refine_colors
-from .graph_parser import count_dangling_refs, parse_graph
-from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
-from .root_remap import plan_root_remap
-
-_REPARENT_RELATION_TYPES = frozenset({
-    "IfcRelContainedInSpatialStructure",
-    "IfcRelAggregates",
-    "IfcRelNests",
-})
-_VOLATILE_ATTRIBUTE_NAMES = frozenset({"OwnerHistory"})
-_VOLATILE_REF_PATH_PREFIXES = ("/OwnerHistory",)
-_VOLATILE_ENTITY_TYPES = frozenset({"IfcOwnerHistory"})
+from .diff_engine_changes import make_change, make_class_delta_change
+from .diff_engine_context import (
+    build_result,
+    entities_equal,
+    index_change,
+    prepare_diff_context,
+    resolve_identity,
+    result_header,
+    should_emit_class_delta,
+)
+from .diff_engine_markers import build_derived_markers, summarize_rooted_owners
+from .diff_engine_streaming import json_line, stream_diff_result
+from .graph_parser import parse_graph
 
 
 def diff_files(old_path: str, new_path: str, *, profile: str = "semantic_stable") -> dict:
@@ -27,22 +26,22 @@ def diff_files(old_path: str, new_path: str, *, profile: str = "semantic_stable"
 
 
 def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_stable") -> dict:
-    context = _prepare_diff_context(old_graph, new_graph, profile=profile)
+    context = prepare_diff_context(old_graph, new_graph, profile=profile)
     base_changes: list[dict[str, Any]] = []
     change_index: dict[str, list[str]] = {}
 
     for change in _iter_base_changes(context):
         base_changes.append(change)
-        _index_change(change_index, change)
+        index_change(change_index, change)
 
-    derived_markers = _build_derived_markers(
+    derived_markers = build_derived_markers(
         old_graph=context["old_graph"],
         new_graph=context["new_graph"],
         old_ids=context["old_ids"],
         new_ids=context["new_ids"],
         change_index=change_index,
     )
-    return _build_result(context, base_changes=base_changes, derived_markers=derived_markers)
+    return build_result(context, base_changes=base_changes, derived_markers=derived_markers)
 
 
 def stream_diff_files(
@@ -77,17 +76,17 @@ def stream_diff_graphs(
     if chunk_size <= 0:
         raise ValueError("chunk_size must be > 0")
 
-    context = _prepare_diff_context(old_graph, new_graph, profile=profile)
-    header = _result_header(context)
+    context = prepare_diff_context(old_graph, new_graph, profile=profile)
+    header = result_header(context)
     change_index: dict[str, list[str]] = {}
 
     if mode == "ndjson":
-        yield _json_line({"record_type": "header", **header})
+        yield json_line({"record_type": "header", **header})
         base_count = 0
         for base_count, change in enumerate(_iter_base_changes(context), start=1):
-            _index_change(change_index, change)
-            yield _json_line({"record_type": "base_change", "index": base_count - 1, "change": change})
-        derived_markers = _build_derived_markers(
+            index_change(change_index, change)
+            yield json_line({"record_type": "base_change", "index": base_count - 1, "change": change})
+        derived_markers = build_derived_markers(
             old_graph=context["old_graph"],
             new_graph=context["new_graph"],
             old_ids=context["old_ids"],
@@ -95,8 +94,8 @@ def stream_diff_graphs(
             change_index=change_index,
         )
         for idx, marker in enumerate(derived_markers):
-            yield _json_line({"record_type": "derived_marker", "index": idx, "marker": marker})
-        yield _json_line({
+            yield json_line({"record_type": "derived_marker", "index": idx, "marker": marker})
+        yield json_line({
             "record_type": "end",
             "base_change_count": base_count,
             "derived_marker_count": len(derived_markers),
@@ -104,16 +103,16 @@ def stream_diff_graphs(
         return
 
     if mode == "chunked_json":
-        yield _json_line({"chunk_type": "header", **header})
+        yield json_line({"chunk_type": "header", **header})
         buffer: list[dict[str, Any]] = []
         offset = 0
         base_count = 0
         for change in _iter_base_changes(context):
-            _index_change(change_index, change)
+            index_change(change_index, change)
             buffer.append(change)
             base_count += 1
             if len(buffer) >= chunk_size:
-                yield _json_line({
+                yield json_line({
                     "chunk_type": "base_changes",
                     "offset": offset,
                     "count": len(buffer),
@@ -122,14 +121,14 @@ def stream_diff_graphs(
                 offset += len(buffer)
                 buffer = []
         if buffer:
-            yield _json_line({
+            yield json_line({
                 "chunk_type": "base_changes",
                 "offset": offset,
                 "count": len(buffer),
                 "items": buffer,
             })
 
-        derived_markers = _build_derived_markers(
+        derived_markers = build_derived_markers(
             old_graph=context["old_graph"],
             new_graph=context["new_graph"],
             old_ids=context["old_ids"],
@@ -139,14 +138,14 @@ def stream_diff_graphs(
         marker_offset = 0
         for idx in range(0, len(derived_markers), chunk_size):
             items = derived_markers[idx: idx + chunk_size]
-            yield _json_line({
+            yield json_line({
                 "chunk_type": "derived_markers",
                 "offset": marker_offset,
                 "count": len(items),
                 "items": items,
             })
             marker_offset += len(items)
-        yield _json_line({
+        yield json_line({
             "chunk_type": "end",
             "base_change_count": base_count,
             "derived_marker_count": len(derived_markers),
@@ -154,86 +153,6 @@ def stream_diff_graphs(
         return
 
     raise ValueError(f"Unknown stream mode: {mode}")
-
-
-def _validate_schema(old_graph: dict, new_graph: dict) -> None:
-    old_schema = old_graph.get("metadata", {}).get("schema")
-    new_schema = new_graph.get("metadata", {}).get("schema")
-    if old_schema != new_schema:
-        raise ValueError(f"Schema mismatch: {old_schema} vs {new_schema}")
-
-
-def _prepare_diff_context(old_graph: dict, new_graph: dict, *, profile: str) -> dict[str, Any]:
-    _validate_schema(old_graph, new_graph)
-
-    remap = plan_root_remap(old_graph, new_graph)
-    old_ids, old_identity = _assign_ids(old_graph, profile=profile, root_remap=remap["old_to_new"])
-    new_ids, new_identity = _assign_ids(new_graph, profile=profile)
-    root_pairs = _match_root_steps(old_graph, new_graph, remap["old_to_new"])
-    exact_pairs = _match_steps_by_unique_id(old_ids, new_ids)
-    pre_old = set(root_pairs) | set(exact_pairs)
-    pre_new = set(root_pairs.values()) | set(exact_pairs.values())
-    path_propagation = propagate_matches_by_typed_path(
-        old_graph,
-        new_graph,
-        root_pairs,
-        pre_matched_old=pre_old,
-        pre_matched_new=pre_new,
-    )
-    _apply_step_matches(
-        old_ids,
-        old_identity,
-        new_ids,
-        path_propagation["old_to_new"],
-        method="path_propagation",
-        diagnostics=path_propagation.get("diagnostics", {}),
-    )
-    matched_after_path = _match_steps_by_unique_id(old_ids, new_ids)
-    secondary = secondary_match_unresolved(
-        old_graph,
-        new_graph,
-        pre_matched_old=set(matched_after_path),
-        pre_matched_new=set(matched_after_path.values()),
-    )
-    _apply_step_matches(
-        old_ids,
-        old_identity,
-        new_ids,
-        secondary["old_to_new"],
-        method="secondary_match",
-        diagnostics=secondary.get("diagnostics", {}),
-    )
-
-    old_by_id = _index_by_identity(old_graph, old_ids, old_identity)
-    new_by_id = _index_by_identity(new_graph, new_ids, new_identity)
-    old_rooted_owners = _compute_rooted_owner_index(old_graph, old_ids)
-    new_rooted_owners = _compute_rooted_owner_index(new_graph, new_ids)
-
-    return {
-        "version": "2",
-        "profile": profile,
-        "old_graph": old_graph,
-        "new_graph": new_graph,
-        "old_ids": old_ids,
-        "new_ids": new_ids,
-        "old_by_id": old_by_id,
-        "new_by_id": new_by_id,
-        "old_rooted_owners": old_rooted_owners,
-        "new_rooted_owners": new_rooted_owners,
-        "schema_policy": {
-            "mode": "same_schema_only",
-            "old_schema": old_graph["metadata"]["schema"],
-            "new_schema": new_graph["metadata"]["schema"],
-        },
-        "stats": {
-            "old_entities": len(old_graph.get("entities", {})),
-            "new_entities": len(new_graph.get("entities", {})),
-            "matched": _matched_occurrence_count(old_by_id, new_by_id),
-            "ambiguous": remap["ambiguous"] + path_propagation["ambiguous"] + secondary["ambiguous"],
-            "old_dangling_refs": _dangling_ref_count(old_graph),
-            "new_dangling_refs": _dangling_ref_count(new_graph),
-        },
-    }
 
 
 def _iter_base_changes(context: dict[str, Any]):
@@ -247,9 +166,9 @@ def _iter_base_changes(context: dict[str, Any]):
     for entity_id in sorted(set(old_by_id) | set(new_by_id)):
         old_items = sorted(old_by_id.get(entity_id, []), key=lambda item: item["step_id"])
         new_items = sorted(new_by_id.get(entity_id, []), key=lambda item: item["step_id"])
-        if _should_emit_class_delta(entity_id, old_items, new_items):
+        if should_emit_class_delta(entity_id, old_items, new_items):
             change_id += 1
-            yield _make_class_delta_change(
+            yield make_class_delta_change(
                 change_id,
                 entity_id=entity_id,
                 old_items=old_items,
@@ -266,18 +185,18 @@ def _iter_base_changes(context: dict[str, Any]):
             new_item = new_items[i]
             old_ent = old_item["entity"]
             new_ent = new_item["entity"]
-            if _entities_equal(entity_id, old_ent, new_ent, profile=profile):
+            if entities_equal(entity_id, old_ent, new_ent, profile=profile):
                 continue
             change_id += 1
-            yield _make_change(
+            yield make_change(
                 change_id,
                 op="MODIFY",
                 old_entity_id=entity_id,
                 new_entity_id=entity_id,
                 old_ent=old_ent,
                 new_ent=new_ent,
-                identity=_resolve_identity(old_item, new_item),
-                rooted_owners=_summarize_rooted_owners(
+                identity=resolve_identity(old_item, new_item),
+                rooted_owners=summarize_rooted_owners(
                     old_rooted_owners.get(old_item["step_id"], set())
                     | new_rooted_owners.get(new_item["step_id"], set())
                 ),
@@ -287,15 +206,15 @@ def _iter_base_changes(context: dict[str, Any]):
         for old_item in old_items[paired:]:
             old_ent = old_item["entity"]
             change_id += 1
-            yield _make_change(
+            yield make_change(
                 change_id,
                 op="REMOVE",
                 old_entity_id=entity_id,
                 new_entity_id=None,
                 old_ent=old_ent,
                 new_ent=None,
-                identity=_resolve_identity(old_item, None),
-                rooted_owners=_summarize_rooted_owners(
+                identity=resolve_identity(old_item, None),
+                rooted_owners=summarize_rooted_owners(
                     old_rooted_owners.get(old_item["step_id"], set())
                 ),
                 profile=profile,
@@ -304,676 +223,16 @@ def _iter_base_changes(context: dict[str, Any]):
         for new_item in new_items[paired:]:
             new_ent = new_item["entity"]
             change_id += 1
-            yield _make_change(
+            yield make_change(
                 change_id,
                 op="ADD",
                 old_entity_id=None,
                 new_entity_id=entity_id,
                 old_ent=None,
                 new_ent=new_ent,
-                identity=_resolve_identity(None, new_item),
-                rooted_owners=_summarize_rooted_owners(
+                identity=resolve_identity(None, new_item),
+                rooted_owners=summarize_rooted_owners(
                     new_rooted_owners.get(new_item["step_id"], set())
                 ),
                 profile=profile,
             )
-
-
-def _result_header(context: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "version": context["version"],
-        "profile": context["profile"],
-        "schema_policy": context["schema_policy"],
-        "stats": context["stats"],
-    }
-
-
-def _build_result(
-    context: dict[str, Any],
-    *,
-    base_changes: list[dict[str, Any]],
-    derived_markers: list[dict[str, Any]],
-) -> dict[str, Any]:
-    return {
-        **_result_header(context),
-        "base_changes": base_changes,
-        "derived_markers": derived_markers,
-    }
-
-
-def _index_change(change_index: dict[str, list[str]], change: dict[str, Any]) -> None:
-    change_id = change["change_id"]
-    for entity_id in (change.get("old_entity_id"), change.get("new_entity_id")):
-        if entity_id is None:
-            continue
-        change_index.setdefault(entity_id, []).append(change_id)
-
-
-def _assign_ids(
-    graph: dict,
-    *,
-    profile: str,
-    root_remap: dict[str, str] | None = None,
-) -> tuple[dict[int, str], dict[int, dict[str, Any]]]:
-    entities = graph.get("entities", {})
-    id_graph = _graph_for_profile(graph, profile=profile)
-    id_entities = id_graph.get("entities", {})
-    colors = wl_refine_colors(id_graph)
-    guid_index = _guid_index(entities)
-    ids: dict[int, str] = {}
-    identity: dict[int, dict[str, Any]] = {}
-    for step_id, entity in entities.items():
-        gid = entity.get("global_id")
-        if gid and guid_index.get(gid, 0) == 1:
-            mapped_gid = (root_remap or {}).get(gid, gid)
-            ids[step_id] = f"G:{mapped_gid}"
-            identity[step_id] = {
-                "match_method": "root_remap" if mapped_gid != gid else "exact_guid",
-                "match_confidence": 1.0,
-                "matched_on": (
-                    {"stage": "root_remap", "from": gid, "to": mapped_gid}
-                    if mapped_gid != gid
-                    else {"stage": "guid", "guid": gid}
-                ),
-            }
-        else:
-            hash_entity = id_entities.get(step_id, entity)
-            ids[step_id] = f"H:{colors.get(step_id) or structural_hash(hash_entity)}"
-            identity[step_id] = {
-                "match_method": "exact_hash",
-                "match_confidence": 1.0,
-                "matched_on": {"stage": "structural_hash"},
-            }
-    return ids, identity
-
-
-def _guid_index(entities: dict[int, dict]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for entity in entities.values():
-        gid = entity.get("global_id")
-        if gid:
-            counts[gid] = counts.get(gid, 0) + 1
-    return counts
-
-
-def _index_by_identity(
-    graph: dict,
-    ids: dict[int, str],
-    identity: dict[int, dict[str, Any]],
-) -> dict[str, list[dict]]:
-    by_id: dict[str, list[dict]] = {}
-    for step_id, entity in graph.get("entities", {}).items():
-        by_id.setdefault(ids[step_id], []).append({
-            "step_id": step_id,
-            "entity": entity,
-            "identity": identity.get(step_id, {
-                "match_method": "exact_hash",
-                "match_confidence": 1.0,
-                "matched_on": None,
-            }),
-        })
-    return by_id
-
-
-def _matched_occurrence_count(old_by_id: dict[str, list[dict]], new_by_id: dict[str, list[dict]]) -> int:
-    total = 0
-    for entity_id in set(old_by_id) & set(new_by_id):
-        total += min(len(old_by_id[entity_id]), len(new_by_id[entity_id]))
-    return total
-
-
-def _should_emit_class_delta(
-    entity_id: str,
-    old_items: list[dict],
-    new_items: list[dict],
-) -> bool:
-    if not entity_id.startswith("H:"):
-        return False
-    if not old_items or not new_items:
-        return False
-    if len(old_items) == len(new_items):
-        return False
-
-    # Conservative gating: class delta is only used for exact-hash buckets
-    # that were not overridden by propagation/secondary matching.
-    all_methods = [
-        item.get("identity", {}).get("match_method")
-        for item in old_items + new_items
-    ]
-    return all(method == "exact_hash" for method in all_methods)
-
-
-def _resolve_identity(old_item: dict | None, new_item: dict | None) -> dict[str, Any]:
-    old_identity = (old_item or {}).get("identity")
-    new_identity = (new_item or {}).get("identity")
-    if old_identity is None and new_identity is None:
-        return {"match_method": "exact_hash", "match_confidence": 1.0, "matched_on": None}
-    if old_identity is None:
-        return dict(new_identity)
-    if new_identity is None:
-        return dict(old_identity)
-
-    old_method = old_identity.get("match_method", "exact_hash")
-    new_method = new_identity.get("match_method", "exact_hash")
-    old_priority = _identity_priority(old_method)
-    new_priority = _identity_priority(new_method)
-    if old_priority > new_priority:
-        return dict(old_identity)
-    if new_priority > old_priority:
-        return dict(new_identity)
-
-    if old_identity.get("match_confidence", 0.0) >= new_identity.get("match_confidence", 0.0):
-        return dict(old_identity)
-    return dict(new_identity)
-
-
-def _identity_priority(match_method: str) -> int:
-    order = {
-        "root_remap": 5,
-        "path_propagation": 4,
-        "secondary_match": 3,
-        "exact_guid": 2,
-        "exact_hash": 1,
-    }
-    return order.get(match_method, 0)
-
-
-def _match_root_steps(
-    old_graph: dict,
-    new_graph: dict,
-    root_remap: dict[str, str],
-) -> dict[int, int]:
-    old_roots = _unique_guid_step_index(old_graph.get("entities", {}))
-    new_roots = _unique_guid_step_index(new_graph.get("entities", {}))
-    pairs: dict[int, int] = {}
-    for old_gid, old_step in sorted(old_roots.items()):
-        mapped_gid = root_remap.get(old_gid, old_gid)
-        new_step = new_roots.get(mapped_gid)
-        if new_step is not None:
-            pairs[old_step] = new_step
-    return pairs
-
-
-def _unique_guid_step_index(entities: dict[int, dict]) -> dict[str, int]:
-    counts = _guid_index(entities)
-    out: dict[str, int] = {}
-    for step_id, entity in entities.items():
-        gid = entity.get("global_id")
-        if gid and counts.get(gid, 0) == 1:
-            out[gid] = step_id
-    return out
-
-
-def _match_steps_by_unique_id(old_ids: dict[int, str], new_ids: dict[int, str]) -> dict[int, int]:
-    old_by_id: dict[str, list[int]] = {}
-    new_by_id: dict[str, list[int]] = {}
-    for step_id, entity_id in old_ids.items():
-        old_by_id.setdefault(entity_id, []).append(step_id)
-    for step_id, entity_id in new_ids.items():
-        new_by_id.setdefault(entity_id, []).append(step_id)
-
-    pairs: dict[int, int] = {}
-    for entity_id in sorted(set(old_by_id) & set(new_by_id)):
-        old_steps = old_by_id[entity_id]
-        new_steps = new_by_id[entity_id]
-        if len(old_steps) == 1 and len(new_steps) == 1:
-            pairs[old_steps[0]] = new_steps[0]
-    return pairs
-
-
-def _apply_step_matches(
-    old_ids: dict[int, str],
-    old_identity: dict[int, dict[str, Any]],
-    new_ids: dict[int, str],
-    step_matches: dict[int, int],
-    *,
-    method: str,
-    diagnostics: dict[int, dict[str, Any]] | None = None,
-) -> None:
-    for old_step, new_step in step_matches.items():
-        new_entity_id = new_ids.get(new_step)
-        if new_entity_id is None:
-            continue
-        old_ids[old_step] = new_entity_id
-        diag = (diagnostics or {}).get(old_step, {})
-        old_identity[old_step] = {
-            "match_method": method,
-            "match_confidence": float(diag.get("match_confidence", 1.0)),
-            "matched_on": diag.get("matched_on"),
-        }
-
-
-def _entities_equal(entity_id: str, old_ent: dict, new_ent: dict, *, profile: str) -> bool:
-    old_norm = _entity_for_profile(old_ent, profile=profile)
-    new_norm = _entity_for_profile(new_ent, profile=profile)
-    # H identities are STEP-ID independent signatures; compare the same way
-    # to avoid false MODIFYs from pure renumbering.
-    if entity_id.startswith("H:"):
-        return structural_hash(old_norm) == structural_hash(new_norm)
-    return (
-        old_norm.get("entity_type") == new_norm.get("entity_type")
-        and old_norm.get("attributes") == new_norm.get("attributes")
-        and old_norm.get("refs") == new_norm.get("refs")
-    )
-
-
-def _snapshot(entity: dict | None, *, profile: str) -> dict | None:
-    if entity is None:
-        return None
-    normalized = _entity_for_profile(entity, profile=profile)
-    return {
-        "entity_type": normalized.get("entity_type"),
-        "attributes": normalized.get("attributes"),
-        "refs": normalized.get("refs"),
-    }
-
-
-def _make_change(
-    change_id: int,
-    *,
-    op: str,
-    old_entity_id: str | None,
-    new_entity_id: str | None,
-    old_ent: dict | None,
-    new_ent: dict | None,
-    identity: dict[str, Any],
-    rooted_owners: dict[str, Any],
-    profile: str,
-) -> dict[str, Any]:
-    field_ops = []
-    if op == "MODIFY":
-        field_ops = _diff_values(
-            _snapshot(old_ent, profile=profile),
-            _snapshot(new_ent, profile=profile),
-            path="",
-        )
-    return {
-        "change_id": f"chg-{change_id:06d}",
-        "op": op,
-        "old_entity_id": old_entity_id,
-        "new_entity_id": new_entity_id,
-        "identity": {
-            "stability_tier": "G" if (old_entity_id or new_entity_id or "").startswith("G:") else "H",
-            "match_method": identity.get("match_method", "exact_hash"),
-            "match_confidence": float(identity.get("match_confidence", 1.0)),
-            "matched_on": identity.get("matched_on"),
-        },
-        "field_ops": field_ops,
-        "old_snapshot": _snapshot(old_ent, profile=profile) if op == "REMOVE" else None,
-        "new_snapshot": _snapshot(new_ent, profile=profile) if op == "ADD" else None,
-        "rooted_owners": rooted_owners,
-        "change_categories": [],
-        "equivalence_class": None,
-    }
-
-
-def _make_class_delta_change(
-    change_id: int,
-    *,
-    entity_id: str,
-    old_items: list[dict],
-    new_items: list[dict],
-    old_rooted_owners: dict[int, set[str]],
-    new_rooted_owners: dict[int, set[str]],
-    profile: str,
-) -> dict[str, Any]:
-    exemplar_entity = (new_items[0]["entity"] if new_items else old_items[0]["entity"])
-    class_id = f"C:{entity_id[2:]}"
-    owners: set[str] = set()
-    for item in old_items:
-        owners.update(old_rooted_owners.get(item["step_id"], set()))
-    for item in new_items:
-        owners.update(new_rooted_owners.get(item["step_id"], set()))
-    return {
-        "change_id": f"chg-{change_id:06d}",
-        "op": "CLASS_DELTA",
-        "old_entity_id": entity_id,
-        "new_entity_id": entity_id,
-        "identity": {
-            "stability_tier": "C",
-            "match_method": "equivalence_class",
-            "match_confidence": 1.0,
-            "matched_on": None,
-        },
-        "field_ops": [],
-        "old_snapshot": None,
-        "new_snapshot": None,
-        "rooted_owners": _summarize_rooted_owners(owners),
-        "change_categories": [],
-        "equivalence_class": {
-            "id": class_id,
-            "old_count": len(old_items),
-            "new_count": len(new_items),
-            "exemplar": _snapshot(exemplar_entity, profile=profile),
-        },
-    }
-
-
-def _diff_values(old: Any, new: Any, *, path: str) -> list[dict[str, Any]]:
-    if old == new:
-        return []
-
-    # Structural mismatch -> single replace.
-    if type(old) is not type(new):
-        return [{
-            "path": _norm_path(path),
-            "op": "replace",
-            "old": old,
-            "new": new,
-        }]
-
-    if isinstance(old, dict):
-        ops: list[dict[str, Any]] = []
-        old_keys = set(old)
-        new_keys = set(new)
-        for key in sorted(old_keys | new_keys):
-            child_path = f"{path}/{key}"
-            if key not in old:
-                ops.append({
-                    "path": _norm_path(child_path),
-                    "op": "add",
-                    "old": None,
-                    "new": new[key],
-                })
-            elif key not in new:
-                ops.append({
-                    "path": _norm_path(child_path),
-                    "op": "remove",
-                    "old": old[key],
-                    "new": None,
-                })
-            else:
-                ops.extend(_diff_values(old[key], new[key], path=child_path))
-        return ops
-
-    if isinstance(old, list):
-        ops: list[dict[str, Any]] = []
-        common = min(len(old), len(new))
-        for idx in range(common):
-            ops.extend(_diff_values(old[idx], new[idx], path=f"{path}/{idx}"))
-        for idx in range(common, len(old)):
-            ops.append({
-                "path": _norm_path(f"{path}/{idx}"),
-                "op": "remove",
-                "old": old[idx],
-                "new": None,
-            })
-        for idx in range(common, len(new)):
-            ops.append({
-                "path": _norm_path(f"{path}/{idx}"),
-                "op": "add",
-                "old": None,
-                "new": new[idx],
-            })
-        return ops
-
-    return [{
-        "path": _norm_path(path),
-        "op": "replace",
-        "old": old,
-        "new": new,
-    }]
-
-
-def _norm_path(path: str) -> str:
-    return path or "/"
-
-
-def _build_derived_markers(
-    *,
-    old_graph: dict,
-    new_graph: dict,
-    old_ids: dict[int, str],
-    new_ids: dict[int, str],
-    change_index: dict[str, list[str]],
-) -> list[dict[str, Any]]:
-    old_links = _extract_parent_links(old_graph, old_ids)
-    new_links = _extract_parent_links(new_graph, new_ids)
-
-    markers: list[dict[str, Any]] = []
-    for key in sorted(set(old_links) & set(new_links)):
-        relation_type, child_id = key
-        old_link = old_links[key]
-        new_link = new_links[key]
-        old_parent_id = old_link["parent_id"]
-        new_parent_id = new_link["parent_id"]
-        if old_parent_id == new_parent_id:
-            continue
-
-        source_change_ids = sorted(set(
-            change_index.get(old_link["relation_id"], [])
-            + change_index.get(new_link["relation_id"], [])
-            + change_index.get(child_id, [])
-            + change_index.get(old_parent_id, [])
-            + change_index.get(new_parent_id, [])
-        ))
-        markers.append({
-            "marker_type": "REPARENT",
-            "relation_type": relation_type,
-            "child_id": child_id,
-            "old_parent_id": old_parent_id,
-            "new_parent_id": new_parent_id,
-            "source_change_ids": source_change_ids,
-        })
-    return markers
-
-
-def _extract_parent_links(graph: dict, ids: dict[int, str]) -> dict[tuple[str, str], dict[str, str]]:
-    links: dict[tuple[str, str], dict[str, str]] = {}
-    ambiguous: set[tuple[str, str]] = set()
-
-    for step_id, entity in graph.get("entities", {}).items():
-        relation_type = entity.get("entity_type")
-        if relation_type not in _REPARENT_RELATION_TYPES:
-            continue
-        relation_id = ids.get(step_id)
-        if relation_id is None:
-            continue
-
-        parent_steps = sorted({
-            ref.get("target")
-            for ref in entity.get("refs", [])
-            if str(ref.get("path", "")).startswith("/Relating")
-            and ref.get("target") is not None
-        })
-        child_steps = sorted({
-            ref.get("target")
-            for ref in entity.get("refs", [])
-            if str(ref.get("path", "")).startswith("/Related")
-            and ref.get("target") is not None
-        })
-        if len(parent_steps) != 1 or not child_steps:
-            continue
-
-        parent_id = ids.get(parent_steps[0])
-        if parent_id is None:
-            continue
-
-        for child_step in child_steps:
-            child_id = ids.get(child_step)
-            if child_id is None:
-                continue
-            key = (relation_type, child_id)
-            existing = links.get(key)
-            if existing and existing["parent_id"] != parent_id:
-                ambiguous.add(key)
-                continue
-            links[key] = {
-                "parent_id": parent_id,
-                "relation_id": relation_id,
-            }
-
-    for key in ambiguous:
-        links.pop(key, None)
-    return links
-
-
-def _compute_rooted_owner_index(
-    graph: dict,
-    ids: dict[int, str],
-) -> dict[int, set[str]]:
-    entities = graph.get("entities", {})
-    adjacency: dict[int, list[int]] = {}
-    for step_id, entity in entities.items():
-        targets = [
-            ref.get("target")
-            for ref in entity.get("refs", [])
-            if ref.get("target") in entities
-        ]
-        adjacency[step_id] = sorted(set(targets))
-
-    owners_by_step: dict[int, set[str]] = {step_id: set() for step_id in entities}
-    root_steps = sorted(
-        [step_id for step_id, entity_id in ids.items() if entity_id.startswith("G:")],
-        key=lambda step_id: ids[step_id],
-    )
-    for root_step in root_steps:
-        root_id = ids[root_step]
-        stack = [root_step]
-        seen: set[int] = set()
-        while stack:
-            step = stack.pop()
-            if step in seen:
-                continue
-            seen.add(step)
-            owners_by_step.setdefault(step, set()).add(root_id)
-            for target in adjacency.get(step, []):
-                if target not in seen:
-                    stack.append(target)
-    return owners_by_step
-
-
-def _summarize_rooted_owners(owner_ids: set[str], *, sample_size: int = 5) -> dict[str, Any]:
-    ordered = sorted(owner_ids)
-    return {"sample": ordered[:sample_size], "total": len(ordered)}
-
-
-def _entity_for_profile(entity: dict, *, profile: str) -> dict:
-    if profile != "semantic_stable":
-        return entity
-
-    if entity.get("entity_type") in _VOLATILE_ENTITY_TYPES:
-        return {
-            "entity_type": entity.get("entity_type"),
-            "attributes": {},
-            "refs": [],
-        }
-
-    attributes = {
-        name: value
-        for name, value in (entity.get("attributes") or {}).items()
-        if name not in _VOLATILE_ATTRIBUTE_NAMES
-    }
-    refs = [
-        ref
-        for ref in (entity.get("refs") or [])
-        if not any(str(ref.get("path", "")).startswith(prefix) for prefix in _VOLATILE_REF_PATH_PREFIXES)
-    ]
-    return {
-        "entity_type": entity.get("entity_type"),
-        "attributes": attributes,
-        "refs": refs,
-    }
-
-
-def _graph_for_profile(graph: dict, *, profile: str) -> dict:
-    if profile != "semantic_stable":
-        return graph
-    entities = {
-        step_id: _entity_for_profile(entity, profile=profile)
-        for step_id, entity in graph.get("entities", {}).items()
-    }
-    return {"entities": entities}
-
-
-def _dangling_ref_count(graph: dict) -> int:
-    meta_count = (
-        graph.get("metadata", {})
-        .get("diagnostics", {})
-        .get("dangling_refs")
-    )
-    if isinstance(meta_count, int):
-        return meta_count
-    return count_dangling_refs(graph)
-
-
-def stream_diff_result(
-    result: dict[str, Any],
-    *,
-    mode: str = "ndjson",
-    chunk_size: int = 1000,
-):
-    """Yield streamed JSON output for a completed diff result.
-
-    Modes:
-    - `ndjson`: one JSON object per line (header, items, end marker)
-    - `chunked_json`: chunked arrays wrapped in JSON objects
-    """
-    if chunk_size <= 0:
-        raise ValueError("chunk_size must be > 0")
-    if mode == "ndjson":
-        yield from _stream_ndjson(result)
-        return
-    if mode == "chunked_json":
-        yield from _stream_chunked_json(result, chunk_size=chunk_size)
-        return
-    raise ValueError(f"Unknown stream mode: {mode}")
-
-
-def _stream_ndjson(result: dict[str, Any]):
-    header = _stream_header(result)
-    base_changes = list(result.get("base_changes", []))
-    derived_markers = list(result.get("derived_markers", []))
-
-    yield _json_line({"record_type": "header", **header})
-    for idx, change in enumerate(base_changes):
-        yield _json_line({"record_type": "base_change", "index": idx, "change": change})
-    for idx, marker in enumerate(derived_markers):
-        yield _json_line({"record_type": "derived_marker", "index": idx, "marker": marker})
-    yield _json_line({
-        "record_type": "end",
-        "base_change_count": len(base_changes),
-        "derived_marker_count": len(derived_markers),
-    })
-
-
-def _stream_chunked_json(result: dict[str, Any], *, chunk_size: int):
-    header = _stream_header(result)
-    base_changes = list(result.get("base_changes", []))
-    derived_markers = list(result.get("derived_markers", []))
-
-    yield _json_line({"chunk_type": "header", **header})
-    for offset in range(0, len(base_changes), chunk_size):
-        items = base_changes[offset: offset + chunk_size]
-        yield _json_line({
-            "chunk_type": "base_changes",
-            "offset": offset,
-            "count": len(items),
-            "items": items,
-        })
-    for offset in range(0, len(derived_markers), chunk_size):
-        items = derived_markers[offset: offset + chunk_size]
-        yield _json_line({
-            "chunk_type": "derived_markers",
-            "offset": offset,
-            "count": len(items),
-            "items": items,
-        })
-    yield _json_line({
-        "chunk_type": "end",
-        "base_change_count": len(base_changes),
-        "derived_marker_count": len(derived_markers),
-    })
-
-
-def _stream_header(result: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "version": result.get("version"),
-        "profile": result.get("profile"),
-        "schema_policy": result.get("schema_policy"),
-        "stats": result.get("stats"),
-    }
-
-
-def _json_line(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
