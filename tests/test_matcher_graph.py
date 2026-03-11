@@ -38,6 +38,8 @@ def test_typed_path_propagation_matches_unique_chain():
     result = propagate_matches_by_typed_path(old_graph, new_graph, {1: 101})
     assert result["old_to_new"] == {2: 102, 3: 103}
     assert result["ambiguous"] == 0
+    assert result["diagnostics"][2]["matched_on"]["stage"] == "typed_path"
+    assert result["diagnostics"][2]["matched_on"]["path"] == "/ObjectPlacement"
 
 
 def test_typed_path_propagation_rejects_ambiguous_buckets():
@@ -122,6 +124,8 @@ def test_secondary_match_unresolved_matches_unique_block():
     result = secondary_match_unresolved(old_graph, new_graph, pre_matched_old={1}, pre_matched_new={101})
     assert result["old_to_new"] == {20: 220}
     assert result["ambiguous"] == 0
+    assert result["diagnostics"][20]["matched_on"]["stage"] in {"scored_assignment", "signature_unique"}
+    assert result["diagnostics"][20]["match_confidence"] > 0.0
 
 
 def test_secondary_match_unresolved_rejects_ambiguous_block():
@@ -196,3 +200,5 @@ def test_secondary_match_unresolved_uses_scored_assignment_for_swapped_pairs():
     result = secondary_match_unresolved(old_graph, new_graph)
     assert result["old_to_new"] == {20: 221, 21: 220}
     assert result["ambiguous"] == 0
+    assert result["diagnostics"][20]["matched_on"]["stage"] == "scored_assignment"
+    assert result["diagnostics"][21]["matched_on"]["stage"] == "scored_assignment"

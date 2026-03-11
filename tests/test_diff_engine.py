@@ -92,6 +92,7 @@ def test_diff_engine_uses_root_remap_on_low_guid_overlap():
     assert change["old_entity_id"] == "G:ZZZ"
     assert change["new_entity_id"] == "G:ZZZ"
     assert change["identity"]["match_method"] == "root_remap"
+    assert change["identity"]["matched_on"]["stage"] == "root_remap"
 
 
 def test_diff_engine_applies_typed_path_propagation_for_non_root():
@@ -152,6 +153,11 @@ def test_diff_engine_applies_typed_path_propagation_for_non_root():
     assert "path_propagation" in methods
     assert "ADD" not in ops
     assert "REMOVE" not in ops
+    assert any(
+        change["identity"]["match_method"] == "path_propagation"
+        and change["identity"]["matched_on"]["stage"] == "typed_path"
+        for change in diff["base_changes"]
+    )
 
 
 def test_diff_engine_applies_secondary_match_for_unmatched_non_root():
@@ -206,6 +212,11 @@ def test_diff_engine_applies_secondary_match_for_unmatched_non_root():
     assert "secondary_match" in methods
     assert "ADD" not in ops
     assert "REMOVE" not in ops
+    assert any(
+        change["identity"]["match_method"] == "secondary_match"
+        and change["identity"]["matched_on"]["stage"] in {"scored_assignment", "signature_unique"}
+        for change in diff["base_changes"]
+    )
 
 
 def test_diff_engine_preserves_occurrence_multiplicity():

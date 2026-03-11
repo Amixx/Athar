@@ -38,6 +38,7 @@ def propagate_matches_by_typed_path(
 
     queue: deque[tuple[int, int]] = deque(sorted(root_pairs.items(), key=lambda p: p[0]))
     matches: dict[int, int] = {}
+    diagnostics: dict[int, dict[str, Any]] = {}
     ambiguous = 0
 
     while queue:
@@ -54,6 +55,14 @@ def propagate_matches_by_typed_path(
                 if _is_root(old_entities.get(old_target)) or _is_root(new_entities.get(new_target)):
                     continue
                 matches[old_target] = new_target
+                diagnostics[old_target] = {
+                    "match_confidence": 1.0,
+                    "matched_on": {
+                        "stage": "typed_path",
+                        "path": edge_key[0],
+                        "target_type": edge_key[1],
+                    },
+                }
                 used_old.add(old_target)
                 used_new.add(new_target)
                 queue.append((old_target, new_target))
@@ -63,6 +72,7 @@ def propagate_matches_by_typed_path(
     return {
         "method": "typed_path_propagation",
         "old_to_new": matches,
+        "diagnostics": diagnostics,
         "ambiguous": ambiguous,
     }
 
@@ -105,6 +115,7 @@ def secondary_match_unresolved(
         new_features[step_id] = _feature_vector(entity)
 
     matches: dict[int, int] = {}
+    diagnostics: dict[int, dict[str, Any]] = {}
     ambiguous = 0
     for key in sorted(set(old_blocks) & set(new_blocks)):
         old_steps = sorted(old_blocks[key])
@@ -113,16 +124,18 @@ def secondary_match_unresolved(
             continue
 
         if len(old_steps) > _SECONDARY_ASSIGNMENT_MAX or len(new_steps) > _SECONDARY_ASSIGNMENT_MAX:
-            block_matches, block_ambiguous = _fallback_signature_block_match(
+            block_matches, block_diagnostics, block_ambiguous = _fallback_signature_block_match(
                 old_steps, new_steps, old_features, new_features
             )
         else:
-            block_matches, block_ambiguous = _assignment_block_match(
+            block_matches, block_diagnostics, block_ambiguous = _assignment_block_match(
                 old_steps, new_steps, old_features, new_features
             )
 
         for old_step, new_step in block_matches.items():
             matches[old_step] = new_step
+            if old_step in block_diagnostics:
+                diagnostics[old_step] = block_diagnostics[old_step]
             used_old.add(old_step)
             used_new.add(new_step)
         ambiguous += block_ambiguous
@@ -130,6 +143,7 @@ def secondary_match_unresolved(
     return {
         "method": "secondary_match",
         "old_to_new": matches,
+        "diagnostics": diagnostics,
         "ambiguous": ambiguous,
     }
 
@@ -160,10 +174,6 @@ def _is_root(entity: dict | None) -> bool:
     if not entity:
         return False
     return bool(entity.get("global_id"))
-
-
-def _blocking_key(entity: dict) -> tuple[str | None, str]:
-    return (entity.get("entity_type"), semantic_signature(entity))
 
 
 def _feature_vector(entity: dict) -> dict[str, Any]:
@@ -246,7 +256,7 @@ def _fallback_signature_block_match(
     new_steps: list[int],
     old_features: dict[int, dict[str, Any]],
     new_features: dict[int, dict[str, Any]],
-) -> tuple[dict[int, int], int]:
+) -> tuple[dict[int, int], dict[int, dict[str, Any]], int]:
     old_sig: defaultdict[str, list[int]] = defaultdict(list)
     new_sig: defaultdict[str, list[int]] = defaultdict(list)
     for step in old_steps:
@@ -255,15 +265,23 @@ def _fallback_signature_block_match(
         new_sig[new_features[step]["semantic_signature"]].append(step)
 
     matches: dict[int, int] = {}
+    diagnostics: dict[int, dict[str, Any]] = {}
     ambiguous = 0
     for sig in sorted(set(old_sig) & set(new_sig)):
         left = sorted(old_sig[sig])
         right = sorted(new_sig[sig])
         if len(left) == 1 and len(right) == 1:
             matches[left[0]] = right[0]
+            diagnostics[left[0]] = {
+                "match_confidence": 1.0,
+                "matched_on": {
+                    "stage": "signature_unique",
+                    "semantic_signature": sig,
+                },
+            }
         elif left and right:
             ambiguous += min(len(left), len(right))
-    return matches, ambiguous
+    return matches, diagnostics, ambiguous
 
 
 def _assignment_block_match(
@@ -271,20 +289,32 @@ def _assignment_block_match(
     new_steps: list[int],
     old_features: dict[int, dict[str, Any]],
     new_features: dict[int, dict[str, Any]],
-) -> tuple[dict[int, int], int]:
+) -> tuple[dict[int, int], dict[int, dict[str, Any]], int]:
     old_steps = sorted(old_steps)
     new_steps = sorted(new_steps)
     score_map = _score_map(old_steps, new_steps, old_features, new_features)
 
     best, second, tie_for_best = _enumerate_assignments(old_steps, new_steps, score_map)
     if best is None or best["match_count"] == 0:
-        return {}, 0
+        return {}, {}, 0
     if tie_for_best:
-        return {}, min(len(old_steps), len(new_steps))
+        return {}, {}, min(len(old_steps), len(new_steps))
     if second is not None and best["match_count"] == second["match_count"]:
         if (best["total_score"] - second["total_score"]) < _SECONDARY_SCORE_MARGIN:
-            return {}, min(len(old_steps), len(new_steps))
-    return dict(best["pairs"]), 0
+            return {}, {}, min(len(old_steps), len(new_steps))
+
+    matches = dict(best["pairs"])
+    diagnostics = {
+        old_step: {
+            "match_confidence": score_map[(old_step, new_step)],
+            "matched_on": {
+                "stage": "scored_assignment",
+                "score": score_map[(old_step, new_step)],
+            },
+        }
+        for old_step, new_step in best["pairs"]
+    }
+    return matches, diagnostics, 0
 
 
 def _score_map(

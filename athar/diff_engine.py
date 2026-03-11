@@ -27,8 +27,8 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
     _validate_schema(old_graph, new_graph)
 
     remap = plan_root_remap(old_graph, new_graph)
-    old_ids, old_methods = _assign_ids(old_graph, root_remap=remap["old_to_new"])
-    new_ids, new_methods = _assign_ids(new_graph)
+    old_ids, old_identity = _assign_ids(old_graph, root_remap=remap["old_to_new"])
+    new_ids, new_identity = _assign_ids(new_graph)
     root_pairs = _match_root_steps(old_graph, new_graph, remap["old_to_new"])
     exact_pairs = _match_steps_by_unique_id(old_ids, new_ids)
     pre_old = set(root_pairs) | set(exact_pairs)
@@ -42,10 +42,11 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
     )
     _apply_step_matches(
         old_ids,
-        old_methods,
+        old_identity,
         new_ids,
         path_propagation["old_to_new"],
         method="path_propagation",
+        diagnostics=path_propagation.get("diagnostics", {}),
     )
     matched_after_path = _match_steps_by_unique_id(old_ids, new_ids)
     secondary = secondary_match_unresolved(
@@ -56,14 +57,15 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
     )
     _apply_step_matches(
         old_ids,
-        old_methods,
+        old_identity,
         new_ids,
         secondary["old_to_new"],
         method="secondary_match",
+        diagnostics=secondary.get("diagnostics", {}),
     )
 
-    old_by_id = _index_by_identity(old_graph, old_ids, old_methods)
-    new_by_id = _index_by_identity(new_graph, new_ids, new_methods)
+    old_by_id = _index_by_identity(old_graph, old_ids, old_identity)
+    new_by_id = _index_by_identity(new_graph, new_ids, new_identity)
     old_rooted_owners = _compute_rooted_owner_index(old_graph, old_ids)
     new_rooted_owners = _compute_rooted_owner_index(new_graph, new_ids)
 
@@ -102,7 +104,7 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
                 new_entity_id=entity_id,
                 old_ent=old_ent,
                 new_ent=new_ent,
-                match_method=_resolve_match_method(old_item, new_item),
+                identity=_resolve_identity(old_item, new_item),
                 rooted_owners=_summarize_rooted_owners(
                     old_rooted_owners.get(old_item["step_id"], set())
                     | new_rooted_owners.get(new_item["step_id"], set())
@@ -119,7 +121,7 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
                 new_entity_id=None,
                 old_ent=old_ent,
                 new_ent=None,
-                match_method=_resolve_match_method(old_item, None),
+                identity=_resolve_identity(old_item, None),
                 rooted_owners=_summarize_rooted_owners(
                     old_rooted_owners.get(old_item["step_id"], set())
                 ),
@@ -135,7 +137,7 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
                 new_entity_id=entity_id,
                 old_ent=None,
                 new_ent=new_ent,
-                match_method=_resolve_match_method(None, new_item),
+                identity=_resolve_identity(None, new_item),
                 rooted_owners=_summarize_rooted_owners(
                     new_rooted_owners.get(new_item["step_id"], set())
                 ),
@@ -181,22 +183,34 @@ def _assign_ids(
     graph: dict,
     *,
     root_remap: dict[str, str] | None = None,
-) -> tuple[dict[int, str], dict[int, str]]:
+) -> tuple[dict[int, str], dict[int, dict[str, Any]]]:
     entities = graph.get("entities", {})
     colors = wl_refine_colors(graph)
     guid_index = _guid_index(entities)
     ids: dict[int, str] = {}
-    methods: dict[int, str] = {}
+    identity: dict[int, dict[str, Any]] = {}
     for step_id, entity in entities.items():
         gid = entity.get("global_id")
         if gid and guid_index.get(gid, 0) == 1:
             mapped_gid = (root_remap or {}).get(gid, gid)
             ids[step_id] = f"G:{mapped_gid}"
-            methods[step_id] = "root_remap" if mapped_gid != gid else "exact_guid"
+            identity[step_id] = {
+                "match_method": "root_remap" if mapped_gid != gid else "exact_guid",
+                "match_confidence": 1.0,
+                "matched_on": (
+                    {"stage": "root_remap", "from": gid, "to": mapped_gid}
+                    if mapped_gid != gid
+                    else {"stage": "guid", "guid": gid}
+                ),
+            }
         else:
             ids[step_id] = f"H:{colors.get(step_id) or structural_hash(entity)}"
-            methods[step_id] = "exact_hash"
-    return ids, methods
+            identity[step_id] = {
+                "match_method": "exact_hash",
+                "match_confidence": 1.0,
+                "matched_on": {"stage": "structural_hash"},
+            }
+    return ids, identity
 
 
 def _guid_index(entities: dict[int, dict]) -> dict[str, int]:
@@ -211,14 +225,18 @@ def _guid_index(entities: dict[int, dict]) -> dict[str, int]:
 def _index_by_identity(
     graph: dict,
     ids: dict[int, str],
-    methods: dict[int, str],
+    identity: dict[int, dict[str, Any]],
 ) -> dict[str, list[dict]]:
     by_id: dict[str, list[dict]] = {}
     for step_id, entity in graph.get("entities", {}).items():
         by_id.setdefault(ids[step_id], []).append({
             "step_id": step_id,
             "entity": entity,
-            "match_method": methods.get(step_id, "exact_hash"),
+            "identity": identity.get(step_id, {
+                "match_method": "exact_hash",
+                "match_confidence": 1.0,
+                "matched_on": None,
+            }),
         })
     return by_id
 
@@ -244,22 +262,46 @@ def _should_emit_class_delta(
 
     # Conservative gating: class delta is only used for exact-hash buckets
     # that were not overridden by propagation/secondary matching.
-    all_methods = [item.get("match_method") for item in old_items + new_items]
+    all_methods = [
+        item.get("identity", {}).get("match_method")
+        for item in old_items + new_items
+    ]
     return all(method == "exact_hash" for method in all_methods)
 
 
-def _resolve_match_method(old_item: dict | None, new_item: dict | None) -> str:
-    old_method = (old_item or {}).get("match_method")
-    new_method = (new_item or {}).get("match_method")
-    if old_method == "root_remap" or new_method == "root_remap":
-        return "root_remap"
-    if old_method == "path_propagation" or new_method == "path_propagation":
-        return "path_propagation"
-    if old_method == "secondary_match" or new_method == "secondary_match":
-        return "secondary_match"
-    if old_method and old_method == new_method:
-        return old_method
-    return old_method or new_method or "exact_hash"
+def _resolve_identity(old_item: dict | None, new_item: dict | None) -> dict[str, Any]:
+    old_identity = (old_item or {}).get("identity")
+    new_identity = (new_item or {}).get("identity")
+    if old_identity is None and new_identity is None:
+        return {"match_method": "exact_hash", "match_confidence": 1.0, "matched_on": None}
+    if old_identity is None:
+        return dict(new_identity)
+    if new_identity is None:
+        return dict(old_identity)
+
+    old_method = old_identity.get("match_method", "exact_hash")
+    new_method = new_identity.get("match_method", "exact_hash")
+    old_priority = _identity_priority(old_method)
+    new_priority = _identity_priority(new_method)
+    if old_priority > new_priority:
+        return dict(old_identity)
+    if new_priority > old_priority:
+        return dict(new_identity)
+
+    if old_identity.get("match_confidence", 0.0) >= new_identity.get("match_confidence", 0.0):
+        return dict(old_identity)
+    return dict(new_identity)
+
+
+def _identity_priority(match_method: str) -> int:
+    order = {
+        "root_remap": 5,
+        "path_propagation": 4,
+        "secondary_match": 3,
+        "exact_guid": 2,
+        "exact_hash": 1,
+    }
+    return order.get(match_method, 0)
 
 
 def _match_root_steps(
@@ -307,18 +349,24 @@ def _match_steps_by_unique_id(old_ids: dict[int, str], new_ids: dict[int, str]) 
 
 def _apply_step_matches(
     old_ids: dict[int, str],
-    old_methods: dict[int, str],
+    old_identity: dict[int, dict[str, Any]],
     new_ids: dict[int, str],
     step_matches: dict[int, int],
     *,
     method: str,
+    diagnostics: dict[int, dict[str, Any]] | None = None,
 ) -> None:
     for old_step, new_step in step_matches.items():
         new_entity_id = new_ids.get(new_step)
         if new_entity_id is None:
             continue
         old_ids[old_step] = new_entity_id
-        old_methods[old_step] = method
+        diag = (diagnostics or {}).get(old_step, {})
+        old_identity[old_step] = {
+            "match_method": method,
+            "match_confidence": float(diag.get("match_confidence", 1.0)),
+            "matched_on": diag.get("matched_on"),
+        }
 
 
 def _entities_equal(entity_id: str, old_ent: dict, new_ent: dict) -> bool:
@@ -351,7 +399,7 @@ def _make_change(
     new_entity_id: str | None,
     old_ent: dict | None,
     new_ent: dict | None,
-    match_method: str,
+    identity: dict[str, Any],
     rooted_owners: dict[str, Any],
 ) -> dict[str, Any]:
     field_ops = []
@@ -364,8 +412,9 @@ def _make_change(
         "new_entity_id": new_entity_id,
         "identity": {
             "stability_tier": "G" if (old_entity_id or new_entity_id or "").startswith("G:") else "H",
-            "match_method": match_method,
-            "match_confidence": 1.0,
+            "match_method": identity.get("match_method", "exact_hash"),
+            "match_confidence": float(identity.get("match_confidence", 1.0)),
+            "matched_on": identity.get("matched_on"),
         },
         "field_ops": field_ops,
         "old_snapshot": _snapshot(old_ent) if op == "REMOVE" else None,
@@ -401,6 +450,7 @@ def _make_class_delta_change(
             "stability_tier": "C",
             "match_method": "equivalence_class",
             "match_confidence": 1.0,
+            "matched_on": None,
         },
         "field_ops": [],
         "old_snapshot": None,
