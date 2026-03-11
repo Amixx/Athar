@@ -16,6 +16,7 @@ The core engine is responsible for parsing IFC files, aligning entities across m
 - `athar/matcher.py` — Entity alignment across two parsed models. Primary matching by GlobalId. When GUID overlap is low (<30%), activates a three-stage content-based fallback: (1) exact unique content signature match (ifc_class + name + type_name + container + groups + properties hash), (2) positional disambiguation for duplicate signatures using quantized placement (50mm cells), (3) fuzzy scoring on remaining candidates (weighted: placement proximity 0.30, props overlap 0.25, name 0.15, type_name 0.15, container 0.10, groups 0.05) with threshold + margin guards. Conservative: ambiguous cases left unmatched. Returns `{old_to_new: {old_guid: new_guid}, method: "guid"|"content_fallback", guid_overlap: float}`.
 - `athar/differ.py` — Compares two parsed models. Uses `matcher.match_entities()` for entity alignment (supports both GUID and content-based matching). Produces added/deleted/changed/bulk_movements buckets with per-property granularity. Includes file metadata from both sides in the output. Output is raw JSON "for computers".
 - `athar/__main__.py` — Minimal CLI for the core engine. Diffs two files and prints raw JSON to stdout.
+- `athar/canonical_values.py` — Deterministic canonicalization of scalar and aggregate values for the low-level diff reimplementation. Preserves wrapper/select type information, enforces deterministic ordering for SET/BAG, and uses profile-driven float normalization.
 
 ### Higher Layers (`athar_layers/`)
 
@@ -63,6 +64,7 @@ python -m athar old.ifc new.ifc                       # raw JSON diff
 - `scripts/make_modified_ifc.py` — Produce a modified copy of an IFC file for testing.
 - `scripts/inspect_ifc_identity.py` — Show project name/GlobalId and header timestamp.
 - `scripts/inspect_guid_overlap.py` — Show entity GUID overlap matrix between files.
+- `scripts/explore/canonical_reference_impl.py` — Executable reference for canonical value normalization (value grammar, ordering, and profiles).
 - `scripts/explore/` — Exploratory/investigative scripts.
 
 ## Testing

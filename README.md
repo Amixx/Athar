@@ -50,6 +50,10 @@ python -m pytest tests/
 
 See [docs/DETAILS.md](docs/DETAILS.md) for detailed documentation on comparison logic, folder mode, file metadata, helper scripts, and test data.
 
+## Low-Level Diff Reimplementation (WIP)
+
+Foundational canonical value normalization for the upcoming low-level diff layer lives in `athar/canonical_values.py`, with an executable reference in `scripts/explore/canonical_reference_impl.py`. This establishes deterministic ordering for SET/BAG aggregates and preserves wrapper/select type information so hashing stays stable across STEP reorder/renumber.
+
 ## License
 
 MIT
