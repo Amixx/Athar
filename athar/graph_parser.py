@@ -27,12 +27,53 @@ def parse_graph(filepath: str, *, profile: str = PROFILE_RAW_EXACT) -> dict:
     for ent in ifc:
         entities[ent.id()] = _extract_entity(ent, profile=profile)
 
+    diagnostics = _collect_diagnostics(entities)
     return {
         "metadata": {
             "schema": ifc.schema,
             "timestamp": ifc.header.file_name.time_stamp or None,
+            "diagnostics": diagnostics,
         },
         "entities": entities,
+    }
+
+
+def count_dangling_refs(graph: dict) -> int:
+    """Count references whose targets are missing from the entity map."""
+    entities = graph.get("entities", {})
+    count = 0
+    for entity in entities.values():
+        for ref in entity.get("refs", []):
+            target = ref.get("target")
+            if target is not None and target not in entities:
+                count += 1
+    return count
+
+
+def _collect_diagnostics(entities: dict[int, dict], *, sample_size: int = 10) -> dict[str, Any]:
+    dangling = []
+    for step_id, entity in entities.items():
+        for ref in entity.get("refs", []):
+            target = ref.get("target")
+            if target is None or target in entities:
+                continue
+            dangling.append({
+                "source_step": step_id,
+                "path": ref.get("path", ""),
+                "target_step": target,
+                "target_type": ref.get("target_type"),
+            })
+    dangling.sort(
+        key=lambda item: (
+            item["source_step"],
+            item["path"],
+            item["target_step"],
+            item.get("target_type") or "",
+        )
+    )
+    return {
+        "dangling_refs": len(dangling),
+        "dangling_refs_sample": dangling[:sample_size],
     }
 
 

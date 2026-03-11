@@ -9,6 +9,9 @@ def test_graph_parser_emits_metadata_and_entities():
     graph = parse_graph(BASIC_HOUSE)
     assert graph["metadata"]["schema"]
     assert graph["entities"]
+    diagnostics = graph["metadata"]["diagnostics"]
+    assert isinstance(diagnostics["dangling_refs"], int)
+    assert isinstance(diagnostics["dangling_refs_sample"], list)
 
 
 def test_select_wrapper_and_refs_are_canonicalized():

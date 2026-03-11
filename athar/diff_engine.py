@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from .canonical_ids import structural_hash, wl_refine_colors
-from .graph_parser import parse_graph
+from .graph_parser import count_dangling_refs, parse_graph
 from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
 from .root_remap import plan_root_remap
 
@@ -162,6 +162,8 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
             "new_entities": len(new_graph.get("entities", {})),
             "matched": _matched_occurrence_count(old_by_id, new_by_id),
             "ambiguous": remap["ambiguous"] + path_propagation["ambiguous"] + secondary["ambiguous"],
+            "old_dangling_refs": _dangling_ref_count(old_graph),
+            "new_dangling_refs": _dangling_ref_count(new_graph),
         },
         "base_changes": base_changes,
         "derived_markers": derived_markers,
@@ -623,6 +625,17 @@ def _compute_rooted_owner_index(
 def _summarize_rooted_owners(owner_ids: set[str], *, sample_size: int = 5) -> dict[str, Any]:
     ordered = sorted(owner_ids)
     return {"sample": ordered[:sample_size], "total": len(ordered)}
+
+
+def _dangling_ref_count(graph: dict) -> int:
+    meta_count = (
+        graph.get("metadata", {})
+        .get("diagnostics", {})
+        .get("dangling_refs")
+    )
+    if isinstance(meta_count, int):
+        return meta_count
+    return count_dangling_refs(graph)
 
 
 def stream_diff_result(

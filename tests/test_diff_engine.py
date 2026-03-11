@@ -377,3 +377,29 @@ def test_diff_engine_sets_rooted_owners_for_shared_removed_node_with_sampling_ca
         "G:ROOT_4",
         "G:ROOT_5",
     ]
+
+
+def test_diff_engine_stats_include_dangling_ref_counts():
+    old_graph = {
+        "metadata": {"schema": "IFC4"},
+        "entities": {
+            1: {
+                "entity_type": "IfcWall",
+                "attributes": {},
+                "refs": [{"path": "/ObjectPlacement", "target": 999, "target_type": "IfcLocalPlacement"}],
+            },
+        },
+    }
+    new_graph = {
+        "metadata": {"schema": "IFC4"},
+        "entities": {
+            2: {
+                "entity_type": "IfcWall",
+                "attributes": {},
+                "refs": [],
+            },
+        },
+    }
+    diff = diff_graphs(old_graph, new_graph)
+    assert diff["stats"]["old_dangling_refs"] == 1
+    assert diff["stats"]["new_dangling_refs"] == 0
