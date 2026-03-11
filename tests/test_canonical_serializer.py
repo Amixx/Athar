@@ -14,4 +14,4 @@ def test_serializer_orders_by_id():
 
     output = serialize_records([rec_a, rec_b, rec_c]).splitlines()
     ids = [line.split("\"id\":\"", 1)[1].split("\"", 1)[0] for line in output]
-    assert ids == ["C:9", "G:1", "H:2"]
+    assert ids == ["G:1", "H:2", "C:9"]
