@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import hashlib
+import json
 from typing import Any
 
 from .semantic_signature import semantic_signature
@@ -18,11 +20,12 @@ def build_feature_vector(entity: dict) -> dict[str, Any]:
         "attribute_paths": _collect_attribute_paths(entity.get("attributes", {}), base_path=""),
         "literal_tokens": _collect_literal_tokens(entity.get("attributes", {})),
         "edge_labels": _edge_label_set(entity.get("refs", [])),
+        "neighborhood_digest": _edge_multiset_digest(entity.get("refs", [])),
         "degree": len(entity.get("refs", [])),
     }
 
 
-def blocking_key(entity_type: str | None, features: dict[str, Any]) -> tuple[str | None, int, int, int, int]:
+def blocking_key(entity_type: str | None, features: dict[str, Any]) -> tuple[str | None, int, int, int, int, int]:
     """Coarse deterministic blocking key for secondary matching.
 
     Uses buckets to stay tolerant to small edits while reducing candidate fanout.
@@ -31,12 +34,16 @@ def blocking_key(entity_type: str | None, features: dict[str, Any]) -> tuple[str
     edge_count = len(features.get("edge_labels", set()))
     attr_count = len(features.get("attribute_paths", set()))
     literal_count = len(features.get("literal_tokens", set()))
+    digest = str(features.get("neighborhood_digest", "0"))
+    nibble = int(digest[0], 16) if digest and digest[0] in "0123456789abcdef" else 0
+    neighborhood_bucket = nibble // 4
     return (
         entity_type,
         min(8, degree // 2),
         min(8, edge_count // 2),
         min(8, attr_count // 4),
         min(8, literal_count // 4),
+        neighborhood_bucket,
     )
 
 
@@ -140,6 +147,19 @@ def _edge_label_set(refs: list[dict]) -> set[tuple[str, str | None]]:
         (ref.get("path", ""), ref.get("target_type"))
         for ref in refs
     }
+
+
+def _edge_multiset_digest(refs: list[dict]) -> str:
+    counts: defaultdict[tuple[str, str | None], int] = defaultdict(int)
+    for ref in refs:
+        counts[(ref.get("path", ""), ref.get("target_type"))] += 1
+    payload = [
+        {"path": path, "target_type": target_type, "count": count}
+        for (path, target_type), count in counts.items()
+    ]
+    payload.sort(key=lambda item: (item["path"], item["target_type"] or "", item["count"]))
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def _similarity(old_f: dict[str, Any], new_f: dict[str, Any]) -> float:
