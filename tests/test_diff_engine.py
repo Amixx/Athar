@@ -490,3 +490,47 @@ def test_diff_engine_raw_exact_keeps_owner_history_churn():
     assert len(diff["base_changes"]) == 1
     assert diff["base_changes"][0]["op"] == "MODIFY"
     assert diff["base_changes"][0]["identity"]["match_method"] == "exact_guid"
+
+
+def test_diff_engine_semantic_stable_ignores_owner_history_entity_value_churn():
+    old_graph = _graph_with_entities({
+        10: {
+            "entity_type": "IfcOwnerHistory",
+            "attributes": {"ChangeAction": {"kind": "string", "value": "ADDED"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        11: {
+            "entity_type": "IfcOwnerHistory",
+            "attributes": {"ChangeAction": {"kind": "string", "value": "MODIFIED"}},
+            "refs": [],
+        },
+    })
+    diff = diff_graphs(old_graph, new_graph, profile="semantic_stable")
+    assert diff["base_changes"] == []
+
+
+def test_diff_engine_raw_exact_reports_owner_history_entity_value_churn():
+    old_graph = _graph_with_entities({
+        10: {
+            "entity_type": "IfcOwnerHistory",
+            "attributes": {"ChangeAction": {"kind": "string", "value": "ADDED"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        11: {
+            "entity_type": "IfcOwnerHistory",
+            "attributes": {"ChangeAction": {"kind": "string", "value": "MODIFIED"}},
+            "refs": [],
+        },
+    })
+    diff = diff_graphs(old_graph, new_graph, profile="raw_exact")
+    assert len(diff["base_changes"]) == 1
+    change = diff["base_changes"][0]
+    assert change["op"] == "MODIFY"
+    assert any(
+        op["path"] == "/attributes/ChangeAction/value" and op["old"] == "ADDED" and op["new"] == "MODIFIED"
+        for op in change["field_ops"]
+    )

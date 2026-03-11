@@ -17,6 +17,7 @@ _REPARENT_RELATION_TYPES = frozenset({
 })
 _VOLATILE_ATTRIBUTE_NAMES = frozenset({"OwnerHistory"})
 _VOLATILE_REF_PATH_PREFIXES = ("/OwnerHistory",)
+_VOLATILE_ENTITY_TYPES = frozenset({"IfcOwnerHistory"})
 
 
 def diff_files(old_path: str, new_path: str, *, profile: str = "semantic_stable") -> dict:
@@ -29,8 +30,8 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
     _validate_schema(old_graph, new_graph)
 
     remap = plan_root_remap(old_graph, new_graph)
-    old_ids, old_identity = _assign_ids(old_graph, root_remap=remap["old_to_new"])
-    new_ids, new_identity = _assign_ids(new_graph)
+    old_ids, old_identity = _assign_ids(old_graph, profile=profile, root_remap=remap["old_to_new"])
+    new_ids, new_identity = _assign_ids(new_graph, profile=profile)
     root_pairs = _match_root_steps(old_graph, new_graph, remap["old_to_new"])
     exact_pairs = _match_steps_by_unique_id(old_ids, new_ids)
     pre_old = set(root_pairs) | set(exact_pairs)
@@ -188,10 +189,13 @@ def _validate_schema(old_graph: dict, new_graph: dict) -> None:
 def _assign_ids(
     graph: dict,
     *,
+    profile: str,
     root_remap: dict[str, str] | None = None,
 ) -> tuple[dict[int, str], dict[int, dict[str, Any]]]:
     entities = graph.get("entities", {})
-    colors = wl_refine_colors(graph)
+    id_graph = _graph_for_profile(graph, profile=profile)
+    id_entities = id_graph.get("entities", {})
+    colors = wl_refine_colors(id_graph)
     guid_index = _guid_index(entities)
     ids: dict[int, str] = {}
     identity: dict[int, dict[str, Any]] = {}
@@ -210,7 +214,8 @@ def _assign_ids(
                 ),
             }
         else:
-            ids[step_id] = f"H:{colors.get(step_id) or structural_hash(entity)}"
+            hash_entity = id_entities.get(step_id, entity)
+            ids[step_id] = f"H:{colors.get(step_id) or structural_hash(hash_entity)}"
             identity[step_id] = {
                 "match_method": "exact_hash",
                 "match_confidence": 1.0,
@@ -696,6 +701,13 @@ def _entity_for_profile(entity: dict, *, profile: str) -> dict:
     if profile != "semantic_stable":
         return entity
 
+    if entity.get("entity_type") in _VOLATILE_ENTITY_TYPES:
+        return {
+            "entity_type": entity.get("entity_type"),
+            "attributes": {},
+            "refs": [],
+        }
+
     attributes = {
         name: value
         for name, value in (entity.get("attributes") or {}).items()
@@ -711,6 +723,16 @@ def _entity_for_profile(entity: dict, *, profile: str) -> dict:
         "attributes": attributes,
         "refs": refs,
     }
+
+
+def _graph_for_profile(graph: dict, *, profile: str) -> dict:
+    if profile != "semantic_stable":
+        return graph
+    entities = {
+        step_id: _entity_for_profile(entity, profile=profile)
+        for step_id, entity in graph.get("entities", {}).items()
+    }
+    return {"entities": entities}
 
 
 def _dangling_ref_count(graph: dict) -> int:
