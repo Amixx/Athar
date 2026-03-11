@@ -20,6 +20,7 @@ The core engine is responsible for parsing IFC files, aligning entities across m
 - `athar/graph_parser.py` — Full-instance graph extractor for the low-level diff layer. Emits explicit attributes in canonical form plus a typed edge list labeled with JSON-Pointer-like paths.
 - `athar/canonical_ids.py` — Structural hash helpers for low-level identity (`H:`) seeds and WL-style refinement scaffolding. Computes deterministic payloads that ignore STEP IDs and inverse attributes.
 - `athar/semantic_signature.py` — Soft signature (`S:`) for candidate blocking. Uses attribute/aggregate shape and typed edge signatures while ignoring literal values.
+- `athar/canonical_serializer.py` — Deterministic serializer for low-level identity/class records with total ordering by ID.
 
 ### Higher Layers (`athar_layers/`)
 
