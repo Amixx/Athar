@@ -94,6 +94,7 @@ def test_diff_engine_uses_root_remap_on_low_guid_overlap():
     assert change["new_entity_id"] == "G:ZZZ"
     assert change["identity"]["match_method"] == "root_remap"
     assert change["identity"]["matched_on"]["stage"] == "root_remap"
+    assert change["identity"]["matched_on"]["remap_stage"] in {"signature_unique", "neighbor_signature"}
 
 
 def test_diff_engine_applies_typed_path_propagation_for_non_root():
@@ -624,3 +625,74 @@ def test_diff_engine_stats_include_ambiguity_breakdown_by_stage():
     assert diff["stats"]["ambiguous"] == (
         by_stage["root_remap"] + by_stage["path_propagation"] + by_stage["secondary_match"]
     )
+
+
+def test_diff_engine_stats_include_matched_by_method_breakdown():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A v2"}},
+            "refs": [],
+        },
+    })
+
+    diff = diff_graphs(old_graph, new_graph)
+    by_method = diff["stats"]["matched_by_method"]
+    assert by_method["exact_guid"] == 1
+    assert sum(by_method.values()) == diff["stats"]["matched"]
+
+
+def test_diff_engine_stats_include_root_guid_quality():
+    old_graph = _graph_with_entities({
+        1: {"entity_type": "IfcWall", "global_id": "DUP", "attributes": {}, "refs": []},
+        2: {"entity_type": "IfcWall", "global_id": "DUP", "attributes": {}, "refs": []},
+        3: {"entity_type": "IfcWall", "global_id": "", "attributes": {}, "refs": []},
+    })
+    new_graph = _graph_with_entities({
+        10: {"entity_type": "IfcWall", "global_id": "UNIQ", "attributes": {}, "refs": []},
+    })
+
+    diff = diff_graphs(old_graph, new_graph)
+    old_quality = diff["stats"]["root_guid_quality"]["old"]
+    new_quality = diff["stats"]["root_guid_quality"]["new"]
+    assert old_quality["duplicate_ids"] == 1
+    assert old_quality["duplicate_occurrences"] == 2
+    assert old_quality["invalid"] == 1
+    assert new_quality["unique_valid"] == 1
+
+
+def test_diff_engine_stats_include_stage_match_counts():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {},
+            "refs": [{"path": "/ObjectPlacement", "target": 10, "target_type": "IfcLocalPlacement"}],
+        },
+        10: {"entity_type": "IfcLocalPlacement", "attributes": {}, "refs": []},
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "ZZZ",
+            "attributes": {},
+            "refs": [{"path": "/ObjectPlacement", "target": 11, "target_type": "IfcLocalPlacement"}],
+        },
+        11: {"entity_type": "IfcLocalPlacement", "attributes": {}, "refs": []},
+    })
+
+    diff = diff_graphs(old_graph, new_graph)
+    counts = diff["stats"]["stage_match_counts"]
+    assert set(counts) == {"root_remap", "path_propagation", "secondary_match"}
+    assert counts["root_remap"] >= 1
+    assert counts["path_propagation"] >= 0
+    assert counts["secondary_match"] >= 0

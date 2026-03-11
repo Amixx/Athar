@@ -37,6 +37,10 @@ def test_root_remap_unique_signature_matching():
     assert plan["enabled"] is True
     assert plan["guid_overlap"] == 0.0
     assert plan["old_to_new"] == {"OLD_A": "NEW_A", "OLD_B": "NEW_B"}
+    assert plan["diagnostics"] == {
+        "OLD_A": {"stage": "signature_unique"},
+        "OLD_B": {"stage": "signature_unique"},
+    }
     assert plan["ambiguous"] == 0
 
 
@@ -52,6 +56,7 @@ def test_root_remap_ambiguous_buckets_left_unmatched():
 
     plan = plan_root_remap(old_graph, new_graph)
     assert plan["old_to_new"] == {}
+    assert plan["diagnostics"] == {}
     assert plan["ambiguous"] == 2
 
 
@@ -69,6 +74,7 @@ def test_root_remap_skips_when_guid_overlap_is_high():
     assert plan["enabled"] is False
     assert plan["method"] == "disabled_guid_overlap"
     assert plan["old_to_new"] == {}
+    assert plan["diagnostics"] == {}
 
 
 def test_root_remap_disambiguates_duplicate_root_signatures_by_neighbor_colors():
@@ -141,4 +147,8 @@ def test_root_remap_disambiguates_duplicate_root_signatures_by_neighbor_colors()
     assert plan["enabled"] is True
     assert plan["guid_overlap"] == 0.0
     assert plan["old_to_new"] == {"OLD_A": "NEW_B", "OLD_B": "NEW_A"}
+    assert plan["diagnostics"] == {
+        "OLD_A": {"stage": "neighbor_signature"},
+        "OLD_B": {"stage": "neighbor_signature"},
+    }
     assert plan["ambiguous"] == 0
