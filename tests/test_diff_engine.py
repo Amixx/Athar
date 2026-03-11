@@ -230,5 +230,110 @@ def test_diff_engine_preserves_occurrence_multiplicity():
     })
 
     diff = diff_graphs(old_graph, new_graph)
-    ops = [change["op"] for change in diff["base_changes"]]
-    assert ops == ["REMOVE"]
+    assert len(diff["base_changes"]) == 1
+    change = diff["base_changes"][0]
+    assert change["op"] == "CLASS_DELTA"
+    assert change["identity"]["match_method"] == "equivalence_class"
+    assert change["equivalence_class"]["old_count"] == 2
+    assert change["equivalence_class"]["new_count"] == 1
+    assert change["equivalence_class"]["id"].startswith("C:")
+
+
+def test_diff_engine_ignores_step_id_churn_inside_h_matched_entity():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcLocalPlacement",
+            "attributes": {"RelativePlacement": {"kind": "ref", "id": 2}},
+            "refs": [{"path": "/RelativePlacement", "target": 2, "target_type": "IfcAxis2Placement3D"}],
+        },
+        2: {
+            "entity_type": "IfcAxis2Placement3D",
+            "attributes": {"Name": {"kind": "string", "value": "P"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        10: {
+            "entity_type": "IfcLocalPlacement",
+            "attributes": {"RelativePlacement": {"kind": "ref", "id": 20}},
+            "refs": [{"path": "/RelativePlacement", "target": 20, "target_type": "IfcAxis2Placement3D"}],
+        },
+        20: {
+            "entity_type": "IfcAxis2Placement3D",
+            "attributes": {"Name": {"kind": "string", "value": "P"}},
+            "refs": [],
+        },
+    })
+
+    diff = diff_graphs(old_graph, new_graph)
+    assert diff["base_changes"] == []
+
+
+def test_diff_engine_emits_reparent_marker_for_qualified_relation_type():
+    old_graph = _graph_with_entities({
+        1: {"entity_type": "IfcWall", "global_id": "WALL", "attributes": {}, "refs": []},
+        2: {"entity_type": "IfcBuildingStorey", "global_id": "OLD_PARENT", "attributes": {}, "refs": []},
+        3: {"entity_type": "IfcBuildingStorey", "global_id": "NEW_PARENT", "attributes": {}, "refs": []},
+        100: {
+            "entity_type": "IfcRelContainedInSpatialStructure",
+            "attributes": {},
+            "refs": [
+                {"path": "/RelatingStructure", "target": 2, "target_type": "IfcBuildingStorey"},
+                {"path": "/RelatedElements/0", "target": 1, "target_type": "IfcWall"},
+            ],
+        },
+    })
+    new_graph = _graph_with_entities({
+        11: {"entity_type": "IfcWall", "global_id": "WALL", "attributes": {}, "refs": []},
+        12: {"entity_type": "IfcBuildingStorey", "global_id": "OLD_PARENT", "attributes": {}, "refs": []},
+        13: {"entity_type": "IfcBuildingStorey", "global_id": "NEW_PARENT", "attributes": {}, "refs": []},
+        101: {
+            "entity_type": "IfcRelContainedInSpatialStructure",
+            "attributes": {},
+            "refs": [
+                {"path": "/RelatingStructure", "target": 13, "target_type": "IfcBuildingStorey"},
+                {"path": "/RelatedElements/0", "target": 11, "target_type": "IfcWall"},
+            ],
+        },
+    })
+
+    diff = diff_graphs(old_graph, new_graph)
+    assert len(diff["derived_markers"]) == 1
+    marker = diff["derived_markers"][0]
+    assert marker["marker_type"] == "REPARENT"
+    assert marker["relation_type"] == "IfcRelContainedInSpatialStructure"
+    assert marker["child_id"] == "G:WALL"
+    assert marker["old_parent_id"] == "G:OLD_PARENT"
+    assert marker["new_parent_id"] == "G:NEW_PARENT"
+
+
+def test_diff_engine_does_not_emit_reparent_for_non_qualified_relation_type():
+    old_graph = _graph_with_entities({
+        1: {"entity_type": "IfcWall", "global_id": "WALL", "attributes": {}, "refs": []},
+        2: {"entity_type": "IfcGroup", "global_id": "OLD_PARENT", "attributes": {}, "refs": []},
+        3: {"entity_type": "IfcGroup", "global_id": "NEW_PARENT", "attributes": {}, "refs": []},
+        100: {
+            "entity_type": "IfcRelAssignsToGroup",
+            "attributes": {},
+            "refs": [
+                {"path": "/RelatingGroup", "target": 2, "target_type": "IfcGroup"},
+                {"path": "/RelatedObjects/0", "target": 1, "target_type": "IfcWall"},
+            ],
+        },
+    })
+    new_graph = _graph_with_entities({
+        11: {"entity_type": "IfcWall", "global_id": "WALL", "attributes": {}, "refs": []},
+        12: {"entity_type": "IfcGroup", "global_id": "OLD_PARENT", "attributes": {}, "refs": []},
+        13: {"entity_type": "IfcGroup", "global_id": "NEW_PARENT", "attributes": {}, "refs": []},
+        101: {
+            "entity_type": "IfcRelAssignsToGroup",
+            "attributes": {},
+            "refs": [
+                {"path": "/RelatingGroup", "target": 13, "target_type": "IfcGroup"},
+                {"path": "/RelatedObjects/0", "target": 11, "target_type": "IfcWall"},
+            ],
+        },
+    })
+
+    diff = diff_graphs(old_graph, new_graph)
+    assert diff["derived_markers"] == []
