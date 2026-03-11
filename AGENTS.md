@@ -24,7 +24,7 @@ The core engine is responsible for parsing IFC files, aligning entities across m
 - `athar/matcher_graph.py` — Matching stages for graph diffing. Implements deterministic typed-path propagation from matched root pairs (unique 1:1 buckets only) and a conservative secondary matcher for unresolved non-root entities via semantic-signature blocking with explicit ambiguity rejection.
 - `athar/canonical_serializer.py` — Deterministic serializer for identity/class records with total ordering `G:` then `H:` then `C:`.
 - `athar/diff_engine.py` — Core diff engine skeleton that merges identity sets and emits `base_changes` in the new wire format. Integrates rooted remap planning + typed-path propagation + secondary matching before ID assignment/merge, records `match_method` (`exact_guid`, `root_remap`, `path_propagation`, `secondary_match`, `exact_hash`) per change, emits recursive field-level `field_ops` for `MODIFY`, emits `CLASS_DELTA` with `equivalence_class` counts/exemplar for unresolved exact-hash class-cardinality deltas, emits relation-typed derived `REPARENT` markers for `IfcRelContainedInSpatialStructure`, `IfcRelAggregates`, and `IfcRelNests`, and populates `rooted_owners` with deterministic sampling (`N=5`) plus exact totals.
-- `athar/__main__.py` — CLI supports `--engine graph` (graph-based core) and `--engine legacy` (current GUID-centric pipeline).
+- `athar/__main__.py` — CLI supports `--engine graph` (graph-based core) and `--engine legacy` (current GUID-centric pipeline), plus streamed output modes via `--stream ndjson|chunked_json` and `--chunk-size`.
 
 ### Higher Layers (`athar_layers/`)
 
