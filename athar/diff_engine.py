@@ -9,6 +9,12 @@ from .graph_parser import parse_graph
 from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
 from .root_remap import plan_root_remap
 
+_REPARENT_RELATION_TYPES = frozenset({
+    "IfcRelContainedInSpatialStructure",
+    "IfcRelAggregates",
+    "IfcRelNests",
+})
+
 
 def diff_files(old_path: str, new_path: str, *, profile: str = "semantic_stable") -> dict:
     old_graph = parse_graph(old_path, profile=profile)
@@ -64,6 +70,16 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
     for entity_id in sorted(set(old_by_id) | set(new_by_id)):
         old_items = sorted(old_by_id.get(entity_id, []), key=lambda item: item["step_id"])
         new_items = sorted(new_by_id.get(entity_id, []), key=lambda item: item["step_id"])
+        if _should_emit_class_delta(entity_id, old_items, new_items):
+            change_id += 1
+            base_changes.append(_make_class_delta_change(
+                change_id,
+                entity_id=entity_id,
+                old_items=old_items,
+                new_items=new_items,
+            ))
+            continue
+
         paired = min(len(old_items), len(new_items))
 
         for i in range(paired):
@@ -71,7 +87,7 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
             new_item = new_items[i]
             old_ent = old_item["entity"]
             new_ent = new_item["entity"]
-            if _entities_equal(old_ent, new_ent):
+            if _entities_equal(entity_id, old_ent, new_ent):
                 continue
             change_id += 1
             base_changes.append(_make_change(
@@ -110,6 +126,14 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
                 match_method=_resolve_match_method(None, new_item),
             ))
 
+    derived_markers = _build_derived_markers(
+        old_graph=old_graph,
+        new_graph=new_graph,
+        old_ids=old_ids,
+        new_ids=new_ids,
+        base_changes=base_changes,
+    )
+
     return {
         "version": "2",
         "profile": profile,
@@ -125,7 +149,7 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
             "ambiguous": remap["ambiguous"] + path_propagation["ambiguous"] + secondary["ambiguous"],
         },
         "base_changes": base_changes,
-        "derived_markers": [],
+        "derived_markers": derived_markers,
     }
 
 
@@ -187,6 +211,24 @@ def _matched_occurrence_count(old_by_id: dict[str, list[dict]], new_by_id: dict[
     for entity_id in set(old_by_id) & set(new_by_id):
         total += min(len(old_by_id[entity_id]), len(new_by_id[entity_id]))
     return total
+
+
+def _should_emit_class_delta(
+    entity_id: str,
+    old_items: list[dict],
+    new_items: list[dict],
+) -> bool:
+    if not entity_id.startswith("H:"):
+        return False
+    if not old_items or not new_items:
+        return False
+    if len(old_items) == len(new_items):
+        return False
+
+    # Conservative gating: class delta is only used for exact-hash buckets
+    # that were not overridden by propagation/secondary matching.
+    all_methods = [item.get("match_method") for item in old_items + new_items]
+    return all(method == "exact_hash" for method in all_methods)
 
 
 def _resolve_match_method(old_item: dict | None, new_item: dict | None) -> str:
@@ -262,7 +304,11 @@ def _apply_step_matches(
         old_methods[old_step] = method
 
 
-def _entities_equal(old_ent: dict, new_ent: dict) -> bool:
+def _entities_equal(entity_id: str, old_ent: dict, new_ent: dict) -> bool:
+    # H identities are STEP-ID independent signatures; compare the same way
+    # to avoid false MODIFYs from pure renumbering.
+    if entity_id.startswith("H:"):
+        return structural_hash(old_ent) == structural_hash(new_ent)
     return (
         old_ent.get("entity_type") == new_ent.get("entity_type")
         and old_ent.get("attributes") == new_ent.get("attributes")
@@ -309,6 +355,39 @@ def _make_change(
         "rooted_owners": {"sample": [], "total": 0},
         "change_categories": [],
         "equivalence_class": None,
+    }
+
+
+def _make_class_delta_change(
+    change_id: int,
+    *,
+    entity_id: str,
+    old_items: list[dict],
+    new_items: list[dict],
+) -> dict[str, Any]:
+    exemplar_entity = (new_items[0]["entity"] if new_items else old_items[0]["entity"])
+    class_id = f"C:{entity_id[2:]}"
+    return {
+        "change_id": f"chg-{change_id:06d}",
+        "op": "CLASS_DELTA",
+        "old_entity_id": entity_id,
+        "new_entity_id": entity_id,
+        "identity": {
+            "stability_tier": "C",
+            "match_method": "equivalence_class",
+            "match_confidence": 1.0,
+        },
+        "field_ops": [],
+        "old_snapshot": None,
+        "new_snapshot": None,
+        "rooted_owners": {"sample": [], "total": 0},
+        "change_categories": [],
+        "equivalence_class": {
+            "id": class_id,
+            "old_count": len(old_items),
+            "new_count": len(new_items),
+            "exemplar": _snapshot(exemplar_entity),
+        },
     }
 
 
@@ -380,3 +459,104 @@ def _diff_values(old: Any, new: Any, *, path: str) -> list[dict[str, Any]]:
 
 def _norm_path(path: str) -> str:
     return path or "/"
+
+
+def _build_derived_markers(
+    *,
+    old_graph: dict,
+    new_graph: dict,
+    old_ids: dict[int, str],
+    new_ids: dict[int, str],
+    base_changes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    old_links = _extract_parent_links(old_graph, old_ids)
+    new_links = _extract_parent_links(new_graph, new_ids)
+    change_index = _build_change_index(base_changes)
+
+    markers: list[dict[str, Any]] = []
+    for key in sorted(set(old_links) & set(new_links)):
+        relation_type, child_id = key
+        old_link = old_links[key]
+        new_link = new_links[key]
+        old_parent_id = old_link["parent_id"]
+        new_parent_id = new_link["parent_id"]
+        if old_parent_id == new_parent_id:
+            continue
+
+        source_change_ids = sorted(set(
+            change_index.get(old_link["relation_id"], [])
+            + change_index.get(new_link["relation_id"], [])
+            + change_index.get(child_id, [])
+            + change_index.get(old_parent_id, [])
+            + change_index.get(new_parent_id, [])
+        ))
+        markers.append({
+            "marker_type": "REPARENT",
+            "relation_type": relation_type,
+            "child_id": child_id,
+            "old_parent_id": old_parent_id,
+            "new_parent_id": new_parent_id,
+            "source_change_ids": source_change_ids,
+        })
+    return markers
+
+
+def _extract_parent_links(graph: dict, ids: dict[int, str]) -> dict[tuple[str, str], dict[str, str]]:
+    links: dict[tuple[str, str], dict[str, str]] = {}
+    ambiguous: set[tuple[str, str]] = set()
+
+    for step_id, entity in graph.get("entities", {}).items():
+        relation_type = entity.get("entity_type")
+        if relation_type not in _REPARENT_RELATION_TYPES:
+            continue
+        relation_id = ids.get(step_id)
+        if relation_id is None:
+            continue
+
+        parent_steps = sorted({
+            ref.get("target")
+            for ref in entity.get("refs", [])
+            if str(ref.get("path", "")).startswith("/Relating")
+            and ref.get("target") is not None
+        })
+        child_steps = sorted({
+            ref.get("target")
+            for ref in entity.get("refs", [])
+            if str(ref.get("path", "")).startswith("/Related")
+            and ref.get("target") is not None
+        })
+        if len(parent_steps) != 1 or not child_steps:
+            continue
+
+        parent_id = ids.get(parent_steps[0])
+        if parent_id is None:
+            continue
+
+        for child_step in child_steps:
+            child_id = ids.get(child_step)
+            if child_id is None:
+                continue
+            key = (relation_type, child_id)
+            existing = links.get(key)
+            if existing and existing["parent_id"] != parent_id:
+                ambiguous.add(key)
+                continue
+            links[key] = {
+                "parent_id": parent_id,
+                "relation_id": relation_id,
+            }
+
+    for key in ambiguous:
+        links.pop(key, None)
+    return links
+
+
+def _build_change_index(base_changes: list[dict[str, Any]]) -> dict[str, list[str]]:
+    index: dict[str, list[str]] = {}
+    for change in base_changes:
+        change_id = change["change_id"]
+        for entity_id in (change.get("old_entity_id"), change.get("new_entity_id")):
+            if entity_id is None:
+                continue
+            index.setdefault(entity_id, []).append(change_id)
+    return index
