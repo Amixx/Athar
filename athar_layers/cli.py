@@ -8,8 +8,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from athar.parser import parse
-from athar.differ import diff
 from .folder import scan_folder
 from .report import report_two_file, report_folder
 from .scene import build_scene, human_class
@@ -91,6 +89,9 @@ def _format_date(ts: str | None, ref_dt: datetime | None = None) -> str:
 
 
 def main():
+    raise SystemExit(
+        "athar_layers CLI is temporarily disabled while it is rewired to the graph engine."
+    )
     parser = argparse.ArgumentParser(
         prog="athar",
         description="Semantic IFC diff — compare BIM models at the entity/property level.",

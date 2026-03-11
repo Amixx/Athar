@@ -3,7 +3,7 @@
 Uses real IFC files from data/ to verify scene model construction.
 """
 
-from athar.parser import parse
+from athar_layers.parser import parse
 from athar_layers.scene import build_scene
 
 BASIC_HOUSE = "data/BasicHouse.ifc"

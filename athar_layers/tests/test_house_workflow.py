@@ -11,8 +11,8 @@ import os
 
 import pytest
 
-from athar.parser import parse
-from athar.differ import diff
+from athar_layers.parser import parse
+from athar_layers.differ import diff
 from athar_layers.placement import enrich_diff
 
 V1 = "tests/fixtures/house_v1.ifc"

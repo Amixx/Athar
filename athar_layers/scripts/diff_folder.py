@@ -16,10 +16,10 @@ import sys
 from pathlib import Path
 
 # Allow running as script from project root
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from athar.parser import parse
-from athar.differ import diff
+from athar_layers.parser import parse
+from athar_layers.differ import diff
 from athar_layers.placement import enrich_diff
 
 

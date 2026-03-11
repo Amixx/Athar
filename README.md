@@ -16,6 +16,8 @@ Requires Python 3.10+ and [ifcopenshell](https://ifcopenshell.org/).
 
 ### Full Tool (Summary, Folder mode, Reports)
 
+`athar_layers` is temporarily disabled while it is rewired to the graph engine.
+
 ```bash
 # Two-file diff summary
 python -m athar_layers old.ifc new.ifc
@@ -37,14 +39,14 @@ python -m athar_layers some-folder/ --report version-history.md
 # Two-file diff (JSON output for computers)
 python -m athar old.ifc new.ifc
 
-# Graph engine (WIP)
-python -m athar old.ifc new.ifc --engine graph --profile semantic_stable
+# Select profile
+python -m athar old.ifc new.ifc --profile semantic_stable
 
 # Stream output as NDJSON records
-python -m athar old.ifc new.ifc --engine graph --stream ndjson
+python -m athar old.ifc new.ifc --stream ndjson
 
 # Stream output as chunked JSON records
-python -m athar old.ifc new.ifc --engine graph --stream chunked_json --chunk-size 1000
+python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
 ```
 
 See the [sample report](docs/SAMPLE_REPORT.md) for what the output looks like.
