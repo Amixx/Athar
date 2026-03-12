@@ -46,6 +46,7 @@ def test_diff_engine_add_remove_modify():
         "old": "Wall A",
         "new": "Wall A v2",
     }]
+    assert "ATTRIBUTES" in modify["change_categories"]
 
 
 def test_diff_engine_uses_root_remap_on_low_guid_overlap():
@@ -217,6 +218,77 @@ def test_diff_engine_applies_secondary_match_for_unmatched_non_root():
     assert any(
         change["identity"]["match_method"] == "secondary_match"
         and change["identity"]["matched_on"]["stage"] in {"scored_assignment", "signature_unique"}
+        for change in diff["base_changes"]
+    )
+
+
+def test_diff_engine_emits_class_delta_for_unresolved_ambiguous_secondary_partition():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {
+                "HasPoints": {
+                    "kind": "list",
+                    "items": [
+                        {"kind": "ref", "id": 20},
+                        {"kind": "ref", "id": 21},
+                    ],
+                },
+            },
+            "refs": [
+                {"path": "/HasPoints", "target": 20, "target_type": "IfcCartesianPoint"},
+                {"path": "/HasPoints", "target": 21, "target_type": "IfcCartesianPoint"},
+            ],
+        },
+        20: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "1"}]}},
+            "refs": [],
+        },
+        21: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "2"}]}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {
+                "HasPoints": {
+                    "kind": "list",
+                    "items": [{"kind": "ref", "id": 30}],
+                },
+            },
+            "refs": [
+                {"path": "/HasPoints", "target": 30, "target_type": "IfcCartesianPoint"},
+            ],
+        },
+        30: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "5"}]}},
+            "refs": [],
+        },
+    })
+
+    diff = diff_graphs(old_graph, new_graph)
+    class_delta = next(
+        change for change in diff["base_changes"]
+        if change["op"] == "CLASS_DELTA" and (change["old_entity_id"] or "").startswith("C:")
+    )
+    assert class_delta["identity"]["match_method"] == "equivalence_class"
+    assert class_delta["equivalence_class"]["old_count"] == 2
+    assert class_delta["equivalence_class"]["new_count"] == 1
+    assert class_delta["equivalence_class"]["id"].startswith("C:")
+
+    assert not any(
+        change["op"] in {"ADD", "REMOVE"}
+        and (
+            (change.get("old_entity_id") or "").startswith("H:")
+            or (change.get("new_entity_id") or "").startswith("H:")
+        )
         for change in diff["base_changes"]
     )
 
@@ -696,3 +768,20 @@ def test_diff_engine_stats_include_stage_match_counts():
     assert counts["root_remap"] >= 1
     assert counts["path_propagation"] >= 0
     assert counts["secondary_match"] >= 0
+
+
+def test_diff_engine_relationship_change_category_for_rel_entities():
+    old_graph = _graph_with_entities({})
+    new_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcRelAggregates",
+            "attributes": {},
+            "refs": [],
+        },
+    })
+
+    diff = diff_graphs(old_graph, new_graph)
+    add = diff["base_changes"][0]
+    assert add["op"] == "ADD"
+    assert "RELATIONSHIP" in add["change_categories"]
+    assert "ENTITY" in add["change_categories"]

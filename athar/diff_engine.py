@@ -176,6 +176,8 @@ def _iter_base_changes(context: dict[str, Any], *, include_snapshots: bool):
     for entity_id in sorted(set(old_by_id) | set(new_by_id)):
         old_items = sorted(old_by_id.get(entity_id, []), key=lambda item: item["step_id"])
         new_items = sorted(new_by_id.get(entity_id, []), key=lambda item: item["step_id"])
+        if entity_id.startswith("C:") and len(old_items) == len(new_items):
+            continue
         if should_emit_class_delta(entity_id, old_items, new_items):
             change_id += 1
             owner_ids = old_owner_projector.owners_for_steps([item["step_id"] for item in old_items])
