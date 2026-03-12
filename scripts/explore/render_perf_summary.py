@@ -202,6 +202,38 @@ def _render_owner_projection(report: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_suite_manifest(report: dict[str, Any]) -> list[str]:
+    lines = [
+        "## Perf Suite Run",
+        "",
+        f"- state: `{report.get('state', 'unknown')}`",
+        f"- completed steps: `{report.get('completed_steps', 'n/a')}/{report.get('total_steps', 'n/a')}`",
+    ]
+    current_step = report.get("current_step")
+    if isinstance(current_step, dict):
+        lines.append(
+            f"- current step: `{current_step.get('index', '?')}/{report.get('total_steps', '?')}` "
+            f"`{current_step.get('name', 'unknown')}`"
+        )
+    lines.extend([
+        "",
+        "| Step | Exit | Timed Out | Elapsed | Resumed Skip |",
+        "|---|---:|---:|---:|---:|",
+    ])
+    for step in report.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        name = step.get("name", "unknown")
+        exit_code = step.get("exit_code", "n/a")
+        timed_out = step.get("timed_out", "n/a")
+        elapsed = step.get("elapsed_s")
+        resumed_skip = "yes" if step.get("resumed_skip") else "no"
+        elapsed_text = f"{float(elapsed):.3f}s" if isinstance(elapsed, (int, float)) else "n/a"
+        lines.append(f"| `{name}` | `{exit_code}` | `{timed_out}` | `{elapsed_text}` | {resumed_skip} |")
+    lines.append("")
+    return lines
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render perf JSON artifacts into markdown.")
     parser.add_argument("--baseline", default=None, help="Path to benchmark_diff_engine JSON report.")
@@ -210,6 +242,7 @@ def main() -> None:
     parser.add_argument("--owner-projection", default=None, help="Path to owner projection benchmark JSON report.")
     parser.add_argument("--matcher-quality", default=None, help="Path to matcher quality JSON report.")
     parser.add_argument("--determinism", default=None, help="Path to determinism stress JSON report.")
+    parser.add_argument("--suite-manifest", default=None, help="Path to run_perf_suite manifest JSON report.")
     parser.add_argument("--out", default="docs/perf/SUMMARY.md", help="Output markdown path.")
     args = parser.parse_args()
 
@@ -226,6 +259,8 @@ def main() -> None:
         lines.extend(_render_matcher_quality(_load_json(Path(args.matcher_quality))))
     if args.determinism:
         lines.extend(_render_determinism_stress(_load_json(Path(args.determinism))))
+    if args.suite_manifest:
+        lines.extend(_render_suite_manifest(_load_json(Path(args.suite_manifest))))
     if not (
         args.baseline
         or args.wl_benchmark
@@ -233,6 +268,7 @@ def main() -> None:
         or args.owner_projection
         or args.matcher_quality
         or args.determinism
+        or args.suite_manifest
     ):
         lines.append("_No input reports provided._")
 

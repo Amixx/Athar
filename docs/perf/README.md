@@ -45,7 +45,10 @@ Operational notes:
 - `run_perf_suite` supports bounded execution via `--step-timeout-s` and scoped WL inputs via `--wl-graph` / `--wl-consistency-graph`.
 - `run_perf_suite` writes its manifest incrementally after each step and supports `--resume` to skip previously successful steps whose artifacts still exist.
 - `run_perf_suite --baseline-engine-timings` forwards `--engine-timings` to the baseline benchmark step.
+- `run_perf_suite --heartbeat-s N` prints suite-level heartbeat logs while a step is running (set `0` to disable).
+- The suite manifest includes `state` (`running|failed|completed`) and transient `current_step` metadata while execution is in progress.
 - `render_perf_summary` includes a `Diff Stage Timings (diff_graphs)` section when baseline artifacts contain `engine_timings_ms`.
+- `render_perf_summary` includes a `Perf Suite Run` section when a suite manifest is provided (`--suite-manifest`), showing step status/elapsed and current in-progress step.
 
 For every metric, it captures:
 
