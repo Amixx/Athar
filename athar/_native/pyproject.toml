@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "athar-native"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.maturin]
+module-name = "athar._native._core"
+python-source = "../.."
+manifest-path = "Cargo.toml"

@@ -13,6 +13,7 @@ Athar contains the core diff engine plus a transitional integration package.
 The core engine is responsible for parsing IFC files, aligning entities across models, and generating a structured JSON diff.
 
 - `athar/__main__.py` — Minimal CLI for the core engine. Diffs two files and prints raw JSON to stdout.
+- `athar/_native/` — Optional PyO3/maturin native-accelerator scaffold for hot loops. Intended to provide `athar._native._core` with drop-in helpers such as native entity fingerprinting/WL round logic while keeping pure-Python fallbacks in place when the extension is not built.
 - `athar/graph/types.py` — Graph-layer `TypedDict` contracts (`GraphIR`, `EntityIR`, `EntityRefIR`) shared by graph extraction and diff consumers.
 - `athar/graph/canonical_values.py` — Deterministic canonicalization of scalar and aggregate values for the graph layer. Preserves wrapper/select type information, enforces deterministic ordering for SET/BAG, and applies profile-driven measure-aware normalization (length/area/volume/angle/derived via unit context) for `semantic_stable`.
 - `athar/graph/profile_policy.py` — Central profile contract (`raw_exact`, `semantic_stable`) with validation and volatility filtering rules used by parser/diff paths.
@@ -61,6 +62,7 @@ Detailed information for these components can be found in [athar_layers/AGENTS.m
 
 - Python 3.10+
 - Engine modules (`athar/`) must not depend on integration/presentation modules (`athar_layers/`).
+- `athar/diff/` may depend on `athar/graph/` and optional low-level accelerators under `athar/_native/`; `athar/graph/` must remain independent of both.
 - Integration/presentation layers enrich the raw JSON output from the engine for human consumption.
 - Use `ifcopenshell` for all IFC parsing. Do not parse STEP files as text.
 - Match entities across files by GlobalId (the stable identifier across revisions).
@@ -68,6 +70,8 @@ Detailed information for these components can be found in [athar_layers/AGENTS.m
 - Output structured JSON. Human-readable summaries are a presentation concern, not a diff concern.
 - No deep B-rep geometry comparison. Compare placement matrices and geometric parameters only.
 - Minimal dependencies. Core runtime deps are `ifcopenshell` and `xxhash`.
+- Native acceleration is optional. When working on `athar/_native/`, keep Python fallback behavior intact and validate parity against the pure-Python implementations.
+- Prefer a repo-local `.venv` for development. `pyproject.toml` defines packaging/build metadata; it does not replace environment isolation. Verified local workflow is `make dev-setup`, `make native-dev`, `make test-native`, `make test-perf`.
 - Matching quality is prioritized over throughput: preserve `MODIFY` recovery (correct entity alignment) rather than collapsing into `ADD/REMOVE`; keep matcher cutoffs conservative and only use aggressive gates as safety valves for pathological inputs.
 
 ## Running

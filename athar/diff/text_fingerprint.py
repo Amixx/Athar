@@ -6,6 +6,11 @@ import hashlib
 from collections import Counter
 from typing import Any, Protocol
 
+try:
+    from athar._native._core import native_entity_fingerprint as _NATIVE_ENTITY_FINGERPRINT
+except Exception:
+    _NATIVE_ENTITY_FINGERPRINT = None
+
 
 class _HexHasher(Protocol):
     def update(self, data: bytes) -> None: ...
@@ -24,6 +29,13 @@ except Exception:
 
 def entity_text_fingerprint(entity: dict[str, Any]) -> str:
     """Fingerprint entity content while ignoring STEP ref targets."""
+    if _NATIVE_ENTITY_FINGERPRINT is not None:
+        return _NATIVE_ENTITY_FINGERPRINT(entity)
+    return python_entity_text_fingerprint(entity)
+
+
+def python_entity_text_fingerprint(entity: dict[str, Any]) -> str:
+    """Pure-Python fallback for entity content fingerprinting."""
     hasher = _new_hasher()
     _hash_token(hasher, "entity_type")
     _hash_scalar(hasher, entity.get("entity_type"))
