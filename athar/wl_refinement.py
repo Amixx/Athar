@@ -44,6 +44,7 @@ def wl_refine_colors(
     max_rounds: int | None = None,
     round_hash: str = _WL_ROUND_HASH_AUTO,
     initial_colors: dict[int, str] | None = None,
+    adjacency: dict[int, list[tuple[str, str | None, int]]] | None = None,
     diagnostics: dict[str, Any] | None = None,
 ) -> dict[int, str]:
     """Weisfeiler-Lehman color refinement over the explicit forward graph."""
@@ -52,7 +53,7 @@ def wl_refine_colors(
         return {}
 
     hasher_name, hasher = _resolve_wl_round_hasher(round_hash)
-    adjacency = build_adjacency(entities)
+    adjacency = adjacency if adjacency is not None else build_adjacency(entities)
     if initial_colors is None:
         colors = {step_id: structural_hash(entity) for step_id, entity in entities.items()}
     else:
@@ -221,6 +222,8 @@ def wl_refine_with_scc_fallback(
     max_rounds: int | None = None,
     round_hash: str = _WL_ROUND_HASH_AUTO,
     initial_colors: dict[int, str] | None = None,
+    adjacency: dict[int, list[tuple[str, str | None, int]]] | None = None,
+    reverse_adjacency: dict[int, list[tuple[str, str | None, int]]] | None = None,
     max_partition_size: int = _SCC_AMBIGUOUS_PARTITION_MAX,
     refinement_rounds: int = _SCC_FALLBACK_REFINEMENT_ROUNDS,
     diagnostics: dict[str, Any] | None = None,
@@ -235,16 +238,22 @@ def wl_refine_with_scc_fallback(
     if not entities:
         return {}, {}
 
+    adjacency = adjacency if adjacency is not None else build_adjacency(entities)
+    reverse_adjacency = (
+        reverse_adjacency
+        if reverse_adjacency is not None
+        else build_reverse_adjacency(entities, adjacency)
+    )
+
     wl_diagnostics: dict[str, Any] = {}
     colors = wl_refine_colors(
         graph,
         max_rounds=max_rounds,
         round_hash=round_hash,
         initial_colors=initial_colors,
+        adjacency=adjacency,
         diagnostics=wl_diagnostics,
     )
-    adjacency = build_adjacency(entities)
-    reverse_adjacency = build_reverse_adjacency(entities, adjacency)
     class_ids: dict[int, str] = {}
 
     sccs = _tarjan_scc(sorted(entities), adjacency)

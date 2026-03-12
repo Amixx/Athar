@@ -91,7 +91,13 @@ class RootedOwnerProjector:
     Owner closure is materialized only when a change asks for owner summaries.
     """
 
-    def __init__(self, graph: dict, ids: dict[int, str]) -> None:
+    def __init__(
+        self,
+        graph: dict,
+        ids: dict[int, str],
+        *,
+        reverse_adjacency: dict[int, list[tuple[str, str | None, int]]] | None = None,
+    ) -> None:
         self._graph = graph
         self._ids = ids
         self._eager_index_enabled = owner_index_disk_threshold() > 0
@@ -102,11 +108,14 @@ class RootedOwnerProjector:
             for step_id, entity_id in ids.items()
             if isinstance(entity_id, str) and entity_id.startswith("G:")
         }
-        self._reverse_sources = _build_reverse_sources(self._entities)
+        self._reverse_sources = (
+            {} if reverse_adjacency is not None else _build_reverse_sources(self._entities)
+        )
         self._owners_cache: dict[int, set[str]] = {
             step_id: {owner_id}
             for step_id, owner_id in self._root_owner_ids.items()
         }
+        self._reverse_adjacency = reverse_adjacency
 
     def owners_for_step(self, step_id: int) -> set[str]:
         if self._eager_index_enabled:
@@ -172,7 +181,11 @@ class RootedOwnerProjector:
                 owner_ids.update(node_cached)
                 continue
 
-            for source in self._reverse_sources.get(node, ()):
+            if self._reverse_adjacency is not None:
+                sources = (source_step for _path, _source_type, source_step in self._reverse_adjacency.get(node, ()))
+            else:
+                sources = self._reverse_sources.get(node, ())
+            for source in sources:
                 if source not in seen:
                     stack.append(source)
         self._owners_cache[step_id] = set(owner_ids)

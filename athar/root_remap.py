@@ -32,6 +32,8 @@ def plan_root_remap(
     score_threshold: float = ROOT_REMAP_SCORE_THRESHOLD,
     score_margin: float = ROOT_REMAP_SCORE_MARGIN,
     assignment_max: int = ROOT_REMAP_ASSIGNMENT_MAX,
+    old_colors: dict[int, str] | None = None,
+    new_colors: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     """Build a deterministic old-root -> new-root remap table."""
     old_roots = _collect_unique_roots(old_graph)
@@ -50,8 +52,8 @@ def plan_root_remap(
 
     old_by_sig = _group_roots_by_signature(old_roots)
     new_by_sig = _group_roots_by_signature(new_roots)
-    old_colors = wl_refine_colors(old_graph)
-    new_colors = wl_refine_colors(new_graph)
+    old_colors = old_colors if old_colors is not None else wl_refine_colors(old_graph)
+    new_colors = new_colors if new_colors is not None else wl_refine_colors(new_graph)
 
     old_to_new: dict[str, str] = {}
     diagnostics: dict[str, dict[str, Any]] = {}

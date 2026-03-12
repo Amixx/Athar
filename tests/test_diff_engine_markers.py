@@ -66,3 +66,26 @@ def test_rooted_owner_projector_uses_eager_index_when_threshold_set(monkeypatch)
     projector = markers.RootedOwnerProjector(graph, ids)
     assert projector.owners_for_step(2) == {"G:ROOT"}
     assert called["count"] == 1
+
+
+def test_rooted_owner_projector_can_use_prebuilt_reverse_adjacency(monkeypatch):
+    graph = {
+        "entities": {
+            1: {"entity_type": "IfcWall", "refs": [{"path": "/Contains/0", "target": 2, "target_type": "IfcDoor"}]},
+            2: {"entity_type": "IfcDoor", "refs": []},
+        }
+    }
+    ids = {1: "G:ROOT", 2: "H:CHILD"}
+    reverse = {
+        1: [],
+        2: [("/Contains/0", "IfcWall", 1)],
+    }
+    monkeypatch.delenv(markers.OWNER_INDEX_DISK_THRESHOLD_ENV, raising=False)
+    monkeypatch.setattr(
+        markers,
+        "_build_reverse_sources",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("_build_reverse_sources should not be called")),
+    )
+
+    projector = markers.RootedOwnerProjector(graph, ids, reverse_adjacency=reverse)
+    assert projector.owners_for_step(2) == {"G:ROOT"}

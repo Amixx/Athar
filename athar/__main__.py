@@ -8,6 +8,7 @@ from typing import Any
 
 from athar.diff_engine import diff_files, stream_diff_files
 from athar.diff_engine_markers import OWNER_INDEX_DISK_THRESHOLD_ENV
+from athar.graph_cache import _CACHE_DIR_ENV, _CACHE_ENABLED_ENV, clear_cache
 from athar.geometry_policy import GEOMETRY_POLICY_CHOICES, GEOMETRY_POLICY_STRICT_SYNTAX
 from athar.guid_policy import GUID_POLICY_CHOICES, GUID_POLICY_FAIL_FAST
 from athar.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
@@ -15,8 +16,8 @@ from athar.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
 
 def main():
     parser = argparse.ArgumentParser(prog="athar-core")
-    parser.add_argument("old", help="Path to old IFC file")
-    parser.add_argument("new", help="Path to new IFC file")
+    parser.add_argument("old", nargs="?", help="Path to old IFC file")
+    parser.add_argument("new", nargs="?", help="Path to new IFC file")
     parser.add_argument(
         "--profile",
         choices=SUPPORTED_PROFILES,
@@ -127,7 +128,33 @@ def main():
             f"(sets {OWNER_INDEX_DISK_THRESHOLD_ENV} for this run; <=0 disables spill)"
         ),
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help=f"Disable graph/identity disk cache (sets {_CACHE_ENABLED_ENV}=0)",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default=None,
+        help=f"Override cache directory (sets {_CACHE_DIR_ENV})",
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear the graph cache and exit",
+    )
     args = parser.parse_args()
+    if args.clear_cache:
+        n = clear_cache()
+        print(f"Cleared {n} cache entries.")
+        return
+    if not args.old or not args.new:
+        parser.error("the following arguments are required: old, new")
+    if args.no_cache:
+        os.environ[_CACHE_ENABLED_ENV] = "0"
+    if args.cache_dir is not None:
+        os.environ[_CACHE_DIR_ENV] = args.cache_dir
     if args.owner_index_disk_threshold is not None:
         os.environ[OWNER_INDEX_DISK_THRESHOLD_ENV] = str(max(0, args.owner_index_disk_threshold))
     matcher_policy = _matcher_policy_overrides(args)

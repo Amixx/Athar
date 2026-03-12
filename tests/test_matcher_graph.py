@@ -512,3 +512,51 @@ def test_secondary_match_large_family_can_use_signature_fallback(monkeypatch):
     assert result["ambiguous"] == 3
     assert len(result["ambiguous_partitions"]) == 1
     assert result["ambiguous_partitions"][0]["stage"] == "large_family_fallback"
+
+
+def test_secondary_match_can_reuse_prebuilt_adjacency(monkeypatch):
+    old_graph = _graph({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "ROOT",
+            "attributes": {},
+            "refs": [{"path": "/Children", "target": 2, "target_type": "IfcProxy"}],
+        },
+        2: {"entity_type": "IfcProxy", "attributes": {"Name": {"kind": "string", "value": "A"}}, "refs": []},
+    })
+    new_graph = _graph({
+        11: {
+            "entity_type": "IfcWall",
+            "global_id": "ROOT",
+            "attributes": {},
+            "refs": [{"path": "/Children", "target": 12, "target_type": "IfcProxy"}],
+        },
+        12: {"entity_type": "IfcProxy", "attributes": {"Name": {"kind": "string", "value": "A"}}, "refs": []},
+    })
+    old_adj = {1: [("/Children", "IfcProxy", 2)], 2: []}
+    new_adj = {11: [("/Children", "IfcProxy", 12)], 12: []}
+    old_rev = {1: [], 2: [("/Children", "IfcWall", 1)]}
+    new_rev = {11: [], 12: [("/Children", "IfcWall", 11)]}
+
+    monkeypatch.setattr(
+        matcher_graph_mod,
+        "build_adjacency",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("build_adjacency should not be called")),
+    )
+    monkeypatch.setattr(
+        matcher_graph_mod,
+        "build_reverse_adjacency",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("build_reverse_adjacency should not be called")),
+    )
+
+    result = secondary_match_unresolved(
+        old_graph,
+        new_graph,
+        pre_matched_old={1},
+        pre_matched_new={11},
+        old_adjacency=old_adj,
+        new_adjacency=new_adj,
+        old_reverse_adjacency=old_rev,
+        new_reverse_adjacency=new_rev,
+    )
+    assert result["old_to_new"] == {2: 12}

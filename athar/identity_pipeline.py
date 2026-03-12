@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .graph_utils import build_adjacency, build_reverse_adjacency
 from .structural_hash import structural_hash
 from .wl_refinement import wl_refine_with_scc_fallback
 from .guid_policy import enforce_or_disambiguate_guid_policy
@@ -17,27 +18,58 @@ _DEFAULT_EXACT_HASH_IDENTITY: IdentityInfo = {
 }
 
 
-def _precompute_identity_state(graph: GraphIR, *, profile: str) -> dict[str, Any]:
+def _precompute_identity_state(
+    graph: GraphIR,
+    *,
+    profile: str,
+    seeded_colors: dict[int, str] | None = None,
+    precomputed_profile_entities: dict[int, dict] | None = None,
+) -> dict[str, Any]:
     entities = graph.get("entities", {})
     guid_counts = _guid_index(entities)
     unique_guid_steps = _unique_guid_step_index(entities, guid_counts=guid_counts)
-    id_graph = _graph_for_profile(graph, profile=profile)
-    id_entities = id_graph.get("entities", {})
-    profile_hashes = {
-        step_id: structural_hash(entity)
-        for step_id, entity in id_entities.items()
-    }
+    graph_adjacency = build_adjacency(entities)
+    graph_reverse_adjacency = build_reverse_adjacency(entities, graph_adjacency)
+    if precomputed_profile_entities is not None:
+        id_entities = precomputed_profile_entities
+    else:
+        id_graph = _graph_for_profile(graph, profile=profile)
+        id_entities = id_graph.get("entities", {})
+    if id_entities is entities:
+        id_adjacency = graph_adjacency
+        id_reverse_adjacency = graph_reverse_adjacency
+    else:
+        id_adjacency = build_adjacency(id_entities)
+        id_reverse_adjacency = build_reverse_adjacency(id_entities, id_adjacency)
+    seeded_colors = seeded_colors or {}
+    if seeded_colors and len(seeded_colors) >= len(id_entities):
+        profile_hashes = {step_id: seeded_colors[step_id] for step_id in id_entities}
+    else:
+        profile_hashes = {}
+        for step_id, entity in id_entities.items():
+            seeded = seeded_colors.get(step_id)
+            if seeded is not None:
+                profile_hashes[step_id] = seeded
+                continue
+            profile_hashes[step_id] = structural_hash(entity)
+    id_graph = {"entities": id_entities}
     wl_diagnostics: dict[str, Any] = {}
     colors, scc_classes = wl_refine_with_scc_fallback(
         id_graph,
         initial_colors=profile_hashes,
+        adjacency=id_adjacency,
+        reverse_adjacency=id_reverse_adjacency,
         diagnostics=wl_diagnostics,
     )
     return {
         "entities": entities,
         "guid_counts": guid_counts,
         "unique_guid_steps": unique_guid_steps,
+        "graph_adjacency": graph_adjacency,
+        "graph_reverse_adjacency": graph_reverse_adjacency,
         "id_entities": id_entities,
+        "id_adjacency": id_adjacency,
+        "id_reverse_adjacency": id_reverse_adjacency,
         "profile_hashes": profile_hashes,
         "colors": colors,
         "scc_classes": scc_classes,
@@ -221,6 +253,7 @@ def _identity_priority(match_method: str) -> int:
     order = {
         "root_remap": 5,
         "path_propagation": 4,
+        "text_fingerprint": 3,
         "secondary_match": 3,
         "exact_guid": 2,
         "guid_disambiguated": 2,

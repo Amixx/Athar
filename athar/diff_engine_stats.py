@@ -22,11 +22,12 @@ def build_stats(
     new_dangling_refs: int,
 ) -> dict[str, Any]:
     ambiguous_total = remap_ambiguous + path_ambiguous + secondary_ambiguous
+    matched_total, matched_methods = _matched_summary(old_by_id, new_by_id)
     return {
         "old_entities": len(old_graph.get("entities", {})),
         "new_entities": len(new_graph.get("entities", {})),
-        "matched": matched_occurrence_count(old_by_id, new_by_id),
-        "matched_by_method": matched_by_method(old_by_id, new_by_id),
+        "matched": matched_total,
+        "matched_by_method": matched_methods,
         "root_guid_quality": {
             "old": root_guid_quality(old_graph),
             "new": root_guid_quality(new_graph),
@@ -47,23 +48,35 @@ def build_stats(
     }
 
 
+def _matched_summary(
+    old_by_id: dict[str, list[dict]],
+    new_by_id: dict[str, list[dict]],
+) -> tuple[int, dict[str, int]]:
+    matched_total = 0
+    counts: dict[str, int] = {}
+    left, right = (old_by_id, new_by_id) if len(old_by_id) <= len(new_by_id) else (new_by_id, old_by_id)
+    for entity_id, left_items in left.items():
+        right_items = right.get(entity_id)
+        if right_items is None:
+            continue
+        old_items = left_items if left is old_by_id else right_items
+        new_items = right_items if left is old_by_id else left_items
+        paired = min(len(old_items), len(new_items))
+        matched_total += paired
+        for idx in range(paired):
+            method = old_items[idx].get("identity", {}).get("match_method", "exact_hash")
+            counts[method] = counts.get(method, 0) + 1
+    return matched_total, {method: counts[method] for method in sorted(counts)}
+
+
 def matched_occurrence_count(old_by_id: dict[str, list[dict]], new_by_id: dict[str, list[dict]]) -> int:
-    total = 0
-    for entity_id in set(old_by_id) & set(new_by_id):
-        total += min(len(old_by_id[entity_id]), len(new_by_id[entity_id]))
+    total, _methods = _matched_summary(old_by_id, new_by_id)
     return total
 
 
 def matched_by_method(old_by_id: dict[str, list[dict]], new_by_id: dict[str, list[dict]]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for entity_id in set(old_by_id) & set(new_by_id):
-        old_items = old_by_id[entity_id]
-        new_items = new_by_id[entity_id]
-        paired = min(len(old_items), len(new_items))
-        for idx in range(paired):
-            method = old_items[idx].get("identity", {}).get("match_method", "exact_hash")
-            counts[method] = counts.get(method, 0) + 1
-    return {method: counts[method] for method in sorted(counts)}
+    _total, methods = _matched_summary(old_by_id, new_by_id)
+    return methods
 
 
 def root_guid_quality(graph: dict) -> dict[str, int]:

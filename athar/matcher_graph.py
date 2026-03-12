@@ -93,6 +93,10 @@ def secondary_match_unresolved(
     depth3_max: int = SECONDARY_DEEPENING_DEPTH3_MAX,
     unresolved_limit: int | None = None,
     unresolved_pair_limit: int | None = None,
+    old_adjacency: dict[int, list[tuple[str, str | None, int]]] | None = None,
+    new_adjacency: dict[int, list[tuple[str, str | None, int]]] | None = None,
+    old_reverse_adjacency: dict[int, list[tuple[str, str | None, int]]] | None = None,
+    new_reverse_adjacency: dict[int, list[tuple[str, str | None, int]]] | None = None,
 ) -> dict[str, Any]:
     """Deterministic secondary matcher for unmatched non-root entities."""
     old_entities = old_graph.get("entities", {})
@@ -152,10 +156,10 @@ def secondary_match_unresolved(
         family = entity_type_family(new_entities[step_id].get("entity_type"))
         new_blocks[family].append(step_id)
 
-    old_adjacency: dict[int, list[tuple[str, str | None, int]]] | None = None
-    new_adjacency: dict[int, list[tuple[str, str | None, int]]] | None = None
-    old_reverse: dict[int, list[tuple[str, str | None, int]]] | None = None
-    new_reverse: dict[int, list[tuple[str, str | None, int]]] | None = None
+    old_adjacency_cache = old_adjacency
+    new_adjacency_cache = new_adjacency
+    old_reverse_cache = old_reverse_adjacency
+    new_reverse_cache = new_reverse_adjacency
 
     matches: dict[int, int] = {}
     diagnostics: dict[int, dict[str, Any]] = {}
@@ -195,11 +199,14 @@ def secondary_match_unresolved(
                 })
             continue
 
-        if old_adjacency is None:
-            old_adjacency = build_adjacency(old_entities)
-            new_adjacency = build_adjacency(new_entities)
-            old_reverse = build_reverse_adjacency(old_entities, old_adjacency)
-            new_reverse = build_reverse_adjacency(new_entities, new_adjacency)
+        if old_adjacency_cache is None:
+            old_adjacency_cache = build_adjacency(old_entities)
+        if new_adjacency_cache is None:
+            new_adjacency_cache = build_adjacency(new_entities)
+        if old_reverse_cache is None:
+            old_reverse_cache = build_reverse_adjacency(old_entities, old_adjacency_cache)
+        if new_reverse_cache is None:
+            new_reverse_cache = build_reverse_adjacency(new_entities, new_adjacency_cache)
 
         for step_id in old_steps:
             if step_id in old_features:
@@ -208,8 +215,8 @@ def secondary_match_unresolved(
                 old_entities[step_id],
                 step_id=step_id,
                 entities=old_entities,
-                adjacency=old_adjacency,
-                reverse_adjacency=old_reverse,
+                adjacency=old_adjacency_cache,
+                reverse_adjacency=old_reverse_cache,
             )
         for step_id in new_steps:
             if step_id in new_features:
@@ -218,8 +225,8 @@ def secondary_match_unresolved(
                 new_entities[step_id],
                 step_id=step_id,
                 entities=new_entities,
-                adjacency=new_adjacency,
-                reverse_adjacency=new_reverse,
+                adjacency=new_adjacency_cache,
+                reverse_adjacency=new_reverse_cache,
             )
 
         block_matches, block_diagnostics, block_ambiguous, block_partitions = _match_entity_type_block(
