@@ -271,3 +271,32 @@ def test_stream_diff_graphs_header_matches_diff_graphs_with_custom_matcher_polic
     header = records[0]
     assert header["record_type"] == "header"
     assert header["identity_policy"] == full["identity_policy"]
+
+
+def test_stream_diff_graphs_timings_are_opt_in_in_header_stats():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A v2"}},
+            "refs": [],
+        },
+    })
+
+    default_header = json.loads(next(iter(stream_diff_graphs(old_graph, new_graph, mode="ndjson"))))
+    assert "timings_ms" not in default_header["stats"]
+
+    timed_header = json.loads(
+        next(iter(stream_diff_graphs(old_graph, new_graph, mode="ndjson", timings=True)))
+    )
+    timings = timed_header["stats"].get("timings_ms")
+    assert isinstance(timings, dict)
+    assert "prepare_context" in timings

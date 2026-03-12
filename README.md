@@ -54,6 +54,9 @@ python -m athar old.ifc new.ifc --stream ndjson
 # Stream output as chunked JSON records
 python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
 
+# Include runtime timing breakdown in stats (non-deterministic, profiling only)
+python -m athar old.ifc new.ifc --timings
+
 # Override matcher policy knobs
 python -m athar old.ifc new.ifc --secondary-score-threshold 0.65 --secondary-assignment-max 6
 python -m athar old.ifc new.ifc --root-remap-score-threshold 0.7 --root-remap-score-margin 0.06

@@ -1,4 +1,5 @@
 from athar.canonical_values import (
+    CanonicalizationError,
     canonical_bag,
     canonical_scalar,
     canonical_select,
@@ -33,3 +34,37 @@ def test_wrapper_and_select_are_explicit():
     select = canonical_select("IfcBoolean", True)
     assert select["kind"] == "select"
     assert select["type"] == "IfcBoolean"
+
+
+def test_non_finite_floats_are_rejected():
+    try:
+        canonical_scalar(float("inf"))
+        assert False, "expected CanonicalizationError"
+    except CanonicalizationError:
+        pass
+
+    try:
+        canonical_scalar(float("nan"))
+        assert False, "expected CanonicalizationError"
+    except CanonicalizationError:
+        pass
+
+
+def test_unknown_profile_is_rejected_for_float_scalars():
+    try:
+        canonical_scalar(1.25, profile="bad_profile")
+        assert False, "expected CanonicalizationError"
+    except CanonicalizationError:
+        pass
+
+
+def test_nested_aggregate_ordering_is_deterministic():
+    a = canonical_set([
+        [3, 1],
+        [1, 2],
+    ])
+    b = canonical_set([
+        [1, 2],
+        [3, 1],
+    ])
+    assert canonical_string(a) == canonical_string(b)
