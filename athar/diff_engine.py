@@ -23,6 +23,7 @@ from .profile_policy import DEFAULT_PROFILE
 def diff_files(old_path: str, new_path: str, *, profile: str = DEFAULT_PROFILE) -> dict:
     old_graph = parse_graph(old_path, profile=profile)
     new_graph = parse_graph(new_path, profile=profile)
+    _validate_same_schema(old_graph, new_graph)
     return diff_graphs(old_graph, new_graph, profile=profile)
 
 
@@ -56,6 +57,7 @@ def stream_diff_files(
     """Stream diff output directly from files without materializing full result."""
     old_graph = parse_graph(old_path, profile=profile)
     new_graph = parse_graph(new_path, profile=profile)
+    _validate_same_schema(old_graph, new_graph)
     yield from stream_diff_graphs(
         old_graph,
         new_graph,
@@ -164,6 +166,13 @@ def stream_diff_graphs(
         return
 
     raise ValueError(f"Unknown stream mode: {mode}")
+
+
+def _validate_same_schema(old_graph: dict, new_graph: dict) -> None:
+    old_schema = old_graph.get("metadata", {}).get("schema")
+    new_schema = new_graph.get("metadata", {}).get("schema")
+    if old_schema != new_schema:
+        raise ValueError(f"Schema mismatch: {old_schema} vs {new_schema}")
 
 
 def _iter_base_changes(context: dict[str, Any], *, include_snapshots: bool):
