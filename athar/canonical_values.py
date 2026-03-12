@@ -13,6 +13,23 @@ from typing import Any, Callable, Iterable
 PROFILE_RAW_EXACT = "raw_exact"
 PROFILE_SEMANTIC_STABLE = "semantic_stable"
 
+_MEASURE_TYPE_TO_UNIT_TYPE = {
+    "IFCLENGTHMEASURE": "LENGTHUNIT",
+    "IFCPOSITIVELENGTHMEASURE": "LENGTHUNIT",
+    "IFCNONNEGATIVELENGTHMEASURE": "LENGTHUNIT",
+    "IFCAREAMEASURE": "AREAUNIT",
+    "IFCVOLUMEMEASURE": "VOLUMEUNIT",
+    "IFCPLANEANGLEMEASURE": "PLANEANGLEUNIT",
+    "IFCPOSITIVEPLANEANGLEMEASURE": "PLANEANGLEUNIT",
+}
+_QUANTIZATION_STEP_BY_UNIT_TYPE = {
+    "LENGTHUNIT": 1e-6,
+    "AREAUNIT": 1e-6,
+    "VOLUMEUNIT": 1e-6,
+    "PLANEANGLEUNIT": 1e-8,
+}
+_DEFAULT_DERIVED_QUANTIZATION_STEP = 1e-9
+
 
 class CanonicalizationError(ValueError):
     """Raised when a value cannot be canonically represented."""
@@ -28,21 +45,29 @@ def canonical_float(
     *,
     profile: str,
     quantize: Callable[[float], float] | None = None,
+    measure_type: str | None = None,
+    unit_context: dict[str, Any] | None = None,
 ) -> str:
     """Return canonical string for a float according to profile rules."""
     if not math.isfinite(value):
         raise CanonicalizationError(f"Non-finite float not supported: {value!r}")
     if value == 0.0:
         value = 0.0
-    if profile == PROFILE_SEMANTIC_STABLE and quantize is not None:
-        value = quantize(value)
+    if profile == PROFILE_SEMANTIC_STABLE:
+        value = _normalize_measure_value(
+            value,
+            measure_type=measure_type,
+            unit_context=unit_context,
+        )
+        if quantize is not None:
+            value = quantize(value)
         if not math.isfinite(value):
             raise CanonicalizationError(
                 f"Quantizer produced non-finite float: {value!r}"
             )
         if value == 0.0:
             value = 0.0
-    elif profile != PROFILE_RAW_EXACT and profile != PROFILE_SEMANTIC_STABLE:
+    elif profile != PROFILE_RAW_EXACT:
         raise CanonicalizationError(f"Unknown profile: {profile!r}")
     return format(value, ".17g")
 
@@ -52,6 +77,8 @@ def canonical_scalar(
     *,
     profile: str = PROFILE_RAW_EXACT,
     quantize: Callable[[float], float] | None = None,
+    measure_type: str | None = None,
+    unit_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Canonicalize scalar values (null/bool/int/real/string)."""
     if is_ifc_entity(value):
@@ -65,7 +92,13 @@ def canonical_scalar(
     if isinstance(value, float):
         return {
             "kind": "real",
-            "value": canonical_float(value, profile=profile, quantize=quantize),
+            "value": canonical_float(
+                value,
+                profile=profile,
+                quantize=quantize,
+                measure_type=measure_type,
+                unit_context=unit_context,
+            ),
         }
     if isinstance(value, str):
         return {"kind": "string", "value": value}
@@ -78,12 +111,21 @@ def canonical_simple(
     *,
     profile: str = PROFILE_RAW_EXACT,
     quantize: Callable[[float], float] | None = None,
+    measure_type: str | None = None,
+    unit_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Canonicalize wrapped simple types (IfcLabel, IfcIdentifier, etc.)."""
+    resolved_measure_type = measure_type or _normalize_measure_type_name(ifc_type)
     return {
         "kind": "simple",
         "type": ifc_type,
-        "value": canonical_value(value, profile=profile, quantize=quantize),
+        "value": canonical_value(
+            value,
+            profile=profile,
+            quantize=quantize,
+            measure_type=resolved_measure_type,
+            unit_context=unit_context,
+        ),
     }
 
 
@@ -93,12 +135,20 @@ def canonical_select(
     *,
     profile: str = PROFILE_RAW_EXACT,
     quantize: Callable[[float], float] | None = None,
+    measure_type: str | None = None,
+    unit_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Canonicalize SELECT values with explicit branch type."""
     return {
         "kind": "select",
         "type": branch_type,
-        "value": canonical_value(value, profile=profile, quantize=quantize),
+        "value": canonical_value(
+            value,
+            profile=profile,
+            quantize=quantize,
+            measure_type=measure_type,
+            unit_context=unit_context,
+        ),
     }
 
 
@@ -108,9 +158,17 @@ def _sorted_canonical_items(
     profile: str,
     quantize: Callable[[float], float] | None,
     item_canon: Callable[[Any], dict[str, Any]] | None,
+    measure_type: str | None,
+    unit_context: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     canonicalized = [
-        (canonical_value(item, profile=profile, quantize=quantize) if item_canon is None
+        (canonical_value(
+            item,
+            profile=profile,
+            quantize=quantize,
+            measure_type=measure_type,
+            unit_context=unit_context,
+        ) if item_canon is None
          else item_canon(item))
         for item in items
     ]
@@ -124,10 +182,18 @@ def canonical_list(
     profile: str = PROFILE_RAW_EXACT,
     quantize: Callable[[float], float] | None = None,
     item_canon: Callable[[Any], dict[str, Any]] | None = None,
+    measure_type: str | None = None,
+    unit_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Canonicalize LIST/ARRAY aggregates preserving order."""
     canonicalized = [
-        (canonical_value(item, profile=profile, quantize=quantize) if item_canon is None
+        (canonical_value(
+            item,
+            profile=profile,
+            quantize=quantize,
+            measure_type=measure_type,
+            unit_context=unit_context,
+        ) if item_canon is None
          else item_canon(item))
         for item in items
     ]
@@ -140,12 +206,19 @@ def canonical_set(
     profile: str = PROFILE_RAW_EXACT,
     quantize: Callable[[float], float] | None = None,
     item_canon: Callable[[Any], dict[str, Any]] | None = None,
+    measure_type: str | None = None,
+    unit_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Canonicalize SET aggregates with deterministic ordering."""
     return {
         "kind": "set",
         "items": _sorted_canonical_items(
-            items, profile=profile, quantize=quantize, item_canon=item_canon
+            items,
+            profile=profile,
+            quantize=quantize,
+            item_canon=item_canon,
+            measure_type=measure_type,
+            unit_context=unit_context,
         ),
     }
 
@@ -156,12 +229,19 @@ def canonical_bag(
     profile: str = PROFILE_RAW_EXACT,
     quantize: Callable[[float], float] | None = None,
     item_canon: Callable[[Any], dict[str, Any]] | None = None,
+    measure_type: str | None = None,
+    unit_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Canonicalize BAG aggregates with multiplicity preserved."""
     return {
         "kind": "bag",
         "items": _sorted_canonical_items(
-            items, profile=profile, quantize=quantize, item_canon=item_canon
+            items,
+            profile=profile,
+            quantize=quantize,
+            item_canon=item_canon,
+            measure_type=measure_type,
+            unit_context=unit_context,
         ),
     }
 
@@ -171,6 +251,8 @@ def canonical_value(
     *,
     profile: str = PROFILE_RAW_EXACT,
     quantize: Callable[[float], float] | None = None,
+    measure_type: str | None = None,
+    unit_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Best-effort canonicalization for scalar and ordered aggregates.
 
@@ -178,12 +260,87 @@ def canonical_value(
     callers should use the explicit aggregate and wrapper helpers.
     """
     if isinstance(value, (list, tuple)):
-        return canonical_list(value, profile=profile, quantize=quantize)
+        return canonical_list(
+            value,
+            profile=profile,
+            quantize=quantize,
+            measure_type=measure_type,
+            unit_context=unit_context,
+        )
     if isinstance(value, (set, frozenset)):
-        return canonical_set(value, profile=profile, quantize=quantize)
-    return canonical_scalar(value, profile=profile, quantize=quantize)
+        return canonical_set(
+            value,
+            profile=profile,
+            quantize=quantize,
+            measure_type=measure_type,
+            unit_context=unit_context,
+        )
+    return canonical_scalar(
+        value,
+        profile=profile,
+        quantize=quantize,
+        measure_type=measure_type,
+        unit_context=unit_context,
+    )
 
 
 def canonical_string(value: dict[str, Any]) -> str:
     """Stable JSON string for a canonical value."""
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _normalize_measure_value(
+    value: float,
+    *,
+    measure_type: str | None,
+    unit_context: dict[str, Any] | None,
+) -> float:
+    unit_type = _measure_type_to_unit_type(measure_type)
+    if unit_type is None:
+        return value
+    factor = _unit_scale_for_type(unit_type, unit_context)
+    converted = value * factor
+    quant_step = _QUANTIZATION_STEP_BY_UNIT_TYPE.get(
+        unit_type,
+        _DEFAULT_DERIVED_QUANTIZATION_STEP,
+    )
+    if quant_step <= 0:
+        return converted
+    return round(converted / quant_step) * quant_step
+
+
+def _measure_type_to_unit_type(measure_type: str | None) -> str | None:
+    normalized = _normalize_measure_type_name(measure_type)
+    if normalized is None:
+        return None
+    mapped = _MEASURE_TYPE_TO_UNIT_TYPE.get(normalized)
+    if mapped is not None:
+        return mapped
+    if normalized in {"IFCRATIOMEASURE", "IFCPOSITIVERATIOMEASURE"}:
+        return None
+    if normalized.startswith("IFC") and normalized.endswith("MEASURE"):
+        stem = normalized[3:-7]
+        if stem:
+            return f"{stem}UNIT"
+    return None
+
+
+def _normalize_measure_type_name(measure_type: str | None) -> str | None:
+    if not isinstance(measure_type, str):
+        return None
+    name = measure_type.strip()
+    if not name:
+        return None
+    return name.upper()
+
+
+def _unit_scale_for_type(unit_type: str, unit_context: dict[str, Any] | None) -> float:
+    if not isinstance(unit_context, dict):
+        return 1.0
+    factors = unit_context.get("unit_factors")
+    if not isinstance(factors, dict):
+        return 1.0
+    value = factors.get(unit_type)
+    if isinstance(value, (int, float)) and math.isfinite(value):
+        return float(value)
+    return 1.0

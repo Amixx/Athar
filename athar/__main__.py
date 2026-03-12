@@ -8,6 +8,7 @@ from typing import Any
 
 from athar.diff_engine import diff_files, stream_diff_files
 from athar.diff_engine_markers import OWNER_INDEX_DISK_THRESHOLD_ENV
+from athar.geometry_policy import GEOMETRY_POLICY_CHOICES, GEOMETRY_POLICY_STRICT_SYNTAX
 from athar.guid_policy import GUID_POLICY_CHOICES, GUID_POLICY_FAIL_FAST
 from athar.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
 
@@ -27,6 +28,12 @@ def main():
         choices=GUID_POLICY_CHOICES,
         default=GUID_POLICY_FAIL_FAST,
         help="Policy for duplicate/invalid GlobalId handling",
+    )
+    parser.add_argument(
+        "--geometry-policy",
+        choices=GEOMETRY_POLICY_CHOICES,
+        default=GEOMETRY_POLICY_STRICT_SYNTAX,
+        help="Geometry representation policy",
     )
     parser.add_argument(
         "--stream",
@@ -125,6 +132,7 @@ def main():
                 args.old,
                 args.new,
                 profile=args.profile,
+                geometry_policy=args.geometry_policy,
                 guid_policy=args.guid_policy,
                 matcher_policy=matcher_policy,
                 mode=args.stream,
@@ -138,6 +146,7 @@ def main():
             args.old,
             args.new,
             profile=args.profile,
+            geometry_policy=args.geometry_policy,
             guid_policy=args.guid_policy,
             matcher_policy=matcher_policy,
             timings=args.timings,

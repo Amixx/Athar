@@ -22,6 +22,12 @@ from .diff_engine_context import (
 from .diff_engine_markers import build_derived_markers, summarize_rooted_owners
 from .diff_engine_stats import root_guid_quality
 from .diff_engine_streaming import stream_diff_events
+from .geometry_invariants import representation_invariants_match
+from .geometry_policy import (
+    GEOMETRY_POLICY_STRICT_SYNTAX,
+    GEOMETRY_POLICY_INVARIANT_PROBE,
+    validate_geometry_policy,
+)
 from .graph_parser import parse_graph
 from .guid_policy import GUID_POLICY_FAIL_FAST, enforce_or_disambiguate_guid_policy, validate_guid_policy
 from .matcher_policy import resolve_matcher_policy
@@ -40,12 +46,14 @@ def diff_files(
     new_path: str,
     *,
     profile: str = DEFAULT_PROFILE,
+    geometry_policy: str = GEOMETRY_POLICY_STRICT_SYNTAX,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
     matcher_policy: dict[str, dict[str, Any]] | None = None,
     timings: bool = False,
     progress_callback: ProgressCallback | None = None,
 ) -> dict:
     validate_guid_policy(guid_policy)
+    validate_geometry_policy(geometry_policy)
     same_input = _paths_refer_to_same_file(old_path, new_path)
     parse_timings_ms: dict[str, float] | None = None
     if timings:
@@ -68,6 +76,7 @@ def diff_files(
         old_graph,
         new_graph,
         profile=profile,
+        geometry_policy=geometry_policy,
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
         timings=timings,
@@ -81,6 +90,7 @@ def diff_graphs(
     new_graph: GraphIR,
     *,
     profile: str = DEFAULT_PROFILE,
+    geometry_policy: str = GEOMETRY_POLICY_STRICT_SYNTAX,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
     matcher_policy: dict[str, dict[str, Any]] | None = None,
     timings: bool = False,
@@ -88,6 +98,7 @@ def diff_graphs(
     progress_callback: ProgressCallback | None = None,
 ) -> dict:
     validate_guid_policy(guid_policy)
+    validate_geometry_policy(geometry_policy)
     validate_profile(profile)
     _validate_schema(old_graph, new_graph)
     resolved_matcher_policy = resolve_matcher_policy(matcher_policy)
@@ -100,6 +111,7 @@ def diff_graphs(
         result = _same_graph_fastpath_result(
             graph=old_graph,
             profile=profile,
+            geometry_policy=geometry_policy,
             guid_policy=guid_policy,
             matcher_policy=resolved_matcher_policy,
         )
@@ -139,6 +151,7 @@ def diff_graphs(
         old_graph,
         new_graph,
         profile=profile,
+        geometry_policy=geometry_policy,
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
         timing_collector=context_timings_ms,
@@ -225,6 +238,7 @@ def stream_diff_files(
     new_path: str,
     *,
     profile: str = DEFAULT_PROFILE,
+    geometry_policy: str = GEOMETRY_POLICY_STRICT_SYNTAX,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
     matcher_policy: dict[str, dict[str, Any]] | None = None,
     mode: str = "ndjson",
@@ -233,6 +247,7 @@ def stream_diff_files(
 ):
     """Stream diff output directly from files without materializing full result."""
     validate_guid_policy(guid_policy)
+    validate_geometry_policy(geometry_policy)
     same_input = _paths_refer_to_same_file(old_path, new_path)
     parse_timings_ms: dict[str, float] | None = None
     if timings:
@@ -255,6 +270,7 @@ def stream_diff_files(
         old_graph,
         new_graph,
         profile=profile,
+        geometry_policy=geometry_policy,
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
         mode=mode,
@@ -269,6 +285,7 @@ def stream_diff_graphs(
     new_graph: GraphIR,
     *,
     profile: str = DEFAULT_PROFILE,
+    geometry_policy: str = GEOMETRY_POLICY_STRICT_SYNTAX,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
     matcher_policy: dict[str, dict[str, Any]] | None = None,
     mode: str = "ndjson",
@@ -278,6 +295,7 @@ def stream_diff_graphs(
 ):
     """Stream diff output directly from graph inputs."""
     validate_guid_policy(guid_policy)
+    validate_geometry_policy(geometry_policy)
     validate_profile(profile)
     _validate_schema(old_graph, new_graph)
     resolved_matcher_policy = resolve_matcher_policy(matcher_policy)
@@ -290,6 +308,7 @@ def stream_diff_graphs(
         result = _same_graph_fastpath_result(
             graph=old_graph,
             profile=profile,
+            geometry_policy=geometry_policy,
             guid_policy=guid_policy,
             matcher_policy=resolved_matcher_policy,
         )
@@ -315,6 +334,7 @@ def stream_diff_graphs(
         old_graph,
         new_graph,
         profile=profile,
+        geometry_policy=geometry_policy,
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
         timing_collector=context_timings_ms,
@@ -342,12 +362,15 @@ def _iter_base_changes(
     progress_callback: ProgressCallback | None = None,
 ):
     profile = context["profile"]
+    geometry_policy = context.get("geometry_policy", GEOMETRY_POLICY_STRICT_SYNTAX)
     old_by_id = context["old_by_id"]
     new_by_id = context["new_by_id"]
     old_ids = context["old_ids"]
     new_ids = context["new_ids"]
     old_owner_projector = context["old_owner_projector"]
     new_owner_projector = context["new_owner_projector"]
+    old_graph = context["old_graph"]
+    new_graph = context["new_graph"]
 
     entity_ids = sorted(set(old_by_id) | set(new_by_id))
     total = len(entity_ids)
@@ -401,7 +424,7 @@ def _iter_base_changes(
             ):
                 continue
             change_id += 1
-            yield make_change(
+            change = make_change(
                 change_id,
                 op="MODIFY",
                 old_entity_id=entity_id,
@@ -416,6 +439,19 @@ def _iter_base_changes(
                 profile=profile,
                 include_snapshots=include_snapshots,
             )
+            if (
+                geometry_policy == GEOMETRY_POLICY_INVARIANT_PROBE
+                and _is_geometry_form_swap_change(change)
+                and representation_invariants_match(
+                    old_ent,
+                    new_ent,
+                    old_graph=old_graph,
+                    new_graph=new_graph,
+                )
+            ):
+                change_id -= 1
+                continue
+            yield change
 
         for old_item in old_items[paired:]:
             old_ent = old_item["entity"]
@@ -518,6 +554,7 @@ def _same_graph_fastpath_result(
     *,
     graph: GraphIR,
     profile: str,
+    geometry_policy: str,
     guid_policy: str,
     matcher_policy: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
@@ -549,6 +586,7 @@ def _same_graph_fastpath_result(
     return {
         "version": "2",
         "profile": profile,
+        "geometry_policy": geometry_policy,
         "schema_policy": {
             "mode": "same_schema_only",
             "old_schema": schema,
@@ -568,6 +606,7 @@ def _result_to_header(result: dict[str, Any]) -> dict[str, Any]:
     return {
         "version": result["version"],
         "profile": result["profile"],
+        "geometry_policy": result.get("geometry_policy", GEOMETRY_POLICY_STRICT_SYNTAX),
         "schema_policy": result["schema_policy"],
         "identity_policy": result.get("identity_policy"),
         "stats": result["stats"],
@@ -585,3 +624,11 @@ def _emit_progress(callback: ProgressCallback | None, payload: dict[str, Any]) -
         callback(payload)
     except Exception:
         return
+
+
+def _is_geometry_form_swap_change(change: dict[str, Any]) -> bool:
+    categories = set(change.get("change_categories") or [])
+    if "GEOMETRY" not in categories:
+        return False
+    allowed = {"GEOMETRY", "ATTRIBUTES", "RELATIONSHIP"}
+    return categories <= allowed
