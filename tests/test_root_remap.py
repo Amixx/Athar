@@ -23,6 +23,17 @@ def _root(step_id: int, gid: str, name: str) -> tuple[int, dict]:
     )
 
 
+def _placement(step_id: int, tag: str) -> tuple[int, dict]:
+    return (
+        step_id,
+        {
+            "entity_type": "IfcLocalPlacement",
+            "attributes": {"Tag": {"kind": "string", "value": tag}},
+            "refs": [],
+        },
+    )
+
+
 def test_root_remap_unique_signature_matching():
     old_graph = _graph(dict([
         _root(1, "OLD_A", "Wall A"),
@@ -152,3 +163,242 @@ def test_root_remap_disambiguates_duplicate_root_signatures_by_neighbor_colors()
         "OLD_B": {"stage": "neighbor_signature"},
     }
     assert plan["ambiguous"] == 0
+
+
+def test_root_remap_scored_assignment_matches_remaining_pair():
+    old_graph = _graph(dict([
+        (
+            1,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "OLD_A",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "OLD_A"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 10},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 10, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        (
+            2,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "OLD_B",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "OLD_B"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 11},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 11, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        _placement(10, "P_SHARED"),
+        _placement(11, "P_OLD_ONLY"),
+    ]))
+    new_graph = _graph(dict([
+        (
+            3,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "NEW_A",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "NEW_A"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 20},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 20, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        (
+            4,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "NEW_B",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "NEW_B"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 21},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 21, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        _placement(20, "P_SHARED"),
+        _placement(21, "P_NEW_ONLY"),
+    ]))
+
+    plan = plan_root_remap(old_graph, new_graph, score_threshold=0.60)
+    assert plan["old_to_new"] == {"OLD_A": "NEW_A", "OLD_B": "NEW_B"}
+    assert plan["diagnostics"]["OLD_A"] == {"stage": "neighbor_signature"}
+    assert plan["diagnostics"]["OLD_B"]["stage"] == "scored_assignment"
+    assert plan["diagnostics"]["OLD_B"]["score"] == 0.65
+    assert plan["ambiguous"] == 0
+
+
+def test_root_remap_scored_assignment_rejects_tied_best_assignments():
+    old_graph = _graph(dict([
+        (
+            1,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "OLD_A",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "OLD_A"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 10},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 10, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        (
+            2,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "OLD_B",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "OLD_B"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 11},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 11, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        _placement(10, "P1"),
+        _placement(11, "P2"),
+    ]))
+    new_graph = _graph(dict([
+        (
+            3,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "NEW_A",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "NEW_A"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 20},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 20, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        (
+            4,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "NEW_B",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "NEW_B"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 21},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 21, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        _placement(20, "P3"),
+        _placement(21, "P4"),
+    ]))
+
+    plan = plan_root_remap(old_graph, new_graph, score_threshold=0.60, score_margin=0.20)
+    assert plan["old_to_new"] == {}
+    assert plan["diagnostics"] == {}
+    assert plan["ambiguous"] == 2
+
+
+def test_root_remap_scored_assignment_respects_assignment_cap():
+    old_graph = _graph(dict([
+        (
+            1,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "OLD_A",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "OLD_A"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 10},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 10, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        (
+            2,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "OLD_B",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "OLD_B"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 11},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 11, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        (
+            3,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "OLD_C",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "OLD_C"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 12},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 12, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        _placement(10, "PO1"),
+        _placement(11, "PO2"),
+        _placement(12, "PO3"),
+    ]))
+    new_graph = _graph(dict([
+        (
+            4,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "NEW_A",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "NEW_A"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 20},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 20, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        (
+            5,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "NEW_B",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "NEW_B"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 21},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 21, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        (
+            6,
+            {
+                "entity_type": "IfcWall",
+                "global_id": "NEW_C",
+                "attributes": {
+                    "GlobalId": {"kind": "string", "value": "NEW_C"},
+                    "Name": {"kind": "string", "value": "Wall Same"},
+                    "ObjectPlacement": {"kind": "ref", "id": 22},
+                },
+                "refs": [{"path": "/ObjectPlacement", "target": 22, "target_type": "IfcLocalPlacement"}],
+            },
+        ),
+        _placement(20, "PN1"),
+        _placement(21, "PN2"),
+        _placement(22, "PN3"),
+    ]))
+
+    plan = plan_root_remap(
+        old_graph,
+        new_graph,
+        score_threshold=0.60,
+        assignment_max=2,
+    )
+    assert plan["old_to_new"] == {}
+    assert plan["diagnostics"] == {}
+    assert plan["ambiguous"] == 3

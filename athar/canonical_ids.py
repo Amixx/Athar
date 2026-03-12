@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import importlib.util
 import json
 from collections import Counter
 from typing import Any, Callable
