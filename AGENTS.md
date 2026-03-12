@@ -14,6 +14,7 @@ The core engine is responsible for parsing IFC files, aligning entities across m
 
 - `athar/__main__.py` — Minimal CLI for the core engine. Diffs two files and prints raw JSON to stdout.
 - `athar/canonical_values.py` — Deterministic canonicalization of scalar and aggregate values for the graph engine. Preserves wrapper/select type information, enforces deterministic ordering for SET/BAG, and uses profile-driven float normalization.
+- `athar/profile_policy.py` — Central profile contract (`raw_exact`, `semantic_stable`) with validation and volatility filtering rules used by parser/diff paths.
 - `athar/graph_parser.py` — Full-instance graph extractor for the engine. Emits explicit attributes in canonical form plus a typed edge list labeled with JSON-Pointer-like paths, and parse diagnostics for malformed/dangling references (`metadata.diagnostics`).
 - `athar/canonical_ids.py` — Structural hash helpers for engine identity (`H:`) seeds and WL-style refinement scaffolding. Computes deterministic payloads that ignore STEP IDs and inverse attributes.
 - `athar/semantic_signature.py` — Soft signature (`S:`) for candidate blocking. Uses attribute/aggregate shape and typed edge signatures while ignoring literal values.
