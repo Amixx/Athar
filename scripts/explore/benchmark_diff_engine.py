@@ -21,11 +21,11 @@ import time
 import tracemalloc
 from typing import Any, Callable
 
-from athar.determinism import canonical_json, environment_fingerprint
-from athar.diff_engine import diff_graphs, stream_diff_graphs
-from athar.graph_parser import parse_graph
-from athar.guid_policy import GUID_POLICY_CHOICES, GUID_POLICY_FAIL_FAST
-from athar.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
+from athar.graph.determinism import canonical_json, environment_fingerprint
+from athar.diff.engine import diff_graphs, stream_diff_graphs
+from athar.graph.graph_parser import parse_graph
+from athar.diff.guid_policy import GUID_POLICY_CHOICES, GUID_POLICY_FAIL_FAST
+from athar.graph.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
 
 _METRIC_DIFF = "diff_graphs"
 _METRIC_STREAM_NDJSON = "stream_ndjson"

@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from .wl_refinement import wl_refine_colors
-from .graph_utils import (
+from ..graph.graph_utils import (
     collect_attribute_paths,
     collect_literal_tokens,
     degree_similarity,

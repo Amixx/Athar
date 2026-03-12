@@ -6,7 +6,7 @@ import json
 from collections import Counter
 from typing import Any
 
-from .graph_utils import edge_signature, sha256_json
+from ..graph.graph_utils import edge_signature, sha256_json
 
 
 def semantic_signature(entity: dict) -> str:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from .determinism import canonical_json
+from ..graph.determinism import canonical_json
 
 
 def stream_diff_result(

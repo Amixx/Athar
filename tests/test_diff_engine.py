@@ -1,10 +1,10 @@
-from athar.determinism import canonical_json
+from athar.graph.determinism import canonical_json
 import json
-import athar.diff_engine_markers as diff_engine_markers
-import athar.diff_engine as diff_engine_mod
-import athar.diff_engine_context as diff_engine_context_mod
-from athar.diff_engine import diff_files, diff_graphs, stream_diff_graphs
-from athar.diff_engine_markers import RootedOwnerProjector
+import athar.diff.markers as diff_engine_markers
+import athar.diff.engine as diff_engine_mod
+import athar.diff.context as diff_engine_context_mod
+from athar.diff.engine import diff_files, diff_graphs, stream_diff_graphs
+from athar.diff.markers import RootedOwnerProjector
 
 
 def _graph_with_entities(entities: dict[int, dict]) -> dict:

@@ -1,8 +1,8 @@
 import pytest
 import json
 
-from athar.diff_engine import diff_graphs, stream_diff_graphs
-from athar.guid_policy import (
+from athar.diff.engine import diff_graphs, stream_diff_graphs
+from athar.diff.guid_policy import (
     GUID_POLICY_DISAMBIGUATE,
     GUID_POLICY_FAIL_FAST,
     enforce_or_disambiguate_guid_policy,

@@ -1,6 +1,6 @@
-from athar.diff_engine import diff_graphs
-from athar.graph_parser import parse_graph
-from athar.profile_policy import entity_for_profile
+from athar.diff.engine import diff_graphs
+from athar.graph.graph_parser import parse_graph
+from athar.graph.profile_policy import entity_for_profile
 
 
 def test_entity_for_profile_raw_exact_keeps_owner_history_fields():

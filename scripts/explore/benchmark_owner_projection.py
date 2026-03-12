@@ -14,10 +14,10 @@ import time
 import tracemalloc
 from typing import Any, Callable
 
-from athar.determinism import canonical_json
-from athar.diff_engine import diff_graphs
-from athar.diff_engine_markers import OWNER_INDEX_DISK_THRESHOLD_ENV
-from athar.graph_parser import parse_graph
+from athar.graph.determinism import canonical_json
+from athar.diff.engine import diff_graphs
+from athar.diff.markers import OWNER_INDEX_DISK_THRESHOLD_ENV
+from athar.graph.graph_parser import parse_graph
 
 
 @dataclass(frozen=True)

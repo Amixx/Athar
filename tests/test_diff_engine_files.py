@@ -1,6 +1,6 @@
 import pytest
 
-import athar.diff_engine as diff_engine
+import athar.diff.engine as diff_engine
 
 
 def _mock_cross_schema_parse(monkeypatch):

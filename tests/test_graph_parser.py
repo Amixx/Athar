@@ -1,7 +1,7 @@
 import ifcopenshell
 import pytest
 
-from athar.graph_parser import parse_graph
+from athar.graph.graph_parser import parse_graph
 
 BASIC_HOUSE = "data/BasicHouse.ifc"
 

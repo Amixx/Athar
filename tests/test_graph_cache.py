@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from athar.graph_cache import (
+from athar.diff.graph_cache import (
     _CACHE_ENABLED_ENV,
     _CACHE_VERSION,
     clear_cache,

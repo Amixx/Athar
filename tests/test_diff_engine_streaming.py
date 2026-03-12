@@ -1,7 +1,7 @@
 import json
 
-from athar.diff_engine import diff_graphs, stream_diff_graphs
-from athar.diff_engine_streaming import stream_diff_result
+from athar.diff.engine import diff_graphs, stream_diff_graphs
+from athar.diff.streaming import stream_diff_result
 
 
 def _graph_with_entities(entities: dict[int, dict]) -> dict:

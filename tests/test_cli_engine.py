@@ -2,7 +2,7 @@ import os
 import sys
 
 import athar.__main__ as main_mod
-from athar.diff_engine_markers import OWNER_INDEX_DISK_THRESHOLD_ENV
+from athar.diff.markers import OWNER_INDEX_DISK_THRESHOLD_ENV
 
 
 def test_cli_graph_engine_calls_diff_files(monkeypatch, capsys):

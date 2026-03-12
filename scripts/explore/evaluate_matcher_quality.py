@@ -10,9 +10,9 @@ import sys
 import time
 from typing import Any, Callable
 
-from athar.determinism import canonical_json
-from athar.matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
-from athar.root_remap import plan_root_remap
+from athar.graph.determinism import canonical_json
+from athar.diff.matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
+from athar.diff.root_remap import plan_root_remap
 
 
 @dataclass(frozen=True)

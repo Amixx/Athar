@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import gc
+import multiprocessing
+import os
 import time
 from typing import Any
 
-from .structural_hash import structural_hash
+from ..graph.structural_hash import structural_hash
 from .equivalence_classes import apply_ambiguous_equivalence_classes
 from .graph_cache import save_cached
-from .graph_parser import count_dangling_refs
+from ..graph.graph_parser import count_dangling_refs
 from .guid_policy import GUID_POLICY_FAIL_FAST, validate_guid_policy
 from .identity_pipeline import (
     _apply_step_matches,
@@ -26,17 +28,20 @@ from .matcher_policy import resolve_matcher_policy
 from .geometry_policy import GEOMETRY_POLICY_STRICT_SYNTAX
 from .root_remap import plan_root_remap
 from .similarity_seed import (
+    collect_text_fingerprint_side,
+    match_text_fingerprint_collections,
     text_fingerprint_pairs,
     unique_guid_pairs,
 )
-from .diff_engine_markers import RootedOwnerProjector
-from .diff_engine_stats import build_stats
-from .profile_policy import entity_for_profile, validate_profile
+from .markers import RootedOwnerProjector
+from .stats import build_stats
+from ..graph.profile_policy import entity_for_profile, validate_profile
 from .types import DiffContext, EntityIR, GraphIR, IdentityInfo
 
 ProgressCallback = Callable[[dict[str, Any]], None]
 _PREPARE_CONTEXT_TOTAL_STEPS = 22
 _GUID_SEED_PATH_PROPAGATION_THRESHOLD = 0.05
+_PARALLEL_ENV = "ATHAR_PARALLEL"
 
 
 def prepare_diff_context(
@@ -120,6 +125,8 @@ def prepare_diff_context(
     old_precomputed_profile: dict[int, dict] | None = None
     new_precomputed_profile: dict[int, dict] | None = None
     seeding_enabled = cached_identity_old is None or cached_identity_new is None
+    old_state: dict[str, Any] | None = None
+    new_state: dict[str, Any] | None = None
 
     if seeding_enabled:
         seed_guid_pairs, guid_seed_diagnostics = unique_guid_pairs(old_graph, new_graph)
@@ -157,22 +164,58 @@ def prepare_diff_context(
     gc.disable()
 
     stage_started = time.perf_counter()
+    parallel_seed_results: tuple[dict[str, Any], dict[str, Any]] | None = None
     if seeding_enabled:
-        seed_text = text_fingerprint_pairs(
-            old_graph,
-            new_graph,
-            profile=profile,
-            exclude_old=set(seed_guid_pairs) | set(seed_path_pairs),
-            exclude_new=set(seed_guid_pairs.values()) | set(seed_path_pairs.values()),
-        )
+        exclude_old = set(seed_guid_pairs) | set(seed_path_pairs)
+        exclude_new = set(seed_guid_pairs.values()) | set(seed_path_pairs.values())
+        if (
+            cached_identity_old is None
+            and cached_identity_new is None
+            and _parallel_enabled()
+        ):
+            parallel_seed_results = _prepare_seeded_sides_parallel(
+                old_graph,
+                new_graph,
+                profile=profile,
+                exclude_old=exclude_old,
+                exclude_new=exclude_new,
+            )
+        if parallel_seed_results is not None:
+            old_parallel, new_parallel = parallel_seed_results
+            seed_text = match_text_fingerprint_collections(
+                old_graph,
+                new_graph,
+                old_collection={
+                    "match_buckets": old_parallel["match_buckets"],
+                    "all_fingerprints": old_parallel["all_fingerprints"],
+                    "profile_entities": old_parallel["identity_state"].get("id_entities", {}),
+                },
+                new_collection={
+                    "match_buckets": new_parallel["match_buckets"],
+                    "all_fingerprints": new_parallel["all_fingerprints"],
+                    "profile_entities": new_parallel["identity_state"].get("id_entities", {}),
+                },
+            )
+            old_state = old_parallel["identity_state"]
+            new_state = new_parallel["identity_state"]
+            old_seed_colors = old_parallel["all_fingerprints"]
+            new_seed_colors = new_parallel["all_fingerprints"]
+            old_precomputed_profile = old_state.get("id_entities")
+            new_precomputed_profile = new_state.get("id_entities")
+        else:
+            seed_text = text_fingerprint_pairs(
+                old_graph,
+                new_graph,
+                profile=profile,
+                exclude_old=exclude_old,
+                exclude_new=exclude_new,
+            )
+            old_seed_colors = seed_text.get("old_all_fingerprints", {})
+            new_seed_colors = seed_text.get("new_all_fingerprints", {})
+            old_precomputed_profile = seed_text.get("old_profile_entities")
+            new_precomputed_profile = seed_text.get("new_profile_entities")
         seed_text_pairs = seed_text.get("old_to_new", {})
         seed_text_diagnostics = seed_text.get("diagnostics", {})
-        # Use text fingerprints directly as WL initial colors for ALL entities.
-        # This replaces both build_seed_color_maps and structural_hash computation.
-        old_seed_colors = seed_text.get("old_all_fingerprints", {})
-        new_seed_colors = seed_text.get("new_all_fingerprints", {})
-        old_precomputed_profile = seed_text.get("old_profile_entities")
-        new_precomputed_profile = seed_text.get("new_profile_entities")
     else:
         seed_text = {"ambiguous_buckets": 0}
     _record_timing(timing_collector, "seed_text_fingerprints", stage_started)
@@ -181,23 +224,36 @@ def prepare_diff_context(
         timing_collector["seed_text_fingerprints.ambiguous_buckets"] = float(
             seed_text.get("ambiguous_buckets", 0),
         )
+        timing_collector["seed_text_fingerprints.parallel"] = (
+            1.0 if parallel_seed_results is not None else 0.0
+        )
     _step_done("seed_text_fingerprints")
 
-    stage_started = time.perf_counter()
-    old_state = _identity_precompute(
-        old_graph, disk_cached=cached_identity_old, file_hash=old_file_hash,
-        seeded_colors=old_seed_colors,
-        precomputed_profile_entities=old_precomputed_profile,
-    )
-    _record_timing(timing_collector, "precompute_old_identity", stage_started)
+    if old_state is None:
+        stage_started = time.perf_counter()
+        old_state = _identity_precompute(
+            old_graph, disk_cached=cached_identity_old, file_hash=old_file_hash,
+            seeded_colors=old_seed_colors,
+            precomputed_profile_entities=old_precomputed_profile,
+        )
+        _record_timing(timing_collector, "precompute_old_identity", stage_started)
+    elif timing_collector is not None:
+        timing_collector["precompute_old_identity"] = float(
+            parallel_seed_results[0]["precompute_ms"]
+        )
     _step_done("precompute_old_identity")
-    stage_started = time.perf_counter()
-    new_state = _identity_precompute(
-        new_graph, disk_cached=cached_identity_new, file_hash=new_file_hash,
-        seeded_colors=new_seed_colors,
-        precomputed_profile_entities=new_precomputed_profile,
-    )
-    _record_timing(timing_collector, "precompute_new_identity", stage_started)
+    if new_state is None:
+        stage_started = time.perf_counter()
+        new_state = _identity_precompute(
+            new_graph, disk_cached=cached_identity_new, file_hash=new_file_hash,
+            seeded_colors=new_seed_colors,
+            precomputed_profile_entities=new_precomputed_profile,
+        )
+        _record_timing(timing_collector, "precompute_new_identity", stage_started)
+    elif timing_collector is not None:
+        timing_collector["precompute_new_identity"] = float(
+            parallel_seed_results[1]["precompute_ms"]
+        )
     _step_done("precompute_new_identity")
 
     stage_started = time.perf_counter()
@@ -578,6 +634,112 @@ def _record_timing(target: dict[str, float] | None, key: str, started: float) ->
     if target is None:
         return
     target[key] = round((time.perf_counter() - started) * 1000.0, 3)
+
+
+def _parallel_enabled() -> bool:
+    raw = os.environ.get(_PARALLEL_ENV, "0").strip().lower()
+    return raw not in {"", "0", "false", "no", "off"}
+
+
+def _prepare_seeded_side_state(
+    graph: GraphIR,
+    *,
+    profile: str,
+    exclude_steps: set[int],
+) -> dict[str, Any]:
+    fingerprint_started = time.perf_counter()
+    collection = collect_text_fingerprint_side(
+        graph,
+        profile=profile,
+        exclude_steps=exclude_steps,
+    )
+    fingerprint_ms = round((time.perf_counter() - fingerprint_started) * 1000.0, 3)
+    precompute_started = time.perf_counter()
+    identity_state = _precompute_identity_state(
+        graph,
+        profile=profile,
+        seeded_colors=collection["all_fingerprints"],
+        precomputed_profile_entities=collection["profile_entities"],
+    )
+    precompute_ms = round((time.perf_counter() - precompute_started) * 1000.0, 3)
+    return {
+        "match_buckets": collection["match_buckets"],
+        "all_fingerprints": collection["all_fingerprints"],
+        "identity_state": identity_state,
+        "fingerprint_ms": fingerprint_ms,
+        "precompute_ms": precompute_ms,
+    }
+
+
+def _seeded_side_state_worker(
+    send_conn,
+    *,
+    graph: GraphIR,
+    profile: str,
+    exclude_steps: set[int],
+) -> None:
+    try:
+        send_conn.send(
+            {
+                "ok": True,
+                "result": _prepare_seeded_side_state(
+                    graph,
+                    profile=profile,
+                    exclude_steps=exclude_steps,
+                ),
+            }
+        )
+    except BaseException as exc:
+        send_conn.send({"ok": False, "error": repr(exc)})
+    finally:
+        send_conn.close()
+
+
+def _prepare_seeded_sides_parallel(
+    old_graph: GraphIR,
+    new_graph: GraphIR,
+    *,
+    profile: str,
+    exclude_old: set[int],
+    exclude_new: set[int],
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    try:
+        ctx = multiprocessing.get_context("fork")
+    except ValueError:
+        return None
+
+    recv_conn, send_conn = ctx.Pipe(duplex=False)
+    process = ctx.Process(
+        target=_seeded_side_state_worker,
+        kwargs={
+            "send_conn": send_conn,
+            "graph": old_graph,
+            "profile": profile,
+            "exclude_steps": exclude_old,
+        },
+    )
+    try:
+        process.start()
+        send_conn.close()
+        new_result = _prepare_seeded_side_state(
+            new_graph,
+            profile=profile,
+            exclude_steps=exclude_new,
+        )
+        message = recv_conn.recv()
+        process.join()
+        if process.exitcode != 0:
+            return None
+        if not message.get("ok"):
+            return None
+        return message["result"], new_result
+    except Exception:
+        if process.is_alive():
+            process.terminate()
+        process.join()
+        return None
+    finally:
+        recv_conn.close()
 
 
 def _record_identity_diagnostics(

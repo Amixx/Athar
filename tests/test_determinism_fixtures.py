@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from athar.determinism import canonical_json, environment_fingerprint
-from athar.diff_engine import diff_graphs, stream_diff_graphs
+from athar.graph.determinism import canonical_json, environment_fingerprint
+from athar.diff.engine import diff_graphs, stream_diff_graphs
 
 
 def _graph(entities: dict[int, dict]) -> dict:

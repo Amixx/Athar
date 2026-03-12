@@ -1,4 +1,4 @@
-import athar.diff_engine_markers as markers
+import athar.diff.markers as markers
 
 
 def test_owner_index_disk_threshold_defaults_to_zero(monkeypatch):
