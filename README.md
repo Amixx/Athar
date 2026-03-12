@@ -45,6 +45,9 @@ python -m athar old.ifc new.ifc --profile semantic_stable
 # Set GlobalId policy (default: fail_fast)
 python -m athar old.ifc new.ifc --guid-policy disambiguate
 
+# Set geometry representation policy (default: strict_syntax)
+python -m athar old.ifc new.ifc --geometry-policy invariant_probe
+
 # Spill rooted-owner indexing to disk above threshold (estimated owner pairs)
 python -m athar old.ifc new.ifc --owner-index-disk-threshold 500000
 
@@ -221,6 +224,8 @@ Low-overlap rooted GUID churn now has Phase 2.5 staged remap in `athar/root_rema
 `athar/diff_engine_context.py` now normalizes `G:` entity attribute/ref targets to matched identity IDs during equality checks, preventing false `MODIFY` noise from pure STEP-ID renumbering.
 
 Stream framing is now centralized in `athar/diff_engine_streaming.py` for both full-result and live event paths, and shared `TypedDict` contracts (`GraphIR`, `EntityIR`, `IdentityInfo`, `DiffContext`) live in `athar/types.py` to reduce nested-dict drift across engine modules.
+
+Phase 5 cutover shim `athar/differ.py` now routes legacy `athar.differ.diff()` calls directly into the graph engine (`diff_files`/`diff_graphs`), so existing adapter callers can migrate without reviving the old engine.
 
 `athar/wl_refinement.py` now supports pluggable fast hash backends for WL refinement rounds (`auto`, `xxh3_64`, `blake3`, `blake2b_64`, `sha256`), while external/wire identity IDs remain `sha256`; WL round payload construction avoids per-node JSON/dict allocations in the hot loop.
 

@@ -222,6 +222,88 @@ def test_diff_engine_applies_secondary_match_for_unmatched_non_root():
     )
 
 
+def test_diff_engine_geometry_policy_invariant_probe_suppresses_form_swap_modify():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Representation": {"kind": "ref", "id": 10}},
+            "refs": [{"path": "/Representation", "target": 10, "target_type": "IfcShapeRepresentation"}],
+        },
+        10: {
+            "entity_type": "IfcShapeRepresentation",
+            "attributes": {},
+            "refs": [{"path": "/Items/0", "target": 20, "target_type": "IfcPolyline"}],
+        },
+        20: {
+            "entity_type": "IfcPolyline",
+            "attributes": {},
+            "refs": [
+                {"path": "/Points/0", "target": 30, "target_type": "IfcCartesianPoint"},
+                {"path": "/Points/1", "target": 31, "target_type": "IfcCartesianPoint"},
+            ],
+        },
+        30: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "0"}, {"kind": "real", "value": "0"}, {"kind": "real", "value": "0"}]}},
+            "refs": [],
+        },
+        31: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "1"}, {"kind": "real", "value": "0"}, {"kind": "real", "value": "0"}]}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Representation": {"kind": "ref", "id": 110}},
+            "refs": [{"path": "/Representation", "target": 110, "target_type": "IfcAdvancedBrep"}],
+        },
+        110: {
+            "entity_type": "IfcAdvancedBrep",
+            "attributes": {},
+            "refs": [{"path": "/Outer", "target": 120, "target_type": "IfcPolyline"}],
+        },
+        120: {
+            "entity_type": "IfcPolyline",
+            "attributes": {},
+            "refs": [
+                {"path": "/Points/0", "target": 130, "target_type": "IfcCartesianPoint"},
+                {"path": "/Points/1", "target": 131, "target_type": "IfcCartesianPoint"},
+            ],
+        },
+        130: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "0"}, {"kind": "real", "value": "0"}, {"kind": "real", "value": "0"}]}},
+            "refs": [],
+        },
+        131: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "1"}, {"kind": "real", "value": "0"}, {"kind": "real", "value": "0"}]}},
+            "refs": [],
+        },
+    })
+
+    strict = diff_graphs(old_graph, new_graph, geometry_policy="strict_syntax")
+    assert any(
+        change["op"] == "MODIFY"
+        and change["old_entity_id"] == "G:AAA"
+        and change["new_entity_id"] == "G:AAA"
+        for change in strict["base_changes"]
+    )
+
+    probe = diff_graphs(old_graph, new_graph, geometry_policy="invariant_probe")
+    assert not any(
+        change["op"] == "MODIFY"
+        and change["old_entity_id"] == "G:AAA"
+        and change["new_entity_id"] == "G:AAA"
+        for change in probe["base_changes"]
+    )
+    assert probe["geometry_policy"] == "invariant_probe"
+
+
 def test_diff_engine_emits_class_delta_for_unresolved_ambiguous_secondary_partition():
     old_graph = _graph_with_entities({
         1: {

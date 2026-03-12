@@ -164,6 +164,7 @@ def _stream_header(result: dict[str, Any]) -> dict[str, Any]:
     return {
         "version": result.get("version"),
         "profile": result.get("profile"),
+        "geometry_policy": result.get("geometry_policy"),
         "schema_policy": result.get("schema_policy"),
         "identity_policy": result.get("identity_policy"),
         "stats": result.get("stats"),

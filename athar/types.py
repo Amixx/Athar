@@ -39,6 +39,7 @@ class ContextEntityItem(TypedDict, total=False):
 class DiffContext(TypedDict, total=False):
     version: str
     profile: str
+    geometry_policy: str
     old_graph: GraphIR
     new_graph: GraphIR
     old_ids: dict[int, str]

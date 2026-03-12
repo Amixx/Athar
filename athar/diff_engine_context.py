@@ -21,6 +21,7 @@ from .identity_pipeline import (
 )
 from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
 from .matcher_policy import resolve_matcher_policy
+from .geometry_policy import GEOMETRY_POLICY_STRICT_SYNTAX
 from .root_remap import plan_root_remap
 from .diff_engine_markers import RootedOwnerProjector
 from .diff_engine_stats import build_stats
@@ -36,6 +37,7 @@ def prepare_diff_context(
     new_graph: GraphIR,
     *,
     profile: str,
+    geometry_policy: str = GEOMETRY_POLICY_STRICT_SYNTAX,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
     matcher_policy: dict[str, dict[str, Any]] | None = None,
     timing_collector: dict[str, float] | None = None,
@@ -220,6 +222,7 @@ def prepare_diff_context(
     return {
         "version": "2",
         "profile": profile,
+        "geometry_policy": geometry_policy,
         "old_graph": old_graph,
         "new_graph": new_graph,
         "old_ids": old_ids,
@@ -258,6 +261,7 @@ def result_header(context: DiffContext) -> dict[str, Any]:
     return {
         "version": context["version"],
         "profile": context["profile"],
+        "geometry_policy": context.get("geometry_policy", GEOMETRY_POLICY_STRICT_SYNTAX),
         "schema_policy": context["schema_policy"],
         "identity_policy": context.get("identity_policy"),
         "stats": context["stats"],

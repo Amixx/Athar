@@ -109,3 +109,53 @@ def test_measure_wrapper_types_are_preserved():
         wrapped = canonical_simple(wrapper_type, value)
         assert wrapped["kind"] == "simple"
         assert wrapped["type"] == wrapper_type
+
+
+def test_semantic_stable_normalizes_measure_values_by_unit_type():
+    unit_context = {
+        "unit_factors": {
+            "AREAUNIT": 0.09290304,  # ft2 -> m2
+            "VOLUMEUNIT": 0.028316846592,  # ft3 -> m3
+            "PLANEANGLEUNIT": 0.0174532925199433,  # degree -> rad
+            "THERMALTRANSMITTANCEUNIT": 5.678263337,  # BTU/(h*ft2*F) -> W/(m2*K)
+        }
+    }
+    area = canonical_simple(
+        "IfcAreaMeasure",
+        10.0,
+        profile=PROFILE_SEMANTIC_STABLE,
+        unit_context=unit_context,
+    )
+    volume = canonical_simple(
+        "IfcVolumeMeasure",
+        10.0,
+        profile=PROFILE_SEMANTIC_STABLE,
+        unit_context=unit_context,
+    )
+    angle = canonical_simple(
+        "IfcPlaneAngleMeasure",
+        180.0,
+        profile=PROFILE_SEMANTIC_STABLE,
+        unit_context=unit_context,
+    )
+    derived = canonical_simple(
+        "IfcThermalTransmittanceMeasure",
+        1.0,
+        profile=PROFILE_SEMANTIC_STABLE,
+        unit_context=unit_context,
+    )
+    assert area["value"]["value"] == "0.92902999999999991"
+    assert volume["value"]["value"] == "0.28316799999999998"
+    assert angle["value"]["value"] == "3.1415926500000002"
+    assert derived["value"]["value"] == "5.6782633370000006"
+
+
+def test_raw_exact_does_not_apply_measure_unit_normalization():
+    unit_context = {"unit_factors": {"AREAUNIT": 0.09290304}}
+    area = canonical_simple(
+        "IfcAreaMeasure",
+        10.0,
+        profile=PROFILE_RAW_EXACT,
+        unit_context=unit_context,
+    )
+    assert area["value"]["value"] == "10"
