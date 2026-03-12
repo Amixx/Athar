@@ -215,7 +215,9 @@ Low-overlap rooted GUID churn now has Phase 2.5 staged remap in `athar/root_rema
 
 Stream framing is now centralized in `athar/diff_engine_streaming.py` for both full-result and live event paths, and shared `TypedDict` contracts (`GraphIR`, `EntityIR`, `IdentityInfo`, `DiffContext`) live in `athar/types.py` to reduce nested-dict drift across engine modules.
 
-`athar/wl_refinement.py` now supports pluggable fast hash backends for WL refinement rounds (`auto`, `xxh3_64`, `blake3`, `blake2b_64`, `sha256`), while external/wire identity IDs remain `sha256`.
+`athar/wl_refinement.py` now supports pluggable fast hash backends for WL refinement rounds (`auto`, `xxh3_64`, `blake3`, `blake2b_64`, `sha256`), while external/wire identity IDs remain `sha256`; WL round payload construction avoids per-node JSON/dict allocations in the hot loop.
+
+`athar/diff_engine.py` also short-circuits same-graph inputs (including same-path parses reused as one graph object) to immediate empty diff/stream output after schema/profile/GUID/matcher-policy validation.
 
 Rooted-owner projection now supports disk-backed fallback for large closure cardinalities: set `ATHAR_OWNER_INDEX_DISK_THRESHOLD` (estimated owner pairs) to spill owner indexing to a temporary SQLite index instead of keeping full closure sets in memory.
 

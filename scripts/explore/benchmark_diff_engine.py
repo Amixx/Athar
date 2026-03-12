@@ -370,14 +370,23 @@ def _run_case(
         file=sys.stderr,
         flush=True,
     )
-    parse_started = time.perf_counter()
-    new_graph = parse_graph(str(case.new_path), profile=profile)
-    new_parse_ms = (time.perf_counter() - parse_started) * 1000.0
-    print(
-        f"[bench] case={case.name} parsed new graph in {new_parse_ms:.1f} ms",
-        file=sys.stderr,
-        flush=True,
-    )
+    if case.old_path == case.new_path:
+        new_graph = old_graph
+        new_parse_ms = 0.0
+        print(
+            f"[bench] case={case.name} reused old graph for new graph (same path)",
+            file=sys.stderr,
+            flush=True,
+        )
+    else:
+        parse_started = time.perf_counter()
+        new_graph = parse_graph(str(case.new_path), profile=profile)
+        new_parse_ms = (time.perf_counter() - parse_started) * 1000.0
+        print(
+            f"[bench] case={case.name} parsed new graph in {new_parse_ms:.1f} ms",
+            file=sys.stderr,
+            flush=True,
+        )
     _emit_progress_update(progress_update, {
         "status": "running",
         "phase": "metrics",

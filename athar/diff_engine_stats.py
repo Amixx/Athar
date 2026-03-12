@@ -57,8 +57,8 @@ def matched_occurrence_count(old_by_id: dict[str, list[dict]], new_by_id: dict[s
 def matched_by_method(old_by_id: dict[str, list[dict]], new_by_id: dict[str, list[dict]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for entity_id in set(old_by_id) & set(new_by_id):
-        old_items = sorted(old_by_id[entity_id], key=lambda item: item["step_id"])
-        new_items = sorted(new_by_id[entity_id], key=lambda item: item["step_id"])
+        old_items = old_by_id[entity_id]
+        new_items = new_by_id[entity_id]
         paired = min(len(old_items), len(new_items))
         for idx in range(paired):
             method = old_items[idx].get("identity", {}).get("match_method", "exact_hash")

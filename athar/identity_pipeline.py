@@ -11,6 +11,19 @@ from .profile_policy import entity_for_profile
 from .types import GraphIR, IdentityInfo
 
 
+def _precompute_identity_state(graph: GraphIR, *, profile: str) -> dict[str, Any]:
+    entities = graph.get("entities", {})
+    id_graph = _graph_for_profile(graph, profile=profile)
+    id_entities = id_graph.get("entities", {})
+    colors, scc_classes = wl_refine_with_scc_fallback(id_graph)
+    return {
+        "entities": entities,
+        "id_entities": id_entities,
+        "colors": colors,
+        "scc_classes": scc_classes,
+    }
+
+
 def _assign_ids(
     graph: GraphIR,
     *,
@@ -19,11 +32,15 @@ def _assign_ids(
     root_remap: dict[str, str] | None = None,
     root_remap_diagnostics: dict[str, dict[str, Any]] | None = None,
     side: str,
+    precomputed: dict[str, Any] | None = None,
 ) -> tuple[dict[int, str], dict[int, IdentityInfo]]:
-    entities = graph.get("entities", {})
-    id_graph = _graph_for_profile(graph, profile=profile)
-    id_entities = id_graph.get("entities", {})
-    colors, scc_classes = wl_refine_with_scc_fallback(id_graph)
+    identity_state = precomputed if precomputed is not None else _precompute_identity_state(
+        graph, profile=profile
+    )
+    entities = identity_state["entities"]
+    id_entities = identity_state["id_entities"]
+    colors = identity_state["colors"]
+    scc_classes = identity_state["scc_classes"]
     guid_policy_out = enforce_or_disambiguate_guid_policy(
         entities,
         policy=guid_policy,
@@ -200,4 +217,6 @@ def _index_by_identity(
                 "matched_on": None,
             }),
         })
+    for items in by_id.values():
+        items.sort(key=lambda item: item["step_id"])
     return by_id

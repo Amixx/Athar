@@ -1,6 +1,8 @@
 from athar.determinism import canonical_json
+import json
 import athar.diff_engine_markers as diff_engine_markers
 import athar.diff_engine as diff_engine_mod
+import athar.diff_engine_context as diff_engine_context_mod
 from athar.diff_engine import diff_files, diff_graphs, stream_diff_graphs
 from athar.diff_engine_markers import RootedOwnerProjector
 
@@ -1079,3 +1081,110 @@ def test_diff_files_timings_include_parse_stages(monkeypatch):
     assert calls["count"] == 2
     assert "parse_old_graph" in timings
     assert "parse_new_graph" in timings
+
+
+def test_diff_graphs_skips_entities_equal_for_exact_hash_pairs(monkeypatch):
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcProxy",
+            "attributes": {"Name": {"kind": "string", "value": "A"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcProxy",
+            "attributes": {"Name": {"kind": "string", "value": "A"}},
+            "refs": [],
+        },
+    })
+
+    def fail_entities_equal(*_args, **_kwargs):
+        raise AssertionError("entities_equal should not be called for exact_hash H: pairs")
+
+    monkeypatch.setattr(diff_engine_mod, "entities_equal", fail_entities_equal)
+    diff = diff_graphs(old_graph, new_graph)
+    assert diff["base_changes"] == []
+
+
+def test_prepare_context_reuse_hook_not_called_when_same_graph_fast_path_applies(monkeypatch):
+    graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcProxy",
+            "attributes": {"Name": {"kind": "string", "value": "A"}},
+            "refs": [],
+        },
+    })
+
+    calls = {"count": 0}
+    real_precompute = diff_engine_context_mod._precompute_identity_state
+
+    def wrapped_precompute(*args, **kwargs):
+        calls["count"] += 1
+        return real_precompute(*args, **kwargs)
+
+    monkeypatch.setattr(diff_engine_context_mod, "_precompute_identity_state", wrapped_precompute)
+    diff = diff_graphs(graph, graph)
+    assert diff["base_changes"] == []
+    assert calls["count"] == 0
+
+
+def test_diff_graphs_same_graph_fast_path_skips_context_build(monkeypatch):
+    graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcProxy",
+            "attributes": {},
+            "refs": [],
+        },
+    })
+
+    def fail_prepare(*_args, **_kwargs):
+        raise AssertionError("prepare_diff_context should not run on same-graph fast path")
+
+    monkeypatch.setattr(diff_engine_mod, "prepare_diff_context", fail_prepare)
+    diff = diff_graphs(graph, graph, timings=True)
+    assert diff["base_changes"] == []
+    assert diff["derived_markers"] == []
+    assert diff["stats"]["timings_ms"]["prepare_context"] == 0.0
+    assert diff["stats"]["matched"] == 1
+
+
+def test_stream_diff_graphs_same_graph_fast_path_emits_header_and_end_only():
+    graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcProxy",
+            "attributes": {},
+            "refs": [],
+        },
+    })
+    lines = list(stream_diff_graphs(graph, graph, mode="ndjson"))
+    assert len(lines) == 2
+    header = json.loads(lines[0])
+    end = json.loads(lines[1])
+    assert header["record_type"] == "header"
+    assert end["record_type"] == "end"
+    assert end["base_change_count"] == 0
+    assert end["derived_marker_count"] == 0
+
+
+def test_diff_graphs_same_graph_still_enforces_guid_fail_fast():
+    graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "DUP",
+            "attributes": {},
+            "refs": [],
+        },
+        2: {
+            "entity_type": "IfcDoor",
+            "global_id": "DUP",
+            "attributes": {},
+            "refs": [],
+        },
+    })
+    try:
+        diff_graphs(graph, graph)
+    except ValueError as exc:
+        assert "GUID policy violation" in str(exc)
+    else:
+        raise AssertionError("expected GUID policy violation under fail_fast")

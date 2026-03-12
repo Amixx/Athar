@@ -43,6 +43,9 @@ def wl_refine_colors(
     hasher_name, hasher = _resolve_wl_round_hasher(round_hash)
     adjacency = build_adjacency(entities)
     colors = {step_id: structural_hash(entity) for step_id, entity in entities.items()}
+    path_bytes_cache: dict[str, bytes] = {}
+    type_bytes_cache: dict[str, bytes] = {}
+    color_bytes_cache: dict[str, bytes] = {}
 
     rounds = _DEFAULT_WL_ROUNDS if max_rounds is None else max_rounds
 
@@ -50,13 +53,15 @@ def wl_refine_colors(
         next_colors: dict[int, str] = {}
         changed = 0
         for step_id, _entity in entities.items():
-            neighbor_sig = _neighbor_signature(adjacency.get(step_id, []), colors)
-            payload = {
-                "self": colors[step_id],
-                "neighbors": neighbor_sig,
-            }
-            blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-            digest = hasher(blob.encode("utf-8"))
+            blob = _wl_round_payload(
+                colors[step_id],
+                adjacency.get(step_id, []),
+                colors,
+                path_bytes_cache=path_bytes_cache,
+                type_bytes_cache=type_bytes_cache,
+                color_bytes_cache=color_bytes_cache,
+            )
+            digest = hasher(blob)
             next_color = digest if hasher_name == _WL_ROUND_HASH_SHA256 else _sha256_hexdigest(digest.encode("ascii"))
             next_colors[step_id] = next_color
             if next_color != colors[step_id]:
@@ -66,6 +71,82 @@ def wl_refine_colors(
             break
 
     return colors
+
+
+def _wl_round_payload(
+    self_color: str,
+    edges: list[tuple[str, str | None, int]],
+    colors: dict[int, str],
+    *,
+    path_bytes_cache: dict[str, bytes],
+    type_bytes_cache: dict[str, bytes],
+    color_bytes_cache: dict[str, bytes],
+) -> bytes:
+    payload = bytearray()
+    payload.extend(_cached_bytes(self_color, color_bytes_cache))
+    if not edges:
+        return bytes(payload)
+
+    neighbor_items: list[tuple[str, str, str]] = []
+    append_item = neighbor_items.append
+    for path, target_type, target_id in edges:
+        append_item((path, target_type or "", colors.get(target_id, "MISSING")))
+    neighbor_items.sort(key=lambda item: (item[0], item[1], item[2]))
+
+    prev = neighbor_items[0]
+    count = 1
+    for item in neighbor_items[1:]:
+        if item == prev:
+            count += 1
+            continue
+        _append_neighbor_token(
+            payload,
+            prev,
+            count,
+            path_bytes_cache=path_bytes_cache,
+            type_bytes_cache=type_bytes_cache,
+            color_bytes_cache=color_bytes_cache,
+        )
+        prev = item
+        count = 1
+    _append_neighbor_token(
+        payload,
+        prev,
+        count,
+        path_bytes_cache=path_bytes_cache,
+        type_bytes_cache=type_bytes_cache,
+        color_bytes_cache=color_bytes_cache,
+    )
+    return bytes(payload)
+
+
+def _append_neighbor_token(
+    payload: bytearray,
+    item: tuple[str, str, str],
+    count: int,
+    *,
+    path_bytes_cache: dict[str, bytes],
+    type_bytes_cache: dict[str, bytes],
+    color_bytes_cache: dict[str, bytes],
+) -> None:
+    path, target_type, color = item
+    payload.extend(b"\x1e")
+    payload.extend(_cached_bytes(path, path_bytes_cache))
+    payload.extend(b"\x1f")
+    payload.extend(_cached_bytes(target_type, type_bytes_cache))
+    payload.extend(b"\x1f")
+    payload.extend(_cached_bytes(color, color_bytes_cache))
+    payload.extend(b"\x1f")
+    payload.extend(str(count).encode("ascii"))
+
+
+def _cached_bytes(value: str, cache: dict[str, bytes]) -> bytes:
+    encoded = cache.get(value)
+    if encoded is not None:
+        return encoded
+    encoded = value.encode("utf-8")
+    cache[value] = encoded
+    return encoded
 
 
 def wl_refine_with_scc_fallback(
@@ -170,21 +251,6 @@ def _sha256_hexdigest(data: bytes) -> str:
 
 def _blake2b64_hexdigest(data: bytes) -> str:
     return hashlib.blake2b(data, digest_size=8).hexdigest()
-
-
-def _neighbor_signature(
-    edges: list[tuple[str, str | None, int]],
-    colors: dict[int, str],
-) -> list[dict[str, Any]]:
-    items = []
-    for path, target_type, target_id in edges:
-        items.append({
-            "path": path,
-            "target_type": target_type,
-            "color": colors.get(target_id, "MISSING"),
-        })
-    items.sort(key=lambda item: (item["path"], item["target_type"] or "", item["color"]))
-    return items
 
 
 def _tarjan_scc(

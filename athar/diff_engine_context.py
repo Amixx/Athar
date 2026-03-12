@@ -17,6 +17,7 @@ from .identity_pipeline import (
     _index_by_identity,
     _match_root_steps,
     _match_steps_by_unique_id,
+    _precompute_identity_state,
 )
 from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
 from .matcher_policy import resolve_matcher_policy
@@ -45,6 +46,17 @@ def prepare_diff_context(
     _validate_schema(old_graph, new_graph)
 
     resolved_matcher_policy = resolve_matcher_policy(matcher_policy)
+    identity_precompute_cache: dict[tuple[int, str], dict[str, Any]] = {}
+
+    def _identity_precompute(graph: GraphIR) -> dict[str, Any]:
+        key = (id(graph), profile)
+        cached = identity_precompute_cache.get(key)
+        if cached is not None:
+            return cached
+        precomputed = _precompute_identity_state(graph, profile=profile)
+        identity_precompute_cache[key] = precomputed
+        return precomputed
+
     _emit_progress(progress_callback, {
         "status": "start",
         "completed_steps": 0,
@@ -80,6 +92,7 @@ def prepare_diff_context(
         root_remap=remap["old_to_new"],
         root_remap_diagnostics=remap.get("diagnostics", {}),
         side="old",
+        precomputed=_identity_precompute(old_graph),
     )
     _record_timing(timing_collector, "assign_old_ids", stage_started)
     _step_done("assign_old_ids")
@@ -89,6 +102,7 @@ def prepare_diff_context(
         profile=profile,
         guid_policy=guid_policy,
         side="new",
+        precomputed=_identity_precompute(new_graph),
     )
     _record_timing(timing_collector, "assign_new_ids", stage_started)
     _step_done("assign_new_ids")
