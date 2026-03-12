@@ -1018,6 +1018,45 @@ def test_diff_graphs_timings_are_opt_in():
     assert "total" in timings
 
 
+def test_diff_graphs_progress_callback_reports_stage_progress():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A v2"}},
+            "refs": [],
+        },
+    })
+    events: list[dict] = []
+
+    diff_graphs(old_graph, new_graph, progress_callback=lambda event: events.append(dict(event)))
+
+    assert events
+    assert events[0]["stage"] == "prepare_context"
+    assert events[0]["status"] == "start"
+    assert any(
+        event.get("stage") == "prepare_context"
+        and event.get("status") == "running"
+        and event.get("step") == "root_remap"
+        for event in events
+    )
+    assert any(
+        event.get("stage") == "emit_base_changes" and event.get("status") == "running"
+        for event in events
+    )
+    assert events[-1]["stage"] == "done"
+    assert events[-1]["status"] == "done"
+    assert events[-1]["overall_progress"] >= 0.99
+
+
 def test_diff_files_timings_include_parse_stages(monkeypatch):
     graph = _graph_with_entities({
         1: {

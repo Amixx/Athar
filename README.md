@@ -89,6 +89,21 @@ Include per-stage `diff_graphs` timings (from engine `stats.timings_ms`) when bo
 python -m scripts.explore.benchmark_diff_engine --case ifchouse:data/BasicHouse.ifc:data/BasicHouse.ifc --warmup 0 --iterations 1 --engine-timings --out docs/perf/batch11_baseline_YYYY-MM-DD.json
 ```
 
+Show liveness during long metric iterations:
+
+```bash
+python -m scripts.explore.benchmark_diff_engine --case ifchouse:data/BasicHouse.ifc:data/BasicHouse.ifc --warmup 0 --iterations 1 --engine-timings --heartbeat-s 15 --out docs/perf/batch11_baseline_YYYY-MM-DD.json
+```
+
+Heartbeat lines include coarse `progress~...` and `eta~...` estimates (stage-aware where available), with ETA shown in human duration format (`h m s` when needed).
+For `diff_graphs`, stage-aware progress includes context pipeline steps, base-change scan progress, and derived-marker completion.
+
+Write live progress snapshots to a sidecar JSON:
+
+```bash
+python -m scripts.explore.benchmark_diff_engine --case ifchouse:data/BasicHouse.ifc:data/BasicHouse.ifc --warmup 0 --iterations 1 --engine-timings --heartbeat-s 15 --progress-file /tmp/ifchouse-progress.json --out docs/perf/batch11_baseline_YYYY-MM-DD.json
+```
+
 Baseline reports also include parser timings per case under `parse_ms` (`old_graph`, `new_graph`, `total`).
 
 WL backend benchmark (`auto`, `sha256`, `xxh3_64`, `blake3`, `blake2b_64`):
@@ -155,6 +170,12 @@ Add suite-level heartbeat logs while a step is running:
 
 ```bash
 python -m scripts.explore.run_perf_suite --tag YYYY-MM-DD --heartbeat-s 30
+```
+
+Forward baseline benchmark progress sidecar through the suite runner:
+
+```bash
+python -m scripts.explore.run_perf_suite --tag YYYY-MM-DD --baseline-progress-file /tmp/baseline-progress.json
 ```
 
 Resume an interrupted suite run (skips steps that already completed successfully and still have artifacts):

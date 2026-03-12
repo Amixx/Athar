@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import time
 from typing import Any
 
@@ -25,6 +26,9 @@ from .diff_engine_stats import build_stats
 from .profile_policy import entity_for_profile, validate_profile
 from .types import DiffContext, EntityIR, GraphIR, IdentityInfo
 
+ProgressCallback = Callable[[dict[str, Any]], None]
+_PREPARE_CONTEXT_TOTAL_STEPS = 15
+
 
 def prepare_diff_context(
     old_graph: GraphIR,
@@ -34,12 +38,31 @@ def prepare_diff_context(
     guid_policy: str = GUID_POLICY_FAIL_FAST,
     matcher_policy: dict[str, dict[str, Any]] | None = None,
     timing_collector: dict[str, float] | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> DiffContext:
     validate_profile(profile)
     validate_guid_policy(guid_policy)
     _validate_schema(old_graph, new_graph)
 
     resolved_matcher_policy = resolve_matcher_policy(matcher_policy)
+    _emit_progress(progress_callback, {
+        "status": "start",
+        "completed_steps": 0,
+        "total_steps": _PREPARE_CONTEXT_TOTAL_STEPS,
+        "stage_progress": 0.0,
+    })
+    completed_steps = 0
+
+    def _step_done(step: str) -> None:
+        nonlocal completed_steps
+        completed_steps += 1
+        _emit_progress(progress_callback, {
+            "status": "running",
+            "step": step,
+            "completed_steps": completed_steps,
+            "total_steps": _PREPARE_CONTEXT_TOTAL_STEPS,
+            "stage_progress": round(completed_steps / _PREPARE_CONTEXT_TOTAL_STEPS, 6),
+        })
 
     stage_started = time.perf_counter()
     remap = plan_root_remap(
@@ -48,6 +71,7 @@ def prepare_diff_context(
         **resolved_matcher_policy["root_remap"],
     )
     _record_timing(timing_collector, "root_remap", stage_started)
+    _step_done("root_remap")
     stage_started = time.perf_counter()
     old_ids, old_identity = _assign_ids(
         old_graph,
@@ -58,6 +82,7 @@ def prepare_diff_context(
         side="old",
     )
     _record_timing(timing_collector, "assign_old_ids", stage_started)
+    _step_done("assign_old_ids")
     stage_started = time.perf_counter()
     new_ids, new_identity = _assign_ids(
         new_graph,
@@ -66,12 +91,15 @@ def prepare_diff_context(
         side="new",
     )
     _record_timing(timing_collector, "assign_new_ids", stage_started)
+    _step_done("assign_new_ids")
     stage_started = time.perf_counter()
     root_pairs = _match_root_steps(old_graph, new_graph, remap["old_to_new"])
     _record_timing(timing_collector, "match_root_steps", stage_started)
+    _step_done("match_root_steps")
     stage_started = time.perf_counter()
     exact_pairs = _match_steps_by_unique_id(old_ids, new_ids)
     _record_timing(timing_collector, "match_unique_ids", stage_started)
+    _step_done("match_unique_ids")
     pre_old = set(root_pairs) | set(exact_pairs)
     pre_new = set(root_pairs.values()) | set(exact_pairs.values())
     stage_started = time.perf_counter()
@@ -83,6 +111,7 @@ def prepare_diff_context(
         pre_matched_new=pre_new,
     )
     _record_timing(timing_collector, "path_propagation", stage_started)
+    _step_done("path_propagation")
     stage_started = time.perf_counter()
     _apply_step_matches(
         old_ids,
@@ -93,9 +122,11 @@ def prepare_diff_context(
         diagnostics=path_propagation.get("diagnostics", {}),
     )
     _record_timing(timing_collector, "apply_path_matches", stage_started)
+    _step_done("apply_path_matches")
     stage_started = time.perf_counter()
     matched_after_path = _match_steps_by_unique_id(old_ids, new_ids)
     _record_timing(timing_collector, "match_after_path", stage_started)
+    _step_done("match_after_path")
     stage_started = time.perf_counter()
     secondary = secondary_match_unresolved(
         old_graph,
@@ -105,6 +136,7 @@ def prepare_diff_context(
         **resolved_matcher_policy["secondary_match"],
     )
     _record_timing(timing_collector, "secondary_match", stage_started)
+    _step_done("secondary_match")
     stage_started = time.perf_counter()
     _apply_step_matches(
         old_ids,
@@ -115,6 +147,7 @@ def prepare_diff_context(
         diagnostics=secondary.get("diagnostics", {}),
     )
     _record_timing(timing_collector, "apply_secondary_matches", stage_started)
+    _step_done("apply_secondary_matches")
     stage_started = time.perf_counter()
     apply_ambiguous_equivalence_classes(
         old_ids=old_ids,
@@ -124,17 +157,21 @@ def prepare_diff_context(
         partitions=secondary.get("ambiguous_partitions", []),
     )
     _record_timing(timing_collector, "apply_equivalence_classes", stage_started)
+    _step_done("apply_equivalence_classes")
 
     stage_started = time.perf_counter()
     old_by_id = _index_by_identity(old_graph, old_ids, old_identity)
     _record_timing(timing_collector, "index_old_by_identity", stage_started)
+    _step_done("index_old_by_identity")
     stage_started = time.perf_counter()
     new_by_id = _index_by_identity(new_graph, new_ids, new_identity)
     _record_timing(timing_collector, "index_new_by_identity", stage_started)
+    _step_done("index_new_by_identity")
     stage_started = time.perf_counter()
     old_owner_projector = RootedOwnerProjector(old_graph, old_ids)
     new_owner_projector = RootedOwnerProjector(new_graph, new_ids)
     _record_timing(timing_collector, "build_owner_projectors", stage_started)
+    _step_done("build_owner_projectors")
 
     stage_started = time.perf_counter()
     stats = build_stats(
@@ -152,6 +189,13 @@ def prepare_diff_context(
         new_dangling_refs=_dangling_ref_count(new_graph),
     )
     _record_timing(timing_collector, "build_stats", stage_started)
+    _step_done("build_stats")
+    _emit_progress(progress_callback, {
+        "status": "done",
+        "completed_steps": _PREPARE_CONTEXT_TOTAL_STEPS,
+        "total_steps": _PREPARE_CONTEXT_TOTAL_STEPS,
+        "stage_progress": 1.0,
+    })
 
     return {
         "version": "2",
@@ -300,6 +344,15 @@ def _record_timing(target: dict[str, float] | None, key: str, started: float) ->
     if target is None:
         return
     target[key] = round((time.perf_counter() - started) * 1000.0, 3)
+
+
+def _emit_progress(callback: ProgressCallback | None, payload: dict[str, Any]) -> None:
+    if callback is None:
+        return
+    try:
+        callback(payload)
+    except Exception:
+        return
 
 
 def _normalize_entity_ref_targets(entity: EntityIR, ids_by_step: dict[int, str]) -> EntityIR:
