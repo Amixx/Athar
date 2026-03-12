@@ -133,6 +133,12 @@ Recommended bounded run (single WL graph + per-step timeout):
 python -m scripts.explore.run_perf_suite --tag YYYY-MM-DD --wl-graph data/BasicHouse.ifc --wl-consistency-graph data/BasicHouse.ifc --step-timeout-s 7200
 ```
 
+Resume an interrupted suite run (skips steps that already completed successfully and still have artifacts):
+
+```bash
+python -m scripts.explore.run_perf_suite --tag YYYY-MM-DD --resume
+```
+
 All long-running benchmark scripts emit progress logs to stderr (graph/case/backend and iteration-level status) so stalls are visible immediately.
 `stress_determinism` also supports `--progress-every N` for round-level heartbeat control.
 

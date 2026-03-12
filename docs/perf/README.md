@@ -35,6 +35,7 @@ Operational notes:
 - `evaluate_matcher_quality` prints per-scenario start/done progress and total completion timing to stderr.
 - `check_wl_backend_consistency` outputs compact partition fingerprints (`sha256` + size stats) to avoid oversized JSON artifacts.
 - `run_perf_suite` supports bounded execution via `--step-timeout-s` and scoped WL inputs via `--wl-graph` / `--wl-consistency-graph`.
+- `run_perf_suite` writes its manifest incrementally after each step and supports `--resume` to skip previously successful steps whose artifacts still exist.
 
 For every metric, it captures:
 

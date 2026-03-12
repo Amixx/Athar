@@ -86,7 +86,7 @@ python -m athar old.ifc new.ifc                       # raw JSON diff
 - `scripts/explore/evaluate_matcher_quality.py` — Deterministic matcher quality harness (precision/recall/F1) across rooted remap, typed-path propagation, and secondary matching scenarios; prints per-scenario progress to stderr.
 - `scripts/explore/stress_determinism.py` — Repeated-run hash stability harness for `diff_graphs` and both stream modes; prints per-round progress (configurable via `--progress-every`) to stderr.
 - `scripts/explore/render_perf_summary.py` — Render benchmark/quality/stability JSON artifacts into a concise markdown summary.
-- `scripts/explore/run_perf_suite.py` — Sequential overnight runner for baseline, WL benchmark, matcher quality, determinism stress, and final summary generation; supports bounded execution via per-step timeout and scoped WL graph inputs.
+- `scripts/explore/run_perf_suite.py` — Sequential overnight runner for baseline, WL benchmark, matcher quality, determinism stress, and final summary generation; supports bounded execution via per-step timeout, scoped WL graph inputs, and resumable step skipping via `--resume` with incremental manifest checkpoints.
 - `scripts/explore/` — Exploratory/investigative scripts.
 - Benchmark harnesses should emit visible progress logs (graph/case/backend + iteration) for long runs.
 
