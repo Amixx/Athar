@@ -60,21 +60,24 @@ def diff_graphs(
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
     )
-    base_changes: list[dict[str, Any]] = []
-    change_index: dict[str, list[str]] = {}
+    try:
+        base_changes: list[dict[str, Any]] = []
+        change_index: dict[str, list[str]] = {}
 
-    for change in _iter_base_changes(context, include_snapshots=True):
-        base_changes.append(change)
-        index_change(change_index, change)
+        for change in _iter_base_changes(context, include_snapshots=True):
+            base_changes.append(change)
+            index_change(change_index, change)
 
-    derived_markers = build_derived_markers(
-        old_graph=context["old_graph"],
-        new_graph=context["new_graph"],
-        old_ids=context["old_ids"],
-        new_ids=context["new_ids"],
-        change_index=change_index,
-    )
-    return build_result(context, base_changes=base_changes, derived_markers=derived_markers)
+        derived_markers = build_derived_markers(
+            old_graph=context["old_graph"],
+            new_graph=context["new_graph"],
+            old_ids=context["old_ids"],
+            new_ids=context["new_ids"],
+            change_index=change_index,
+        )
+        return build_result(context, base_changes=base_changes, derived_markers=derived_markers)
+    finally:
+        _close_owner_projectors(context)
 
 
 def stream_diff_files(
@@ -123,8 +126,11 @@ def stream_diff_graphs(
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
     )
-    events = _iter_stream_events(context)
-    yield from stream_diff_events(events, mode=mode, chunk_size=chunk_size)
+    try:
+        events = _iter_stream_events(context)
+        yield from stream_diff_events(events, mode=mode, chunk_size=chunk_size)
+    finally:
+        _close_owner_projectors(context)
 
 
 def _iter_base_changes(context: DiffContext, *, include_snapshots: bool):
@@ -232,3 +238,12 @@ def _iter_stream_events(context: DiffContext):
     )
     for marker in derived_markers:
         yield {"event_type": "derived_marker", "marker": marker}
+
+
+def _close_owner_projectors(context: DiffContext) -> None:
+    old_owner_projector = context.get("old_owner_projector")
+    if old_owner_projector is not None:
+        old_owner_projector.close()
+    new_owner_projector = context.get("new_owner_projector")
+    if new_owner_projector is not None:
+        new_owner_projector.close()

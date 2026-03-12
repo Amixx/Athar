@@ -26,8 +26,9 @@ The core engine is responsible for parsing IFC files, aligning entities across m
 - `athar/types.py` — Shared `TypedDict` contracts (`GraphIR`, `EntityIR`, `IdentityInfo`, `DiffContext`) used across engine modules to reduce nested-dict contract drift.
 - `athar/canonical_serializer.py` — Deterministic serializer for identity/class records with total ordering `G:` then `H:` then `C:`.
 - `athar/diff_engine.py` — Core diff engine skeleton that merges identity sets and emits `base_changes` in the new wire format. Integrates rooted remap planning + typed-path propagation + secondary matching before ID assignment/merge, records `match_method` (`exact_guid`, `guid_disambiguated`, `root_remap`, `path_propagation`, `secondary_match`, `equivalence_class`, `exact_hash`) plus `match_confidence` and `matched_on` diagnostics per change, applies profile-driven volatility filtering in both comparison and H-hash assignment (`semantic_stable` suppresses OwnerHistory-reference churn and normalizes `IfcOwnerHistory`; `raw_exact` preserves it), enforces same-schema policy via shared validation, enforces explicit GlobalId policy (`fail_fast` default, optional deterministic disambiguation to `G!:` IDs), accepts validated matcher-policy overrides for rooted remap/secondary matching, emits recursive field-level `field_ops` for `MODIFY`, emits `CLASS_DELTA` with `equivalence_class` counts/exemplar for unresolved exact-hash class-cardinality deltas, SCC-ambiguous partitions, and unresolved ambiguous secondary partitions, emits relation-typed derived `REPARENT` markers for `IfcRelContainedInSpatialStructure`, `IfcRelAggregates`, and `IfcRelNests`, populates `rooted_owners` with deterministic sampling (`N=5`) plus exact totals, includes dangling-reference counts in output stats, and emits stream events for framing.
+- `athar/diff_engine_markers.py` — Derived-marker and rooted-owner helpers, including lazy rooted-owner projection and optional disk-backed owner-index spill (`ATHAR_OWNER_INDEX_DISK_THRESHOLD`) for large owner closures.
 - `athar/diff_engine_streaming.py` — Single source of stream framing/protocol (`ndjson` and `chunked_json`), including deterministic `end` counters (`base_change_count`, `derived_marker_count`, `op_counts`) for both full-result and event-stream paths.
-- `athar/__main__.py` — CLI is graph-engine only, with streamed output modes via `--stream ndjson|chunked_json`, `--chunk-size`, and explicit matcher-policy overrides for rooted remap/secondary matcher tuning.
+- `athar/__main__.py` — CLI is graph-engine only, with streamed output modes via `--stream ndjson|chunked_json`, `--chunk-size`, explicit matcher-policy overrides for rooted remap/secondary matcher tuning, and owner-index spill control via `--owner-index-disk-threshold`.
 
 ### Higher Layers (`athar_layers/`)
 
@@ -77,7 +78,16 @@ python -m athar old.ifc new.ifc                       # raw JSON diff
 - `scripts/inspect_guid_overlap.py` — Show entity GUID overlap matrix between files.
 - `scripts/explore/canonical_reference_impl.py` — Executable reference for canonical value normalization (value grammar, ordering, and profiles).
 - `scripts/explore/generate_determinism_fixtures.py` — Regenerate frozen golden outputs for deterministic low-level diff/stream payloads and environment fingerprint fixture.
+- `scripts/explore/benchmark_diff_engine.py` — Reproducible runtime/peak-memory benchmark harness for `diff_graphs` and streaming modes (`ndjson`, `chunked_json`) on default or explicit IFC case pairs.
+- `scripts/explore/benchmark_wl_backends.py` — WL refinement backend benchmark harness (`auto`, `sha256`, `xxh3_64`, `blake3`, `blake2b_64`) with runtime/peak-memory summaries.
+- `scripts/explore/check_wl_backend_consistency.py` — WL backend consistency checker that compares compact color/class partition fingerprints against `sha256` baseline per graph.
+- `scripts/explore/benchmark_owner_projection.py` — Rooted-owner projection benchmark comparing in-memory index vs disk-spill mode (`ATHAR_OWNER_INDEX_DISK_THRESHOLD`).
+- `scripts/explore/evaluate_matcher_quality.py` — Deterministic matcher quality harness (precision/recall/F1) across rooted remap, typed-path propagation, and secondary matching scenarios.
+- `scripts/explore/stress_determinism.py` — Repeated-run hash stability harness for `diff_graphs` and both stream modes.
+- `scripts/explore/render_perf_summary.py` — Render benchmark/quality/stability JSON artifacts into a concise markdown summary.
+- `scripts/explore/run_perf_suite.py` — Sequential overnight runner for baseline, WL benchmark, matcher quality, determinism stress, and final summary generation; supports bounded execution via per-step timeout and scoped WL graph inputs.
 - `scripts/explore/` — Exploratory/investigative scripts.
+- Benchmark harnesses should emit visible progress logs (graph/case/backend + iteration) for long runs.
 
 ## Testing
 

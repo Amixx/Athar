@@ -1,3 +1,4 @@
+import athar.diff_engine_markers as diff_engine_markers
 from athar.diff_engine import diff_graphs, stream_diff_graphs
 from athar.diff_engine_markers import RootedOwnerProjector
 
@@ -699,6 +700,35 @@ def test_diff_engine_lazy_owner_projection_skips_materialization_on_zero_diff(mo
     diff = diff_graphs(old_graph, new_graph)
     assert diff["base_changes"] == []
     assert calls["count"] == 0
+
+
+def test_rooted_owner_projector_spills_to_disk_when_threshold_exceeded(monkeypatch):
+    graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "ROOT",
+            "attributes": {},
+            "refs": [{"path": "/Contains/0", "target": 2, "target_type": "IfcDoor"}],
+        },
+        2: {
+            "entity_type": "IfcDoor",
+            "attributes": {},
+            "refs": [],
+        },
+    })
+    ids = {1: "G:ROOT", 2: "H:CHILD"}
+
+    monkeypatch.setenv("ATHAR_OWNER_INDEX_DISK_THRESHOLD", "1")
+    monkeypatch.setattr(
+        diff_engine_markers,
+        "compute_rooted_owner_index",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("memory owner index should not be used")),
+    )
+
+    projector = RootedOwnerProjector(graph, ids)
+    assert projector.owners_for_step(2) == {"G:ROOT"}
+    assert projector.owners_for_steps([1, 2]) == {"G:ROOT"}
+    projector.close()
 
 
 def test_diff_engine_rejects_cross_schema_pairs():
