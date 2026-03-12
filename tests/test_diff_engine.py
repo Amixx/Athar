@@ -793,13 +793,43 @@ def test_diff_engine_stats_include_root_guid_quality():
         10: {"entity_type": "IfcWall", "global_id": "UNIQ", "attributes": {}, "refs": []},
     })
 
-    diff = diff_graphs(old_graph, new_graph)
+    diff = diff_graphs(old_graph, new_graph, guid_policy="disambiguate")
     old_quality = diff["stats"]["root_guid_quality"]["old"]
     new_quality = diff["stats"]["root_guid_quality"]["new"]
     assert old_quality["duplicate_ids"] == 1
     assert old_quality["duplicate_occurrences"] == 2
     assert old_quality["invalid"] == 1
     assert new_quality["unique_valid"] == 1
+
+
+def test_diff_engine_fail_fast_rejects_duplicate_global_ids():
+    old_graph = _graph_with_entities({
+        1: {"entity_type": "IfcWall", "global_id": "DUP", "attributes": {}, "refs": []},
+        2: {"entity_type": "IfcWall", "global_id": "DUP", "attributes": {}, "refs": []},
+    })
+    new_graph = _graph_with_entities({})
+
+    try:
+        diff_graphs(old_graph, new_graph)
+        assert False, "expected ValueError for duplicate GlobalId under fail_fast"
+    except ValueError as exc:
+        assert "GUID policy violation (old)" in str(exc)
+        assert "duplicate GlobalId count=1" in str(exc)
+
+
+def test_diff_engine_disambiguates_duplicate_global_ids_with_g_bang_ids():
+    old_graph = _graph_with_entities({
+        1: {"entity_type": "IfcWall", "global_id": "DUP", "attributes": {}, "refs": []},
+        2: {"entity_type": "IfcWall", "global_id": "DUP", "attributes": {}, "refs": []},
+    })
+    new_graph = _graph_with_entities({
+        10: {"entity_type": "IfcWall", "global_id": "DUP", "attributes": {}, "refs": []},
+        11: {"entity_type": "IfcWall", "global_id": "DUP", "attributes": {}, "refs": []},
+    })
+
+    diff = diff_graphs(old_graph, new_graph, guid_policy="disambiguate")
+    assert diff["base_changes"] == []
+    assert diff["identity_policy"]["guid_policy"] == "disambiguate"
 
 
 def test_diff_engine_stats_include_stage_match_counts():

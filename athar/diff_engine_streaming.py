@@ -80,5 +80,6 @@ def _stream_header(result: dict[str, Any]) -> dict[str, Any]:
         "version": result.get("version"),
         "profile": result.get("profile"),
         "schema_policy": result.get("schema_policy"),
+        "identity_policy": result.get("identity_policy"),
         "stats": result.get("stats"),
     }

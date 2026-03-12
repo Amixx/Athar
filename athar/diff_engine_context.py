@@ -7,6 +7,11 @@ from typing import Any
 from .canonical_ids import structural_hash, wl_refine_with_scc_fallback
 from .equivalence_classes import apply_ambiguous_equivalence_classes
 from .graph_parser import count_dangling_refs
+from .guid_policy import (
+    GUID_POLICY_FAIL_FAST,
+    enforce_or_disambiguate_guid_policy,
+    validate_guid_policy,
+)
 from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
 from .root_remap import plan_root_remap
 from .diff_engine_markers import RootedOwnerProjector
@@ -14,18 +19,32 @@ from .diff_engine_stats import build_stats
 from .profile_policy import entity_for_profile, validate_profile
 
 
-def prepare_diff_context(old_graph: dict, new_graph: dict, *, profile: str) -> dict[str, Any]:
+def prepare_diff_context(
+    old_graph: dict,
+    new_graph: dict,
+    *,
+    profile: str,
+    guid_policy: str = GUID_POLICY_FAIL_FAST,
+) -> dict[str, Any]:
     validate_profile(profile)
+    validate_guid_policy(guid_policy)
     _validate_schema(old_graph, new_graph)
 
     remap = plan_root_remap(old_graph, new_graph)
     old_ids, old_identity = _assign_ids(
         old_graph,
         profile=profile,
+        guid_policy=guid_policy,
         root_remap=remap["old_to_new"],
         root_remap_diagnostics=remap.get("diagnostics", {}),
+        side="old",
     )
-    new_ids, new_identity = _assign_ids(new_graph, profile=profile)
+    new_ids, new_identity = _assign_ids(
+        new_graph,
+        profile=profile,
+        guid_policy=guid_policy,
+        side="new",
+    )
     root_pairs = _match_root_steps(old_graph, new_graph, remap["old_to_new"])
     exact_pairs = _match_steps_by_unique_id(old_ids, new_ids)
     pre_old = set(root_pairs) | set(exact_pairs)
@@ -89,6 +108,9 @@ def prepare_diff_context(old_graph: dict, new_graph: dict, *, profile: str) -> d
             "old_schema": old_graph["metadata"]["schema"],
             "new_schema": new_graph["metadata"]["schema"],
         },
+        "identity_policy": {
+            "guid_policy": guid_policy,
+        },
         "stats": build_stats(
             old_graph=old_graph,
             new_graph=new_graph,
@@ -124,6 +146,7 @@ def result_header(context: dict[str, Any]) -> dict[str, Any]:
         "version": context["version"],
         "profile": context["profile"],
         "schema_policy": context["schema_policy"],
+        "identity_policy": context.get("identity_policy"),
         "stats": context["stats"],
     }
 
@@ -205,17 +228,39 @@ def _assign_ids(
     graph: dict,
     *,
     profile: str,
+    guid_policy: str,
     root_remap: dict[str, str] | None = None,
     root_remap_diagnostics: dict[str, dict[str, Any]] | None = None,
+    side: str,
 ) -> tuple[dict[int, str], dict[int, dict[str, Any]]]:
     entities = graph.get("entities", {})
     id_graph = _graph_for_profile(graph, profile=profile)
     id_entities = id_graph.get("entities", {})
     colors, scc_classes = wl_refine_with_scc_fallback(id_graph)
+    guid_policy_out = enforce_or_disambiguate_guid_policy(
+        entities,
+        policy=guid_policy,
+        side=side,
+    )
     guid_index = _guid_index(entities)
+    disambiguated = guid_policy_out["disambiguated"]
     ids: dict[int, str] = {}
     identity: dict[int, dict[str, Any]] = {}
     for step_id, entity in entities.items():
+        disambiguated_guid = disambiguated.get(step_id)
+        if disambiguated_guid:
+            ids[step_id] = disambiguated_guid["entity_id"]
+            identity[step_id] = {
+                "match_method": "guid_disambiguated",
+                "match_confidence": 0.0,
+                "matched_on": {
+                    "stage": "guid_disambiguation",
+                    "reason": disambiguated_guid["reason"],
+                    "guid": disambiguated_guid["guid"],
+                    "ordinal": disambiguated_guid["ordinal"],
+                },
+            }
+            continue
         gid = entity.get("global_id")
         if gid and guid_index.get(gid, 0) == 1:
             mapped_gid = (root_remap or {}).get(gid, gid)
@@ -289,6 +334,7 @@ def _identity_priority(match_method: str) -> int:
         "path_propagation": 4,
         "secondary_match": 3,
         "exact_guid": 2,
+        "guid_disambiguated": 2,
         "exact_hash": 1,
         "equivalence_class": 0,
     }

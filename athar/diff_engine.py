@@ -17,18 +17,33 @@ from .diff_engine_context import (
 from .diff_engine_markers import build_derived_markers, summarize_rooted_owners
 from .diff_engine_streaming import json_line, stream_diff_result
 from .graph_parser import parse_graph
+from .guid_policy import GUID_POLICY_FAIL_FAST, validate_guid_policy
 from .profile_policy import DEFAULT_PROFILE
 
 
-def diff_files(old_path: str, new_path: str, *, profile: str = DEFAULT_PROFILE) -> dict:
+def diff_files(
+    old_path: str,
+    new_path: str,
+    *,
+    profile: str = DEFAULT_PROFILE,
+    guid_policy: str = GUID_POLICY_FAIL_FAST,
+) -> dict:
+    validate_guid_policy(guid_policy)
     old_graph = parse_graph(old_path, profile=profile)
     new_graph = parse_graph(new_path, profile=profile)
     _validate_same_schema(old_graph, new_graph)
-    return diff_graphs(old_graph, new_graph, profile=profile)
+    return diff_graphs(old_graph, new_graph, profile=profile, guid_policy=guid_policy)
 
 
-def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = DEFAULT_PROFILE) -> dict:
-    context = prepare_diff_context(old_graph, new_graph, profile=profile)
+def diff_graphs(
+    old_graph: dict,
+    new_graph: dict,
+    *,
+    profile: str = DEFAULT_PROFILE,
+    guid_policy: str = GUID_POLICY_FAIL_FAST,
+) -> dict:
+    validate_guid_policy(guid_policy)
+    context = prepare_diff_context(old_graph, new_graph, profile=profile, guid_policy=guid_policy)
     base_changes: list[dict[str, Any]] = []
     change_index: dict[str, list[str]] = {}
 
@@ -51,10 +66,12 @@ def stream_diff_files(
     new_path: str,
     *,
     profile: str = DEFAULT_PROFILE,
+    guid_policy: str = GUID_POLICY_FAIL_FAST,
     mode: str = "ndjson",
     chunk_size: int = 1000,
 ):
     """Stream diff output directly from files without materializing full result."""
+    validate_guid_policy(guid_policy)
     old_graph = parse_graph(old_path, profile=profile)
     new_graph = parse_graph(new_path, profile=profile)
     _validate_same_schema(old_graph, new_graph)
@@ -62,6 +79,7 @@ def stream_diff_files(
         old_graph,
         new_graph,
         profile=profile,
+        guid_policy=guid_policy,
         mode=mode,
         chunk_size=chunk_size,
     )
@@ -72,14 +90,16 @@ def stream_diff_graphs(
     new_graph: dict,
     *,
     profile: str = DEFAULT_PROFILE,
+    guid_policy: str = GUID_POLICY_FAIL_FAST,
     mode: str = "ndjson",
     chunk_size: int = 1000,
 ):
     """Stream diff output directly from graph inputs."""
     if chunk_size <= 0:
         raise ValueError("chunk_size must be > 0")
+    validate_guid_policy(guid_policy)
 
-    context = prepare_diff_context(old_graph, new_graph, profile=profile)
+    context = prepare_diff_context(old_graph, new_graph, profile=profile, guid_policy=guid_policy)
     header = result_header(context)
     change_index: dict[str, list[str]] = {}
 
