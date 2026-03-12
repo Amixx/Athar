@@ -216,6 +216,7 @@ def prepare_diff_context(
         old_identity,
         profile_entities=old_profile_entities,
         compare_entities=old_compare_entities,
+        profile_hashes=old_state.get("profile_hashes"),
     )
     _record_timing(timing_collector, "index_old_by_identity", stage_started)
     _step_done("index_old_by_identity")
@@ -226,6 +227,7 @@ def prepare_diff_context(
         new_identity,
         profile_entities=new_profile_entities,
         compare_entities=new_compare_entities,
+        profile_hashes=new_state.get("profile_hashes"),
     )
     _record_timing(timing_collector, "index_new_by_identity", stage_started)
     _step_done("index_new_by_identity")

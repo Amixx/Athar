@@ -64,7 +64,10 @@ python -m athar old.ifc new.ifc --timings
 python -m athar old.ifc new.ifc --secondary-score-threshold 0.65 --secondary-assignment-max 6
 python -m athar old.ifc new.ifc --root-remap-score-threshold 0.7 --root-remap-score-margin 0.06
 python -m athar old.ifc new.ifc --secondary-unresolved-limit 120000
+python -m athar old.ifc new.ifc --secondary-unresolved-pair-limit 10000000
 ```
+
+Matcher tuning is quality-first: defaults are chosen to preserve stable `MODIFY` alignment (instead of degrading into `ADD/REMOVE`), and hard cutoffs are intended only as guardrails for pathological datasets.
 
 See the [sample report](docs/SAMPLE_REPORT.md) for what the output looks like.
 

@@ -28,10 +28,12 @@ ROOT_REMAP_POLICY_DEFAULTS = {
 SECONDARY_MATCH_POLICY_DEFAULTS = {
     "score_threshold": SECONDARY_SCORE_THRESHOLD,
     "score_margin": SECONDARY_SCORE_MARGIN,
-    "assignment_max": SECONDARY_ASSIGNMENT_MAX,
-    "depth2_max": SECONDARY_DEEPENING_DEPTH2_MAX,
-    "depth3_max": SECONDARY_DEEPENING_DEPTH3_MAX,
-    "unresolved_limit": 200000,
+    "assignment_max": 12,
+    "depth2_max": 8,
+    "depth3_max": 6,
+    # Quality-first defaults: unresolved gates are only emergency guardrails.
+    "unresolved_limit": 1000000,
+    "unresolved_pair_limit": 500000000,
 }
 
 DEFAULT_MATCHER_POLICY = {
@@ -107,6 +109,7 @@ def validate_matcher_policy(policy: dict[str, dict[str, Any]]) -> None:
     _validate_positive_int(policy["secondary_match"]["depth2_max"], "matcher_policy.secondary_match.depth2_max")
     _validate_positive_int(policy["secondary_match"]["depth3_max"], "matcher_policy.secondary_match.depth3_max")
     _validate_positive_int(policy["secondary_match"]["unresolved_limit"], "matcher_policy.secondary_match.unresolved_limit")
+    _validate_positive_int(policy["secondary_match"]["unresolved_pair_limit"], "matcher_policy.secondary_match.unresolved_pair_limit")
     if policy["secondary_match"]["depth3_max"] > policy["secondary_match"]["depth2_max"]:
         raise ValueError("matcher_policy.secondary_match.depth3_max must be <= depth2_max")
 

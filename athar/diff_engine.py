@@ -414,6 +414,11 @@ def _iter_base_changes(
                 and new_item.get("identity", {}).get("match_method") == "exact_hash"
             ):
                 continue
+            if entity_id.startswith("H:"):
+                old_hash = old_item.get("profile_hash")
+                new_hash = new_item.get("profile_hash")
+                if isinstance(old_hash, str) and old_hash == new_hash:
+                    continue
             if entities_equal(
                 entity_id,
                 old_ent,

@@ -113,6 +113,12 @@ def main():
         help="Override unresolved-entity gate for secondary matcher",
     )
     parser.add_argument(
+        "--secondary-unresolved-pair-limit",
+        type=int,
+        default=None,
+        help="Override unresolved pair-product gate for secondary matcher",
+    )
+    parser.add_argument(
         "--owner-index-disk-threshold",
         type=int,
         default=None,
@@ -184,6 +190,8 @@ def _matcher_policy_overrides(args: argparse.Namespace) -> dict[str, dict[str, A
         secondary_match["depth3_max"] = args.secondary_depth3_max
     if args.secondary_unresolved_limit is not None:
         secondary_match["unresolved_limit"] = args.secondary_unresolved_limit
+    if args.secondary_unresolved_pair_limit is not None:
+        secondary_match["unresolved_pair_limit"] = args.secondary_unresolved_pair_limit
 
     if not root_remap and not secondary_match:
         return None

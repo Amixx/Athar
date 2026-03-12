@@ -57,3 +57,4 @@ Context breakdown:
 - Secondary matcher now exits immediately when unresolved sets are empty and builds blocks/features from unresolved sets only.
 - Base-change equality now uses prebuilt compare-entity caches (for non-`H:` shared IDs) to avoid repeated deep ref-target normalization in the hot loop.
 - Ref-target normalization now uses copy-on-write recursion and scalar fast paths to reduce temporary allocations.
+- Secondary matcher now supports an unresolved pair-product gate (`unresolved_pair_limit`) to short-circuit pathological cross-product cases.

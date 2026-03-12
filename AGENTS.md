@@ -19,7 +19,7 @@ The core engine is responsible for parsing IFC files, aligning entities across m
 - `athar/structural_hash.py` — Structural hash helpers for engine identity (`H:`) seeds. Computes deterministic payloads that ignore STEP IDs and inverse attributes.
 - `athar/wl_refinement.py` — WL-style refinement and SCC-aware ambiguity fallback. WL round hashing is pluggable (`auto`, `xxh3_64`, `blake3`, `blake2b_64`, `sha256`) while external IDs stay `sha256`; round payload construction avoids per-node JSON/dict allocations in the hot loop.
 - `athar/guid_policy.py` — GlobalId quality policy (`fail_fast` or `disambiguate`) with deterministic `G!:` disambiguation and diagnostics.
-- `athar/matcher_policy.py` — Validated matcher policy defaults/overrides for rooted remap and secondary matcher stages, including secondary unresolved-set gating (`unresolved_limit`) for very large unmatched populations.
+- `athar/matcher_policy.py` — Validated matcher policy defaults/overrides for rooted remap and secondary matcher stages, including secondary unresolved-set gating (`unresolved_limit`) and unresolved pair-product gating (`unresolved_pair_limit`) for very large unmatched populations.
 - `athar/semantic_signature.py` — Soft signature (`S:`) for candidate blocking. Uses attribute/aggregate shape and typed edge signatures while ignoring literal values.
 - `athar/root_remap.py` — Phase 2.5 rooted remap for low GUID overlap. Uses staged matching: GUID-independent root signatures, neighbor-signature disambiguation, then bounded scored assignment (`threshold`, `margin`, `assignment_max`) for unresolved buckets, with deterministic tie rejection and ambiguity accounting.
 - `athar/matcher_graph.py` — Matching stages for graph diffing. Implements deterministic typed-path propagation from matched root pairs (unique 1:1 buckets only, with matched-on path diagnostics) and scored secondary matching for unresolved non-root entities (entity-family compatibility, ancestry-aware blocking/features, deterministic min-cost bipartite assignment, iterative deepening for small ambiguous blocks, large-block signature fallback, and explicit tie/margin ambiguity rejection, with per-pair score diagnostics).
@@ -57,6 +57,7 @@ Detailed information for these components can be found in [athar_layers/AGENTS.m
 - Output structured JSON. Human-readable summaries are a presentation concern, not a diff concern.
 - No deep B-rep geometry comparison. Compare placement matrices and geometric parameters only.
 - Minimal dependencies. Only `ifcopenshell` and stdlib.
+- Matching quality is prioritized over throughput: preserve `MODIFY` recovery (correct entity alignment) rather than collapsing into `ADD/REMOVE`; keep matcher cutoffs conservative and only use aggressive gates as safety valves for pathological inputs.
 
 ## Running
 

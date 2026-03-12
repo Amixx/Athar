@@ -18,6 +18,10 @@ from .matcher_graph_scoring import (
     iterative_assignment_block_match,
     entity_type_family,
 )
+from .semantic_signature import semantic_signature
+
+# Quality-first default: only use large-family fallback for extreme buckets.
+_SECONDARY_LARGE_FAMILY_FALLBACK_MIN = 20000
 
 
 def propagate_matches_by_typed_path(
@@ -88,6 +92,7 @@ def secondary_match_unresolved(
     depth2_max: int = SECONDARY_DEEPENING_DEPTH2_MAX,
     depth3_max: int = SECONDARY_DEEPENING_DEPTH3_MAX,
     unresolved_limit: int | None = None,
+    unresolved_pair_limit: int | None = None,
 ) -> dict[str, Any]:
     """Deterministic secondary matcher for unmatched non-root entities."""
     old_entities = old_graph.get("entities", {})
@@ -123,39 +128,34 @@ def secondary_match_unresolved(
             "ambiguous": min(len(unresolved_old), len(unresolved_new)),
             "ambiguous_partitions": [],
         }
+    if (
+        isinstance(unresolved_pair_limit, int)
+        and unresolved_pair_limit > 0
+        and (len(unresolved_old) * len(unresolved_new)) > unresolved_pair_limit
+    ):
+        return {
+            "method": "secondary_match",
+            "old_to_new": {},
+            "diagnostics": {},
+            "ambiguous": min(len(unresolved_old), len(unresolved_new)),
+            "ambiguous_partitions": [],
+        }
 
     old_blocks: defaultdict[str | None, list[int]] = defaultdict(list)
     new_blocks: defaultdict[str | None, list[int]] = defaultdict(list)
     old_features: dict[int, dict[str, Any]] = {}
     new_features: dict[int, dict[str, Any]] = {}
-    old_adjacency = build_adjacency(old_entities)
-    new_adjacency = build_adjacency(new_entities)
-    old_reverse = build_reverse_adjacency(old_entities, old_adjacency)
-    new_reverse = build_reverse_adjacency(new_entities, new_adjacency)
-
     for step_id in unresolved_old:
-        entity = old_entities[step_id]
-        family = entity_type_family(entity.get("entity_type"))
+        family = entity_type_family(old_entities[step_id].get("entity_type"))
         old_blocks[family].append(step_id)
-        old_features[step_id] = build_feature_vector(
-            entity,
-            step_id=step_id,
-            entities=old_entities,
-            adjacency=old_adjacency,
-            reverse_adjacency=old_reverse,
-        )
-
     for step_id in unresolved_new:
-        entity = new_entities[step_id]
-        family = entity_type_family(entity.get("entity_type"))
+        family = entity_type_family(new_entities[step_id].get("entity_type"))
         new_blocks[family].append(step_id)
-        new_features[step_id] = build_feature_vector(
-            entity,
-            step_id=step_id,
-            entities=new_entities,
-            adjacency=new_adjacency,
-            reverse_adjacency=new_reverse,
-        )
+
+    old_adjacency: dict[int, list[tuple[str, str | None, int]]] | None = None
+    new_adjacency: dict[int, list[tuple[str, str | None, int]]] | None = None
+    old_reverse: dict[int, list[tuple[str, str | None, int]]] | None = None
+    new_reverse: dict[int, list[tuple[str, str | None, int]]] | None = None
 
     matches: dict[int, int] = {}
     diagnostics: dict[int, dict[str, Any]] = {}
@@ -166,6 +166,61 @@ def secondary_match_unresolved(
         new_steps = sorted(new_blocks[key])
         if not old_steps or not new_steps:
             continue
+
+        if (
+            len(old_steps) >= _SECONDARY_LARGE_FAMILY_FALLBACK_MIN
+            or len(new_steps) >= _SECONDARY_LARGE_FAMILY_FALLBACK_MIN
+        ):
+            block_matches, block_diagnostics, block_ambiguous = _fallback_large_family_block(
+                old_steps,
+                new_steps,
+                old_entities,
+                new_entities,
+            )
+            diagnostics.update(_with_block_diagnostics(block_diagnostics, block_stage="large_family_fallback", block_key=None))
+            for old_step, new_step in block_matches.items():
+                matches[old_step] = new_step
+                used_old.add(old_step)
+                used_new.add(new_step)
+            ambiguous += block_ambiguous
+            unresolved_old_block = [step for step in old_steps if step not in block_matches]
+            unresolved_new_block = [step for step in new_steps if step not in block_matches.values()]
+            if block_ambiguous and unresolved_old_block and unresolved_new_block:
+                ambiguous_partitions.append({
+                    "entity_type": key,
+                    "stage": "large_family_fallback",
+                    "reason": "ambiguous_assignment",
+                    "old_steps": sorted(unresolved_old_block),
+                    "new_steps": sorted(unresolved_new_block),
+                })
+            continue
+
+        if old_adjacency is None:
+            old_adjacency = build_adjacency(old_entities)
+            new_adjacency = build_adjacency(new_entities)
+            old_reverse = build_reverse_adjacency(old_entities, old_adjacency)
+            new_reverse = build_reverse_adjacency(new_entities, new_adjacency)
+
+        for step_id in old_steps:
+            if step_id in old_features:
+                continue
+            old_features[step_id] = build_feature_vector(
+                old_entities[step_id],
+                step_id=step_id,
+                entities=old_entities,
+                adjacency=old_adjacency,
+                reverse_adjacency=old_reverse,
+            )
+        for step_id in new_steps:
+            if step_id in new_features:
+                continue
+            new_features[step_id] = build_feature_vector(
+                new_entities[step_id],
+                step_id=step_id,
+                entities=new_entities,
+                adjacency=new_adjacency,
+                reverse_adjacency=new_reverse,
+            )
 
         block_matches, block_diagnostics, block_ambiguous, block_partitions = _match_entity_type_block(
             key,
@@ -196,6 +251,23 @@ def secondary_match_unresolved(
         "ambiguous": ambiguous,
         "ambiguous_partitions": ambiguous_partitions,
     }
+
+
+def _fallback_large_family_block(
+    old_steps: list[int],
+    new_steps: list[int],
+    old_entities: dict[int, dict],
+    new_entities: dict[int, dict],
+) -> tuple[dict[int, int], dict[int, dict[str, Any]], int]:
+    old_features = {
+        step_id: {"semantic_signature": semantic_signature(old_entities[step_id])}
+        for step_id in old_steps
+    }
+    new_features = {
+        step_id: {"semantic_signature": semantic_signature(new_entities[step_id])}
+        for step_id in new_steps
+    }
+    return fallback_signature_block_match(old_steps, new_steps, old_features, new_features)
 
 
 def _edge_buckets(
@@ -378,4 +450,3 @@ def _with_block_diagnostics(
             "matched_on": matched_on,
         }
     return out
-
