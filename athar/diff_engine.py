@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 import os
 import time
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 from .diff_engine_changes import make_change, make_class_delta_change
 from .diff_engine_context import (
     _dangling_ref_count,
+    _normalize_entity_ref_targets,
     build_result,
     entities_equal,
     index_change,
@@ -28,11 +30,12 @@ from .geometry_policy import (
     GEOMETRY_POLICY_INVARIANT_PROBE,
     validate_geometry_policy,
 )
-from .graph_parser import parse_graph
+from .graph_cache import content_hash, load_cached, restore_identity_state, save_cached
+from .graph_parser import graph_from_ifc, open_ifc, parse_graph
 from .guid_policy import GUID_POLICY_FAIL_FAST, enforce_or_disambiguate_guid_policy, validate_guid_policy
 from .matcher_policy import resolve_matcher_policy
 from .profile_policy import DEFAULT_PROFILE, validate_profile
-from .types import DiffContext, GraphIR
+from .types import DiffContext, EntityIR, GraphIR
 
 ProgressCallback = Callable[[dict[str, Any]], None]
 _PROGRESS_PREPARE_CONTEXT_WEIGHT = 0.55
@@ -55,33 +58,27 @@ def diff_files(
     validate_guid_policy(guid_policy)
     validate_geometry_policy(geometry_policy)
     same_input = _paths_refer_to_same_file(old_path, new_path)
-    parse_timings_ms: dict[str, float] | None = None
-    if timings:
-        parse_timings_ms = {}
-        started = time.perf_counter()
-        old_graph = parse_graph(old_path, profile=profile)
-        parse_timings_ms["parse_old_graph"] = _elapsed_ms(started)
-        if same_input:
-            new_graph = old_graph
-            parse_timings_ms["parse_new_graph"] = 0.0
-        else:
-            started = time.perf_counter()
-            new_graph = parse_graph(new_path, profile=profile)
-            parse_timings_ms["parse_new_graph"] = _elapsed_ms(started)
-    else:
-        old_graph = parse_graph(old_path, profile=profile)
-        new_graph = old_graph if same_input else parse_graph(new_path, profile=profile)
-    _validate_schema(old_graph, new_graph)
+    parsed = _parse_graph_pair(
+        old_path,
+        new_path,
+        profile=profile,
+        same_input=same_input,
+        timings=timings,
+    )
+    _validate_schema(parsed.old_graph, parsed.new_graph)
     return diff_graphs(
-        old_graph,
-        new_graph,
+        parsed.old_graph,
+        parsed.new_graph,
         profile=profile,
         geometry_policy=geometry_policy,
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
         timings=timings,
-        parse_timings_ms=parse_timings_ms,
+        parse_timings_ms=parsed.parse_timings_ms,
         progress_callback=progress_callback,
+        _cached_identity_old=parsed.old_cached_identity,
+        _cached_identity_new=parsed.new_cached_identity,
+        _file_hashes=(parsed.old_file_hash, parsed.new_file_hash),
     )
 
 
@@ -96,6 +93,9 @@ def diff_graphs(
     timings: bool = False,
     parse_timings_ms: dict[str, float] | None = None,
     progress_callback: ProgressCallback | None = None,
+    _cached_identity_old: dict[str, Any] | None = None,
+    _cached_identity_new: dict[str, Any] | None = None,
+    _file_hashes: tuple[str | None, str | None] | None = None,
 ) -> dict:
     validate_guid_policy(guid_policy)
     validate_geometry_policy(geometry_policy)
@@ -156,6 +156,9 @@ def diff_graphs(
         matcher_policy=matcher_policy,
         timing_collector=context_timings_ms,
         progress_callback=_on_context_progress if progress_callback is not None else None,
+        cached_identity_old=_cached_identity_old,
+        cached_identity_new=_cached_identity_new,
+        file_hashes=_file_hashes,
     )
     prepare_context_ms = _elapsed_ms(started)
     _emit_progress(progress_callback, {
@@ -249,26 +252,17 @@ def stream_diff_files(
     validate_guid_policy(guid_policy)
     validate_geometry_policy(geometry_policy)
     same_input = _paths_refer_to_same_file(old_path, new_path)
-    parse_timings_ms: dict[str, float] | None = None
-    if timings:
-        parse_timings_ms = {}
-        started = time.perf_counter()
-        old_graph = parse_graph(old_path, profile=profile)
-        parse_timings_ms["parse_old_graph"] = _elapsed_ms(started)
-        if same_input:
-            new_graph = old_graph
-            parse_timings_ms["parse_new_graph"] = 0.0
-        else:
-            started = time.perf_counter()
-            new_graph = parse_graph(new_path, profile=profile)
-            parse_timings_ms["parse_new_graph"] = _elapsed_ms(started)
-    else:
-        old_graph = parse_graph(old_path, profile=profile)
-        new_graph = old_graph if same_input else parse_graph(new_path, profile=profile)
-    _validate_schema(old_graph, new_graph)
+    parsed = _parse_graph_pair(
+        old_path,
+        new_path,
+        profile=profile,
+        same_input=same_input,
+        timings=timings,
+    )
+    _validate_schema(parsed.old_graph, parsed.new_graph)
     yield from stream_diff_graphs(
-        old_graph,
-        new_graph,
+        parsed.old_graph,
+        parsed.new_graph,
         profile=profile,
         geometry_policy=geometry_policy,
         guid_policy=guid_policy,
@@ -276,7 +270,10 @@ def stream_diff_files(
         mode=mode,
         chunk_size=chunk_size,
         timings=timings,
-        parse_timings_ms=parse_timings_ms,
+        parse_timings_ms=parsed.parse_timings_ms,
+        _cached_identity_old=parsed.old_cached_identity,
+        _cached_identity_new=parsed.new_cached_identity,
+        _file_hashes=(parsed.old_file_hash, parsed.new_file_hash),
     )
 
 
@@ -292,6 +289,9 @@ def stream_diff_graphs(
     chunk_size: int = 1000,
     timings: bool = False,
     parse_timings_ms: dict[str, float] | None = None,
+    _cached_identity_old: dict[str, Any] | None = None,
+    _cached_identity_new: dict[str, Any] | None = None,
+    _file_hashes: tuple[str | None, str | None] | None = None,
 ):
     """Stream diff output directly from graph inputs."""
     validate_guid_policy(guid_policy)
@@ -338,6 +338,9 @@ def stream_diff_graphs(
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
         timing_collector=context_timings_ms,
+        cached_identity_old=_cached_identity_old,
+        cached_identity_new=_cached_identity_new,
+        file_hashes=_file_hashes,
     )
     if timings:
         timings_ms: dict[str, float] = {}
@@ -371,6 +374,8 @@ def _iter_base_changes(
     new_owner_projector = context["new_owner_projector"]
     old_graph = context["old_graph"]
     new_graph = context["new_graph"]
+    old_compare_cache: dict[int, EntityIR] = {}
+    new_compare_cache: dict[int, EntityIR] = {}
 
     entity_ids = sorted(set(old_by_id) | set(new_by_id))
     total = len(entity_ids)
@@ -419,6 +424,19 @@ def _iter_base_changes(
                 new_hash = new_item.get("profile_hash")
                 if isinstance(old_hash, str) and old_hash == new_hash:
                     continue
+            old_compare_entity = None
+            new_compare_entity = None
+            if not entity_id.startswith("H:"):
+                old_compare_entity = _resolve_compare_entity(
+                    old_item,
+                    ids=old_ids,
+                    cache=old_compare_cache,
+                )
+                new_compare_entity = _resolve_compare_entity(
+                    new_item,
+                    ids=new_ids,
+                    cache=new_compare_cache,
+                )
             if entities_equal(
                 entity_id,
                 old_ent,
@@ -426,8 +444,8 @@ def _iter_base_changes(
                 profile=profile,
                 old_ids=old_ids,
                 new_ids=new_ids,
-                old_compare_entity=old_item.get("compare_entity"),
-                new_compare_entity=new_item.get("compare_entity"),
+                old_compare_entity=old_compare_entity,
+                new_compare_entity=new_compare_entity,
             ):
                 continue
             change_id += 1
@@ -525,6 +543,22 @@ def _iter_base_changes(
     })
 
 
+def _resolve_compare_entity(
+    item: dict[str, Any],
+    *,
+    ids: dict[int, str],
+    cache: dict[int, EntityIR],
+) -> EntityIR:
+    step_id = item["step_id"]
+    cached = cache.get(step_id)
+    if cached is not None:
+        return cached
+    base_entity = item.get("profile_entity", item["entity"])
+    compare_entity = _normalize_entity_ref_targets(base_entity, ids)
+    cache[step_id] = compare_entity
+    return compare_entity
+
+
 def _iter_stream_events(context: DiffContext):
     yield {"event_type": "header", "header": result_header(context)}
     change_index: dict[str, list[str]] = {}
@@ -559,6 +593,137 @@ def _paths_refer_to_same_file(old_path: str, new_path: str) -> bool:
         old_norm = os.path.normcase(os.path.abspath(old_path))
         new_norm = os.path.normcase(os.path.abspath(new_path))
         return old_norm == new_norm
+
+
+class _ParseResult:
+    """Result bundle from _parse_graph_pair."""
+
+    __slots__ = ("old_graph", "new_graph", "parse_timings_ms",
+                 "old_file_hash", "new_file_hash",
+                 "old_cached_identity", "new_cached_identity")
+
+    def __init__(
+        self,
+        old_graph: GraphIR,
+        new_graph: GraphIR,
+        parse_timings_ms: dict[str, float] | None,
+        old_file_hash: str | None = None,
+        new_file_hash: str | None = None,
+        old_cached_identity: dict[str, Any] | None = None,
+        new_cached_identity: dict[str, Any] | None = None,
+    ):
+        self.old_graph = old_graph
+        self.new_graph = new_graph
+        self.parse_timings_ms = parse_timings_ms
+        self.old_file_hash = old_file_hash
+        self.new_file_hash = new_file_hash
+        self.old_cached_identity = old_cached_identity
+        self.new_cached_identity = new_cached_identity
+
+
+def _parse_graph_pair(
+    old_path: str,
+    new_path: str,
+    *,
+    profile: str,
+    same_input: bool,
+    timings: bool,
+) -> _ParseResult:
+    if same_input:
+        parse_timings_ms: dict[str, float] | None = {} if timings else None
+        file_hash = content_hash(old_path)
+        cached = load_cached(file_hash, profile)
+        if cached is not None:
+            graph = cached["graph"]
+            identity = restore_identity_state(cached, graph, profile=profile)
+            if parse_timings_ms is not None:
+                parse_timings_ms["parse_old_graph"] = 0.0
+                parse_timings_ms["parse_new_graph"] = 0.0
+                parse_timings_ms["cache_hit"] = 1.0
+            return _ParseResult(
+                graph, graph, parse_timings_ms,
+                old_file_hash=file_hash, new_file_hash=file_hash,
+                old_cached_identity=identity, new_cached_identity=identity,
+            )
+        started = time.perf_counter()
+        graph = parse_graph(old_path, profile=profile)
+        if parse_timings_ms is not None:
+            parse_timings_ms["parse_old_graph"] = _elapsed_ms(started)
+            parse_timings_ms["parse_new_graph"] = 0.0
+        return _ParseResult(
+            graph, graph, parse_timings_ms,
+            old_file_hash=file_hash, new_file_hash=file_hash,
+        )
+
+    parse_timings_ms = {} if timings else None
+    # Hash both files (can overlap with thread-pool parse below)
+    with ThreadPoolExecutor(max_workers=1) as hash_executor:
+        new_hash_future = hash_executor.submit(content_hash, new_path)
+        old_file_hash = content_hash(old_path)
+        new_file_hash = new_hash_future.result()
+
+    old_cached = load_cached(old_file_hash, profile)
+    new_cached = load_cached(new_file_hash, profile)
+    old_cached_identity: dict[str, Any] | None = None
+    new_cached_identity: dict[str, Any] | None = None
+
+    if old_cached is not None and new_cached is not None:
+        # Full cache hit — skip all parsing
+        old_graph = old_cached["graph"]
+        new_graph = new_cached["graph"]
+        old_cached_identity = restore_identity_state(old_cached, old_graph, profile=profile)
+        new_cached_identity = restore_identity_state(new_cached, new_graph, profile=profile)
+        if parse_timings_ms is not None:
+            parse_timings_ms["parse_old_graph"] = 0.0
+            parse_timings_ms["parse_new_graph"] = 0.0
+            parse_timings_ms["cache_hit"] = 1.0
+        return _ParseResult(
+            old_graph, new_graph, parse_timings_ms,
+            old_file_hash=old_file_hash, new_file_hash=new_file_hash,
+            old_cached_identity=old_cached_identity,
+            new_cached_identity=new_cached_identity,
+        )
+
+    if old_cached is not None:
+        old_graph = old_cached["graph"]
+        old_cached_identity = restore_identity_state(old_cached, old_graph, profile=profile)
+        if parse_timings_ms is not None:
+            parse_timings_ms["parse_old_graph"] = 0.0
+        started = time.perf_counter()
+        new_graph = parse_graph(new_path, profile=profile)
+        if parse_timings_ms is not None:
+            parse_timings_ms["parse_new_graph"] = _elapsed_ms(started)
+    elif new_cached is not None:
+        new_graph = new_cached["graph"]
+        new_cached_identity = restore_identity_state(new_cached, new_graph, profile=profile)
+        if parse_timings_ms is not None:
+            parse_timings_ms["parse_new_graph"] = 0.0
+        started = time.perf_counter()
+        old_graph = parse_graph(old_path, profile=profile)
+        if parse_timings_ms is not None:
+            parse_timings_ms["parse_old_graph"] = _elapsed_ms(started)
+    else:
+        # No cache hits — original threaded parse
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            new_ifc_future = executor.submit(open_ifc, new_path)
+            started = time.perf_counter()
+            old_ifc = open_ifc(old_path)
+            old_graph = graph_from_ifc(old_ifc, profile=profile)
+            if parse_timings_ms is not None:
+                parse_timings_ms["parse_old_graph"] = _elapsed_ms(started)
+            new_ifc = new_ifc_future.result()
+
+        started = time.perf_counter()
+        new_graph = graph_from_ifc(new_ifc, profile=profile)
+        if parse_timings_ms is not None:
+            parse_timings_ms["parse_new_graph"] = _elapsed_ms(started)
+
+    return _ParseResult(
+        old_graph, new_graph, parse_timings_ms,
+        old_file_hash=old_file_hash, new_file_hash=new_file_hash,
+        old_cached_identity=old_cached_identity,
+        new_cached_identity=new_cached_identity,
+    )
 
 
 def _same_graph_fastpath_result(

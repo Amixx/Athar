@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import gc
 import time
 from typing import Any
 
 from .structural_hash import structural_hash
 from .equivalence_classes import apply_ambiguous_equivalence_classes
+from .graph_cache import save_cached
 from .graph_parser import count_dangling_refs
 from .guid_policy import GUID_POLICY_FAIL_FAST, validate_guid_policy
 from .identity_pipeline import (
@@ -23,13 +25,18 @@ from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unre
 from .matcher_policy import resolve_matcher_policy
 from .geometry_policy import GEOMETRY_POLICY_STRICT_SYNTAX
 from .root_remap import plan_root_remap
+from .similarity_seed import (
+    text_fingerprint_pairs,
+    unique_guid_pairs,
+)
 from .diff_engine_markers import RootedOwnerProjector
 from .diff_engine_stats import build_stats
 from .profile_policy import entity_for_profile, validate_profile
 from .types import DiffContext, EntityIR, GraphIR, IdentityInfo
 
 ProgressCallback = Callable[[dict[str, Any]], None]
-_PREPARE_CONTEXT_TOTAL_STEPS = 17
+_PREPARE_CONTEXT_TOTAL_STEPS = 22
+_GUID_SEED_PATH_PROPAGATION_THRESHOLD = 0.05
 
 
 def prepare_diff_context(
@@ -42,21 +49,44 @@ def prepare_diff_context(
     matcher_policy: dict[str, dict[str, Any]] | None = None,
     timing_collector: dict[str, float] | None = None,
     progress_callback: ProgressCallback | None = None,
+    cached_identity_old: dict[str, Any] | None = None,
+    cached_identity_new: dict[str, Any] | None = None,
+    file_hashes: tuple[str | None, str | None] | None = None,
 ) -> DiffContext:
     validate_profile(profile)
     validate_guid_policy(guid_policy)
     _validate_schema(old_graph, new_graph)
 
     resolved_matcher_policy = resolve_matcher_policy(matcher_policy)
-    identity_precompute_cache: dict[tuple[int, str], dict[str, Any]] = {}
+    old_file_hash = file_hashes[0] if file_hashes else None
+    new_file_hash = file_hashes[1] if file_hashes else None
+    identity_precompute_cache: dict[tuple[int, str, int], dict[str, Any]] = {}
 
-    def _identity_precompute(graph: GraphIR) -> dict[str, Any]:
-        key = (id(graph), profile)
+    def _identity_precompute(
+        graph: GraphIR,
+        *,
+        disk_cached: dict[str, Any] | None = None,
+        file_hash: str | None = None,
+        seeded_colors: dict[int, str] | None = None,
+        precomputed_profile_entities: dict[int, dict] | None = None,
+    ) -> dict[str, Any]:
+        key = (id(graph), profile, id(seeded_colors) if seeded_colors is not None else 0)
         cached = identity_precompute_cache.get(key)
         if cached is not None:
             return cached
-        precomputed = _precompute_identity_state(graph, profile=profile)
+        if disk_cached is not None:
+            identity_precompute_cache[key] = disk_cached
+            return disk_cached
+        precomputed = _precompute_identity_state(
+            graph,
+            profile=profile,
+            seeded_colors=seeded_colors,
+            precomputed_profile_entities=precomputed_profile_entities,
+        )
         identity_precompute_cache[key] = precomputed
+        # Save to disk cache for future runs (skip when seeded — state is pair-dependent)
+        if file_hash is not None and not seeded_colors:
+            save_cached(file_hash, profile, graph=graph, identity_state=precomputed)
         return precomputed
 
     _emit_progress(progress_callback, {
@@ -79,11 +109,94 @@ def prepare_diff_context(
         })
 
     stage_started = time.perf_counter()
-    old_state = _identity_precompute(old_graph)
+    seed_guid_pairs: dict[int, int] = {}
+    seed_path_pairs: dict[int, int] = {}
+    seed_path_diagnostics: dict[int, dict[str, Any]] = {}
+    seed_path_ambiguous = 0
+    seed_text_pairs: dict[int, int] = {}
+    seed_text_diagnostics: dict[int, dict[str, Any]] = {}
+    old_seed_colors: dict[int, str] = {}
+    new_seed_colors: dict[int, str] = {}
+    old_precomputed_profile: dict[int, dict] | None = None
+    new_precomputed_profile: dict[int, dict] | None = None
+    seeding_enabled = cached_identity_old is None or cached_identity_new is None
+
+    if seeding_enabled:
+        seed_guid_pairs, guid_seed_diagnostics = unique_guid_pairs(old_graph, new_graph)
+    else:
+        guid_seed_diagnostics = {"matched": 0, "coverage": 0.0, "old_unique": 0, "new_unique": 0}
+    _record_timing(timing_collector, "seed_guid_pairs", stage_started)
+    if timing_collector is not None:
+        timing_collector["seed_guid_pairs.matched"] = float(guid_seed_diagnostics.get("matched", 0))
+        timing_collector["seed_guid_pairs.coverage"] = round(
+            float(guid_seed_diagnostics.get("coverage", 0.0)),
+            6,
+        )
+    _step_done("seed_guid_pairs")
+
+    stage_started = time.perf_counter()
+    if (
+        seed_guid_pairs
+        and float(guid_seed_diagnostics.get("coverage", 0.0)) >= _GUID_SEED_PATH_PROPAGATION_THRESHOLD
+    ):
+        early_guid_path = propagate_matches_by_typed_path(
+            old_graph,
+            new_graph,
+            seed_guid_pairs,
+            pre_matched_old=set(seed_guid_pairs),
+            pre_matched_new=set(seed_guid_pairs.values()),
+        )
+        seed_path_pairs = early_guid_path.get("old_to_new", {})
+        seed_path_diagnostics = early_guid_path.get("diagnostics", {})
+        seed_path_ambiguous = int(early_guid_path.get("ambiguous", 0))
+    _record_timing(timing_collector, "seed_guid_path_propagation", stage_started)
+    _step_done("seed_guid_path_propagation")
+
+    # Disable cyclic GC during the allocation-heavy identity/matching phases
+    # to avoid expensive GC pauses on millions of small dicts.
+    gc.disable()
+
+    stage_started = time.perf_counter()
+    if seeding_enabled:
+        seed_text = text_fingerprint_pairs(
+            old_graph,
+            new_graph,
+            profile=profile,
+            exclude_old=set(seed_guid_pairs) | set(seed_path_pairs),
+            exclude_new=set(seed_guid_pairs.values()) | set(seed_path_pairs.values()),
+        )
+        seed_text_pairs = seed_text.get("old_to_new", {})
+        seed_text_diagnostics = seed_text.get("diagnostics", {})
+        # Use text fingerprints directly as WL initial colors for ALL entities.
+        # This replaces both build_seed_color_maps and structural_hash computation.
+        old_seed_colors = seed_text.get("old_all_fingerprints", {})
+        new_seed_colors = seed_text.get("new_all_fingerprints", {})
+        old_precomputed_profile = seed_text.get("old_profile_entities")
+        new_precomputed_profile = seed_text.get("new_profile_entities")
+    else:
+        seed_text = {"ambiguous_buckets": 0}
+    _record_timing(timing_collector, "seed_text_fingerprints", stage_started)
+    if timing_collector is not None:
+        timing_collector["seed_text_fingerprints.matched"] = float(len(seed_text_pairs))
+        timing_collector["seed_text_fingerprints.ambiguous_buckets"] = float(
+            seed_text.get("ambiguous_buckets", 0),
+        )
+    _step_done("seed_text_fingerprints")
+
+    stage_started = time.perf_counter()
+    old_state = _identity_precompute(
+        old_graph, disk_cached=cached_identity_old, file_hash=old_file_hash,
+        seeded_colors=old_seed_colors,
+        precomputed_profile_entities=old_precomputed_profile,
+    )
     _record_timing(timing_collector, "precompute_old_identity", stage_started)
     _step_done("precompute_old_identity")
     stage_started = time.perf_counter()
-    new_state = _identity_precompute(new_graph)
+    new_state = _identity_precompute(
+        new_graph, disk_cached=cached_identity_new, file_hash=new_file_hash,
+        seeded_colors=new_seed_colors,
+        precomputed_profile_entities=new_precomputed_profile,
+    )
     _record_timing(timing_collector, "precompute_new_identity", stage_started)
     _step_done("precompute_new_identity")
 
@@ -91,6 +204,8 @@ def prepare_diff_context(
     remap = plan_root_remap(
         old_graph,
         new_graph,
+        old_colors=old_state.get("colors"),
+        new_colors=new_state.get("colors"),
         **resolved_matcher_policy["root_remap"],
     )
     _record_timing(timing_collector, "root_remap", stage_started)
@@ -134,20 +249,54 @@ def prepare_diff_context(
     _record_timing(timing_collector, "match_root_steps", stage_started)
     _step_done("match_root_steps")
     stage_started = time.perf_counter()
+    _apply_step_matches(
+        old_ids,
+        old_identity,
+        new_ids,
+        seed_text_pairs,
+        method="text_fingerprint",
+        diagnostics=seed_text_diagnostics,
+    )
+    _record_timing(timing_collector, "apply_text_fingerprint_matches", stage_started)
+    _step_done("apply_text_fingerprint_matches")
+    stage_started = time.perf_counter()
     exact_pairs = _match_steps_by_unique_id(old_ids, new_ids)
     _record_timing(timing_collector, "match_unique_ids", stage_started)
     _step_done("match_unique_ids")
     pre_old = set(root_pairs) | set(exact_pairs)
     pre_new = set(root_pairs.values()) | set(exact_pairs.values())
     stage_started = time.perf_counter()
-    path_propagation = propagate_matches_by_typed_path(
-        old_graph,
-        new_graph,
-        root_pairs,
-        pre_matched_old=pre_old,
-        pre_matched_new=pre_new,
+    can_reuse_early_path = (
+        bool(seed_path_pairs)
+        and remap.get("method") == "disabled_guid_overlap"
+        and root_pairs == seed_guid_pairs
     )
+    if can_reuse_early_path:
+        filtered_old_to_new: dict[int, int] = {}
+        filtered_diagnostics: dict[int, dict[str, Any]] = {}
+        for old_step, new_step in sorted(seed_path_pairs.items()):
+            if old_step in pre_old or new_step in pre_new:
+                continue
+            filtered_old_to_new[old_step] = new_step
+            diag = seed_path_diagnostics.get(old_step)
+            if diag is not None:
+                filtered_diagnostics[old_step] = diag
+        path_propagation = {
+            "old_to_new": filtered_old_to_new,
+            "diagnostics": filtered_diagnostics,
+            "ambiguous": seed_path_ambiguous,
+        }
+    else:
+        path_propagation = propagate_matches_by_typed_path(
+            old_graph,
+            new_graph,
+            root_pairs,
+            pre_matched_old=pre_old,
+            pre_matched_new=pre_new,
+        )
     _record_timing(timing_collector, "path_propagation", stage_started)
+    if timing_collector is not None:
+        timing_collector["path_propagation.reused_early"] = 1.0 if can_reuse_early_path else 0.0
     _step_done("path_propagation")
     stage_started = time.perf_counter()
     _apply_step_matches(
@@ -170,6 +319,10 @@ def prepare_diff_context(
         new_graph,
         pre_matched_old=set(matched_after_path),
         pre_matched_new=set(matched_after_path.values()),
+        old_adjacency=old_state.get("graph_adjacency"),
+        new_adjacency=new_state.get("graph_adjacency"),
+        old_reverse_adjacency=old_state.get("graph_reverse_adjacency"),
+        new_reverse_adjacency=new_state.get("graph_reverse_adjacency"),
         **resolved_matcher_policy["secondary_match"],
     )
     _record_timing(timing_collector, "secondary_match", stage_started)
@@ -196,32 +349,19 @@ def prepare_diff_context(
     _record_timing(timing_collector, "apply_equivalence_classes", stage_started)
     _step_done("apply_equivalence_classes")
 
-    stage_started = time.perf_counter()
     old_profile_entities = old_state.get("id_entities", old_graph.get("entities", {}))
     new_profile_entities = new_state.get("id_entities", new_graph.get("entities", {}))
-    comparable_non_h_ids = {
-        entity_id
-        for entity_id in (set(old_ids.values()) & set(new_ids.values()))
-        if isinstance(entity_id, str) and not entity_id.startswith("H:")
-    }
-    old_compare_entities = _build_compare_entities(
-        old_profile_entities,
-        old_ids,
-        comparable_ids=comparable_non_h_ids,
-    )
-    new_compare_entities = _build_compare_entities(
-        new_profile_entities,
-        new_ids,
-        comparable_ids=comparable_non_h_ids,
-    )
+    stage_started = time.perf_counter()
+    # Compare-entity normalization is now lazy in base-change emission.
     _record_timing(timing_collector, "build_compare_entities", stage_started)
+    _step_done("build_compare_entities")
 
+    stage_started = time.perf_counter()
     old_by_id = _index_by_identity(
         old_graph,
         old_ids,
         old_identity,
         profile_entities=old_profile_entities,
-        compare_entities=old_compare_entities,
         profile_hashes=old_state.get("profile_hashes"),
     )
     _record_timing(timing_collector, "index_old_by_identity", stage_started)
@@ -232,14 +372,21 @@ def prepare_diff_context(
         new_ids,
         new_identity,
         profile_entities=new_profile_entities,
-        compare_entities=new_compare_entities,
         profile_hashes=new_state.get("profile_hashes"),
     )
     _record_timing(timing_collector, "index_new_by_identity", stage_started)
     _step_done("index_new_by_identity")
     stage_started = time.perf_counter()
-    old_owner_projector = RootedOwnerProjector(old_graph, old_ids)
-    new_owner_projector = RootedOwnerProjector(new_graph, new_ids)
+    old_owner_projector = RootedOwnerProjector(
+        old_graph,
+        old_ids,
+        reverse_adjacency=old_state.get("graph_reverse_adjacency"),
+    )
+    new_owner_projector = RootedOwnerProjector(
+        new_graph,
+        new_ids,
+        reverse_adjacency=new_state.get("graph_reverse_adjacency"),
+    )
     _record_timing(timing_collector, "build_owner_projectors", stage_started)
     _step_done("build_owner_projectors")
 
@@ -260,6 +407,11 @@ def prepare_diff_context(
     )
     _record_timing(timing_collector, "build_stats", stage_started)
     _step_done("build_stats")
+
+    # Re-enable cyclic GC after hot phases.
+    gc.enable()
+    gc.collect()
+
     _emit_progress(progress_callback, {
         "status": "done",
         "completed_steps": _PREPARE_CONTEXT_TOTAL_STEPS,

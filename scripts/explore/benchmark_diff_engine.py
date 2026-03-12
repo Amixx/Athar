@@ -1,8 +1,9 @@
 """Benchmark diff engine runtime and peak Python memory usage.
 
-Default cases benchmark same-file comparisons for:
-- data/BasicHouse.ifc
-- data/AdvancedProject.ifc
+Default cases:
+- house_v1_v2: tests/fixtures/house_v1.ifc vs house_v2.ifc (real diff)
+- basichouse_same_file: data/BasicHouse.ifc vs itself (short-circuit)
+- advancedproject_same_file: data/AdvancedProject.ifc vs itself (short-circuit)
 """
 
 from __future__ import annotations
@@ -41,6 +42,11 @@ class Case:
 
 def _default_cases(repo_root: Path) -> list[Case]:
     return [
+        Case(
+            name="house_v1_v2",
+            old_path=repo_root / "tests" / "fixtures" / "house_v1.ifc",
+            new_path=repo_root / "tests" / "fixtures" / "house_v2.ifc",
+        ),
         Case(
             name="basichouse_same_file",
             old_path=repo_root / "data" / "BasicHouse.ifc",
@@ -283,6 +289,17 @@ def _counts_from_probe(probe: dict[str, Any]) -> tuple[int, int] | None:
 
 
 def _progress_eta_from_probe(elapsed_ms: float, probe: dict[str, Any]) -> tuple[float, float] | None:
+    observed = probe.get("overall_progress")
+    if isinstance(observed, (int, float)):
+        progress = min(max(float(observed), 0.0), 1.0)
+        if progress <= 0.0:
+            return None
+        if progress >= 1.0:
+            return (1.0, 0.0)
+        elapsed_s = max(elapsed_ms / 1000.0, 0.0)
+        eta_s = elapsed_s * (1.0 - progress) / progress
+        return (progress, max(eta_s, 0.0))
+
     counts = _counts_from_probe(probe)
     if counts is not None:
         completed, total = counts
@@ -295,16 +312,6 @@ def _progress_eta_from_probe(elapsed_ms: float, probe: dict[str, Any]) -> tuple[
         eta_s = elapsed_s * (total - completed) / completed
         return (progress, max(eta_s, 0.0))
 
-    observed = probe.get("overall_progress")
-    if isinstance(observed, (int, float)):
-        progress = min(max(float(observed), 0.0), 1.0)
-        if progress <= 0.0:
-            return None
-        if progress >= 1.0:
-            return (1.0, 0.0)
-        elapsed_s = max(elapsed_ms / 1000.0, 0.0)
-        eta_s = elapsed_s * (1.0 - progress) / progress
-        return (progress, max(eta_s, 0.0))
     return None
 
 
@@ -426,6 +433,19 @@ def _run_case(
         })
 
         def _on_progress(event: dict[str, Any]) -> None:
+            stage = event.get("stage")
+            status = event.get("status")
+            if stage != diff_progress_state.get("stage") or status == "start":
+                for key in (
+                    "completed",
+                    "total",
+                    "completed_steps",
+                    "total_steps",
+                    "emitted_changes",
+                    "step",
+                    "stage_progress",
+                ):
+                    diff_progress_state.pop(key, None)
             diff_progress_state.update(event)
 
         result = diff_graphs(

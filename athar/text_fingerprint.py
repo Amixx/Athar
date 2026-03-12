@@ -1,28 +1,30 @@
-"""Structural hashing helpers for the graph diff engine."""
+"""Fast entity fingerprinting for cross-file similarity seeding."""
 
 from __future__ import annotations
 
 import hashlib
 from collections import Counter
-from typing import Any
-
-from .graph_utils import edge_signature, strip_ref_ids
+from typing import Any, Protocol
 
 
-def structural_payload(entity: dict) -> dict:
-    """Build a canonical payload for structural hashing."""
-    attrs = strip_ref_ids(entity.get("attributes", {}))
-    edges = edge_signature(entity.get("refs", []))
-    return {
-        "entity_type": entity.get("entity_type"),
-        "attributes": attrs,
-        "edges": edges,
-    }
+class _HexHasher(Protocol):
+    def update(self, data: bytes) -> None: ...
+
+    def hexdigest(self) -> str: ...
 
 
-def structural_hash(entity: dict) -> str:
-    """Compute a deterministic SHA-256 hash for an entity payload."""
-    hasher = hashlib.sha256()
+_XXH3_128 = None
+try:
+    import xxhash as _xxhash  # type: ignore[import-not-found]
+
+    _XXH3_128 = _xxhash.xxh3_128
+except Exception:
+    _XXH3_128 = None
+
+
+def entity_text_fingerprint(entity: dict[str, Any]) -> str:
+    """Fingerprint entity content while ignoring STEP ref targets."""
+    hasher = _new_hasher()
     _hash_token(hasher, "entity_type")
     _hash_scalar(hasher, entity.get("entity_type"))
 
@@ -34,15 +36,13 @@ def structural_hash(entity: dict) -> str:
     return hasher.hexdigest()
 
 
-def compute_structural_hashes(graph: dict) -> dict[int, str]:
-    """Compute structural hashes for every entity in the graph IR."""
-    return {
-        step_id: structural_hash(entity)
-        for step_id, entity in graph.get("entities", {}).items()
-    }
+def _new_hasher() -> _HexHasher:
+    if _XXH3_128 is not None:
+        return _XXH3_128()
+    return hashlib.blake2b(digest_size=16)
 
 
-def _hash_edge_multiset(hasher: hashlib._Hash, refs: list[dict]) -> None:
+def _hash_edge_multiset(hasher: _HexHasher, refs: list[dict[str, Any]]) -> None:
     counts: Counter[tuple[str, str | None]] = Counter()
     for ref in refs:
         counts[(ref.get("path", ""), ref.get("target_type"))] += 1
@@ -58,7 +58,7 @@ def _hash_edge_multiset(hasher: hashlib._Hash, refs: list[dict]) -> None:
     hasher.update(b"}")
 
 
-def _hash_value_stripping_refs(hasher: hashlib._Hash, value: Any) -> None:
+def _hash_value_stripping_refs(hasher: _HexHasher, value: Any) -> None:
     if isinstance(value, dict):
         if value.get("kind") == "ref":
             hasher.update(b"R")
@@ -82,12 +82,12 @@ def _hash_value_stripping_refs(hasher: hashlib._Hash, value: Any) -> None:
     _hash_scalar(hasher, value)
 
 
-def _hash_token(hasher: hashlib._Hash, token: str) -> None:
+def _hash_token(hasher: _HexHasher, token: str) -> None:
     hasher.update(b"#")
     _hash_scalar(hasher, token)
 
 
-def _hash_scalar(hasher: hashlib._Hash, value: Any) -> None:
+def _hash_scalar(hasher: _HexHasher, value: Any) -> None:
     if value is None:
         hasher.update(b"N")
         return

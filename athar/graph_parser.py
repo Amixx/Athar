@@ -24,7 +24,18 @@ from .profile_policy import validate_profile
 def parse_graph(filepath: str, *, profile: str = PROFILE_RAW_EXACT) -> dict:
     """Parse a full IFC model into graph-friendly IR."""
     validate_profile(profile)
-    ifc = ifcopenshell.open(filepath)
+    ifc = open_ifc(filepath)
+    return graph_from_ifc(ifc, profile=profile)
+
+
+def open_ifc(filepath: str):
+    """Open IFC file and return ifcopenshell model handle."""
+    return ifcopenshell.open(filepath)
+
+
+def graph_from_ifc(ifc, *, profile: str = PROFILE_RAW_EXACT) -> dict:
+    """Extract graph-friendly IR from an already-open IFC model."""
+    validate_profile(profile)
     unit_context = _extract_unit_context(ifc)
     entities: dict[int, dict] = {}
 

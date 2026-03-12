@@ -121,3 +121,29 @@ def test_wl_scc_fallback_does_not_classify_acyclic_duplicates():
 def test_wl_scc_fallback_honors_partition_size_cap():
     _colors, classes = wl_refine_with_scc_fallback(_symmetric_cycle(4), max_partition_size=2)
     assert set(classes) == {1, 2, 3, 4}
+
+
+def test_wl_scc_fallback_can_reuse_prebuilt_adjacency(monkeypatch):
+    graph = _make_graph()
+    adjacency = {
+        1: [("/Ref", "IfcLocalPlacement", 2)],
+        2: [],
+    }
+    reverse_adjacency = {
+        1: [],
+        2: [("/Ref", "IfcWall", 1)],
+    }
+    monkeypatch.setattr(
+        "athar.wl_refinement.build_adjacency",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("build_adjacency should not be called")),
+    )
+    monkeypatch.setattr(
+        "athar.wl_refinement.build_reverse_adjacency",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("build_reverse_adjacency should not be called")),
+    )
+    colors, _classes = wl_refine_with_scc_fallback(
+        graph,
+        adjacency=adjacency,
+        reverse_adjacency=reverse_adjacency,
+    )
+    assert colors

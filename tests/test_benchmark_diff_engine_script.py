@@ -21,12 +21,12 @@ def test_duration_format_helper():
     assert benchmark_diff_engine._format_duration_ms(61_234.0) == "1m 1s 234.0ms"
 
 
-def test_progress_eta_from_probe_prefers_counts():
+def test_progress_eta_from_probe_prefers_overall_progress():
     progress_eta = benchmark_diff_engine._progress_eta_from_probe(
         100_000.0,
         {"completed": 50, "total": 100, "overall_progress": 0.2},
     )
-    assert progress_eta == (0.5, 100.0)
+    assert progress_eta == (0.2, 400.0)
 
 
 def test_progress_eta_from_probe_uses_overall_progress_when_no_counts():
@@ -211,6 +211,63 @@ def test_benchmark_diff_engine_writes_progress_sidecar(monkeypatch, tmp_path):
     assert sidecar["total_cases"] == 1
     assert sidecar["current_case"] is None
     assert sidecar["report_path"] == str(out)
+
+
+def test_benchmark_diff_engine_clears_stale_stage_counts(monkeypatch, tmp_path):
+    out = tmp_path / "bench.json"
+    progress = tmp_path / "progress.json"
+
+    monkeypatch.setattr(
+        benchmark_diff_engine,
+        "parse_graph",
+        lambda _path, profile: {"entities": {}, "metadata": {"schema": "IFC4"}},
+    )
+
+    def _fake_diff_graphs(*_args, progress_callback=None, **_kwargs):
+        assert progress_callback is not None
+        progress_callback({
+            "stage": "emit_base_changes",
+            "status": "running",
+            "completed": 7,
+            "total": 10,
+            "overall_progress": 0.8,
+        })
+        progress_callback({
+            "stage": "emit_derived_markers",
+            "status": "start",
+            "overall_progress": 0.9,
+        })
+        return {"base_changes": [], "derived_markers": [], "stats": {}}
+
+    monkeypatch.setattr(benchmark_diff_engine, "diff_graphs", _fake_diff_graphs)
+    monkeypatch.setattr(
+        benchmark_diff_engine,
+        "stream_diff_graphs",
+        lambda *_args, **_kwargs: iter(['{"kind":"end"}']),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "benchmark_diff_engine",
+            "--case",
+            "one:old.ifc:new.ifc",
+            "--warmup",
+            "0",
+            "--iterations",
+            "1",
+            "--progress-file",
+            str(progress),
+            "--out",
+            str(out),
+        ],
+    )
+
+    benchmark_diff_engine.main()
+    sidecar = json.loads(progress.read_text(encoding="utf-8"))
+    current = sidecar.get("last_probe") or {}
+    if current.get("stage") == "emit_derived_markers":
+        assert "completed" not in current
+        assert "total" not in current
 
 
 def test_benchmark_diff_engine_reuses_parse_for_same_path_case(monkeypatch, tmp_path):

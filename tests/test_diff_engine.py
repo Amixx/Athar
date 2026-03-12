@@ -1155,16 +1155,22 @@ def test_diff_files_timings_include_parse_stages(monkeypatch):
         },
     })
 
-    calls = {"count": 0}
+    calls = {"open": 0, "extract": 0}
 
-    def fake_parse_graph(_path: str, *, profile: str):
-        calls["count"] += 1
+    def fake_open_ifc(path: str):
+        calls["open"] += 1
+        return {"path": path}
+
+    def fake_graph_from_ifc(_ifc: dict, *, profile: str):
+        calls["extract"] += 1
         return graph
 
-    monkeypatch.setattr(diff_engine_mod, "parse_graph", fake_parse_graph)
+    monkeypatch.setattr(diff_engine_mod, "open_ifc", fake_open_ifc)
+    monkeypatch.setattr(diff_engine_mod, "graph_from_ifc", fake_graph_from_ifc)
     result = diff_files("old.ifc", "new.ifc", timings=True)
     timings = result["stats"].get("timings_ms", {})
-    assert calls["count"] == 2
+    assert calls["open"] == 2
+    assert calls["extract"] == 2
     assert "parse_old_graph" in timings
     assert "parse_new_graph" in timings
 
