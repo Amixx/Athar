@@ -102,6 +102,7 @@ def secondary_match_unresolved(
 
     matches: dict[int, int] = {}
     diagnostics: dict[int, dict[str, Any]] = {}
+    ambiguous_partitions: list[dict[str, Any]] = []
     ambiguous = 0
     for key in sorted(set(old_blocks) & set(new_blocks)):
         old_steps = sorted(old_blocks[key])
@@ -109,7 +110,7 @@ def secondary_match_unresolved(
         if not old_steps or not new_steps:
             continue
 
-        block_matches, block_diagnostics, block_ambiguous = _match_entity_type_block(
+        block_matches, block_diagnostics, block_ambiguous, block_partitions = _match_entity_type_block(
             key,
             old_steps,
             new_steps,
@@ -124,12 +125,14 @@ def secondary_match_unresolved(
             used_old.add(old_step)
             used_new.add(new_step)
         ambiguous += block_ambiguous
+        ambiguous_partitions.extend(block_partitions)
 
     return {
         "method": "secondary_match",
         "old_to_new": matches,
         "diagnostics": diagnostics,
         "ambiguous": ambiguous,
+        "ambiguous_partitions": ambiguous_partitions,
     }
 
 
@@ -167,7 +170,7 @@ def _match_entity_type_block(
     new_steps: list[int],
     old_features: dict[int, dict[str, Any]],
     new_features: dict[int, dict[str, Any]],
-) -> tuple[dict[int, int], dict[int, dict[str, Any]], int]:
+) -> tuple[dict[int, int], dict[int, dict[str, Any]], int, list[dict[str, Any]]]:
     old_by_block: defaultdict[tuple[str | None, int, int, int, int, int], list[int]] = defaultdict(list)
     new_by_block: defaultdict[tuple[str | None, int, int, int, int, int], list[int]] = defaultdict(list)
     for step in old_steps:
@@ -177,6 +180,7 @@ def _match_entity_type_block(
 
     matches: dict[int, int] = {}
     diagnostics: dict[int, dict[str, Any]] = {}
+    ambiguous_partitions: list[dict[str, Any]] = []
     ambiguous = 0
     matched_old: set[int] = set()
     matched_new: set[int] = set()
@@ -197,6 +201,24 @@ def _match_entity_type_block(
         matches.update(block_matches)
         diagnostics.update(_with_block_diagnostics(block_diagnostics, block_stage="coarse_block", block_key=key))
         ambiguous += block_ambiguous
+        unresolved_old = [step for step in block_old if step not in block_matches]
+        unresolved_new = [step for step in block_new if step not in block_matches.values()]
+        if block_ambiguous and unresolved_old and unresolved_new:
+            ambiguous_partitions.append({
+                "entity_type": entity_type,
+                "stage": "coarse_block",
+                "reason": "ambiguous_assignment",
+                "old_steps": sorted(unresolved_old),
+                "new_steps": sorted(unresolved_new),
+                "blocking_key": {
+                    "entity_type": key[0],
+                    "degree_bucket": key[1],
+                    "edge_bucket": key[2],
+                    "attribute_bucket": key[3],
+                    "literal_bucket": key[4],
+                    "neighborhood_bucket": key[5],
+                },
+            })
         matched_old.update(block_matches)
         matched_new.update(block_matches.values())
 
@@ -212,8 +234,18 @@ def _match_entity_type_block(
         matches.update(residual_matches)
         diagnostics.update(_with_block_diagnostics(residual_diagnostics, block_stage="residual", block_key=None))
         ambiguous += residual_ambiguous
+        unresolved_old = [step for step in residual_old if step not in residual_matches]
+        unresolved_new = [step for step in residual_new if step not in residual_matches.values()]
+        if residual_ambiguous and unresolved_old and unresolved_new:
+            ambiguous_partitions.append({
+                "entity_type": entity_type,
+                "stage": "residual",
+                "reason": "ambiguous_assignment",
+                "old_steps": sorted(unresolved_old),
+                "new_steps": sorted(unresolved_new),
+            })
 
-    return matches, diagnostics, ambiguous
+    return matches, diagnostics, ambiguous, ambiguous_partitions
 
 
 def _run_block_match(

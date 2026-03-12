@@ -161,6 +161,11 @@ def test_secondary_match_unresolved_rejects_ambiguous_block():
     result = secondary_match_unresolved(old_graph, new_graph)
     assert result["old_to_new"] == {}
     assert result["ambiguous"] == 2
+    assert len(result["ambiguous_partitions"]) == 1
+    partition = result["ambiguous_partitions"][0]
+    assert partition["entity_type"] == "IfcCartesianPoint"
+    assert partition["old_steps"] == [20, 21]
+    assert partition["new_steps"] == [220, 221]
 
 
 def test_secondary_match_unresolved_uses_scored_assignment_for_swapped_pairs():

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .canonical_ids import structural_hash, wl_refine_colors
+from .equivalence_classes import apply_ambiguous_equivalence_classes
 from .graph_parser import count_dangling_refs
 from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
 from .root_remap import plan_root_remap
@@ -60,6 +61,13 @@ def prepare_diff_context(old_graph: dict, new_graph: dict, *, profile: str) -> d
         secondary["old_to_new"],
         method="secondary_match",
         diagnostics=secondary.get("diagnostics", {}),
+    )
+    apply_ambiguous_equivalence_classes(
+        old_ids=old_ids,
+        old_identity=old_identity,
+        new_ids=new_ids,
+        new_identity=new_identity,
+        partitions=secondary.get("ambiguous_partitions", []),
     )
 
     old_by_id = _index_by_identity(old_graph, old_ids, old_identity)
@@ -147,11 +155,14 @@ def should_emit_class_delta(
     old_items: list[dict],
     new_items: list[dict],
 ) -> bool:
-    if not entity_id.startswith("H:"):
-        return False
     if not old_items or not new_items:
         return False
     if len(old_items) == len(new_items):
+        return False
+
+    if entity_id.startswith("C:"):
+        return True
+    if not entity_id.startswith("H:"):
         return False
 
     all_methods = [
@@ -300,6 +311,7 @@ def _identity_priority(match_method: str) -> int:
         "secondary_match": 3,
         "exact_guid": 2,
         "exact_hash": 1,
+        "equivalence_class": 0,
     }
     return order.get(match_method, 0)
 

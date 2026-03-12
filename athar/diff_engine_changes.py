@@ -33,12 +33,20 @@ def make_change(
     include_snapshots: bool = True,
 ) -> dict[str, Any]:
     field_ops = []
+    old_view = snapshot(old_ent, profile=profile)
+    new_view = snapshot(new_ent, profile=profile)
     if op == "MODIFY":
         field_ops = diff_values(
-            snapshot(old_ent, profile=profile),
-            snapshot(new_ent, profile=profile),
+            old_view,
+            new_view,
             path="",
         )
+    change_categories = infer_change_categories(
+        op=op,
+        old_view=old_view,
+        new_view=new_view,
+        field_ops=field_ops,
+    )
     return {
         "change_id": f"chg-{change_id:06d}",
         "op": op,
@@ -51,10 +59,10 @@ def make_change(
             "matched_on": identity.get("matched_on"),
         },
         "field_ops": field_ops,
-        "old_snapshot": snapshot(old_ent, profile=profile) if include_snapshots and op == "REMOVE" else None,
-        "new_snapshot": snapshot(new_ent, profile=profile) if include_snapshots and op == "ADD" else None,
+        "old_snapshot": old_view if include_snapshots and op == "REMOVE" else None,
+        "new_snapshot": new_view if include_snapshots and op == "ADD" else None,
         "rooted_owners": rooted_owners,
-        "change_categories": [],
+        "change_categories": change_categories,
         "equivalence_class": None,
     }
 
@@ -85,7 +93,7 @@ def make_class_delta_change(
         "old_snapshot": None,
         "new_snapshot": None,
         "rooted_owners": summarize_rooted_owners(owner_ids),
-        "change_categories": [],
+        "change_categories": ["CLASS_DELTA"],
         "equivalence_class": {
             "id": class_id,
             "old_count": len(old_items),
@@ -162,3 +170,36 @@ def diff_values(old: Any, new: Any, *, path: str) -> list[dict[str, Any]]:
 
 def norm_path(path: str) -> str:
     return path or "/"
+
+
+def infer_change_categories(
+    *,
+    op: str,
+    old_view: dict[str, Any] | None,
+    new_view: dict[str, Any] | None,
+    field_ops: list[dict[str, Any]],
+) -> list[str]:
+    categories: set[str] = set()
+    entity_type = (new_view or old_view or {}).get("entity_type")
+    if isinstance(entity_type, str) and entity_type.startswith("IfcRel"):
+        categories.add("RELATIONSHIP")
+
+    if op in {"ADD", "REMOVE"}:
+        categories.add("ENTITY")
+
+    for field_op in field_ops:
+        path = str(field_op.get("path", ""))
+        if path.startswith("/refs"):
+            categories.add("RELATIONSHIP")
+        if path.startswith("/attributes/ObjectPlacement") or path.startswith("/attributes/Representation"):
+            categories.add("GEOMETRY")
+        if path.startswith("/attributes/RelativePlacement") or path.startswith("/attributes/Coordinates"):
+            categories.add("GEOMETRY")
+        if path.startswith("/attributes"):
+            categories.add("ATTRIBUTES")
+        if path.startswith("/entity_type"):
+            categories.add("CLASS")
+
+    if op == "MODIFY" and not categories:
+        categories.add("ATTRIBUTES")
+    return sorted(categories)
