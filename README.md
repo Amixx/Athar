@@ -83,6 +83,14 @@ Benchmark baselines (runtime + peak Python memory) for `diff_graphs` and stream 
 python -m scripts.explore.benchmark_diff_engine --warmup 1 --iterations 2 --out docs/perf/batch11_baseline_YYYY-MM-DD.json
 ```
 
+Include per-stage `diff_graphs` timings (from engine `stats.timings_ms`) when bottlenecking:
+
+```bash
+python -m scripts.explore.benchmark_diff_engine --case ifchouse:data/BasicHouse.ifc:data/BasicHouse.ifc --warmup 0 --iterations 1 --engine-timings --out docs/perf/batch11_baseline_YYYY-MM-DD.json
+```
+
+Baseline reports also include parser timings per case under `parse_ms` (`old_graph`, `new_graph`, `total`).
+
 WL backend benchmark (`auto`, `sha256`, `xxh3_64`, `blake3`, `blake2b_64`):
 
 ```bash
@@ -121,6 +129,9 @@ Render collected perf artifacts into markdown:
 python -m scripts.explore.render_perf_summary --baseline docs/perf/batch11_baseline_YYYY-MM-DD.json --wl-benchmark docs/perf/wl_backend_benchmark_YYYY-MM-DD.json --wl-consistency docs/perf/wl_backend_consistency_YYYY-MM-DD.json --owner-projection docs/perf/owner_projection_benchmark_YYYY-MM-DD.json --matcher-quality docs/perf/matcher_quality_YYYY-MM-DD.json --determinism docs/perf/determinism_stress_YYYY-MM-DD.json --out docs/perf/SUMMARY.md
 ```
 
+If the baseline report was produced with `--engine-timings`, the summary also includes a `Diff Stage Timings (diff_graphs)` section.
+The summary includes a `Parse Timings` section when baseline artifacts include `parse_ms`.
+
 Run the full perf suite in one command (sequential, overnight-friendly):
 
 ```bash
@@ -131,6 +142,12 @@ Recommended bounded run (single WL graph + per-step timeout):
 
 ```bash
 python -m scripts.explore.run_perf_suite --tag YYYY-MM-DD --wl-graph data/BasicHouse.ifc --wl-consistency-graph data/BasicHouse.ifc --step-timeout-s 7200
+```
+
+Include `diff_graphs` stage timing breakdown in the suite baseline step:
+
+```bash
+python -m scripts.explore.run_perf_suite --tag YYYY-MM-DD --baseline-engine-timings
 ```
 
 Resume an interrupted suite run (skips steps that already completed successfully and still have artifacts):

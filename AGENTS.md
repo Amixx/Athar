@@ -79,14 +79,14 @@ python -m athar old.ifc new.ifc                       # raw JSON diff
 - `scripts/inspect_guid_overlap.py` — Show entity GUID overlap matrix between files.
 - `scripts/explore/canonical_reference_impl.py` — Executable reference for canonical value normalization (value grammar, ordering, and profiles).
 - `scripts/explore/generate_determinism_fixtures.py` — Regenerate frozen golden outputs for deterministic low-level diff/stream payloads and environment fingerprint fixture.
-- `scripts/explore/benchmark_diff_engine.py` — Reproducible runtime/peak-memory benchmark harness for `diff_graphs` and streaming modes (`ndjson`, `chunked_json`) on default or explicit IFC case pairs.
+- `scripts/explore/benchmark_diff_engine.py` — Reproducible runtime/peak-memory benchmark harness for `diff_graphs` and streaming modes (`ndjson`, `chunked_json`) on default or explicit IFC case pairs; captures per-case parser timings (`parse_ms`) and optional `--engine-timings` per-stage `diff_graphs` timing breakdowns from engine stats.
 - `scripts/explore/benchmark_wl_backends.py` — WL refinement backend benchmark harness (`auto`, `sha256`, `xxh3_64`, `blake3`, `blake2b_64`) with runtime/peak-memory summaries.
 - `scripts/explore/check_wl_backend_consistency.py` — WL backend consistency checker that compares compact color/class partition fingerprints against `sha256` baseline per graph.
 - `scripts/explore/benchmark_owner_projection.py` — Rooted-owner projection benchmark comparing in-memory index vs disk-spill mode (`ATHAR_OWNER_INDEX_DISK_THRESHOLD`).
 - `scripts/explore/evaluate_matcher_quality.py` — Deterministic matcher quality harness (precision/recall/F1) across rooted remap, typed-path propagation, and secondary matching scenarios; prints per-scenario progress to stderr.
 - `scripts/explore/stress_determinism.py` — Repeated-run hash stability harness for `diff_graphs` and both stream modes; prints per-round progress (configurable via `--progress-every`) to stderr.
-- `scripts/explore/render_perf_summary.py` — Render benchmark/quality/stability JSON artifacts into a concise markdown summary.
-- `scripts/explore/run_perf_suite.py` — Sequential overnight runner for baseline, WL benchmark, matcher quality, determinism stress, and final summary generation; supports bounded execution via per-step timeout, scoped WL graph inputs, and resumable step skipping via `--resume` with incremental manifest checkpoints.
+- `scripts/explore/render_perf_summary.py` — Render benchmark/quality/stability JSON artifacts into a concise markdown summary, including optional `diff_graphs` stage timing tables when baseline artifacts include `engine_timings_ms`.
+- `scripts/explore/run_perf_suite.py` — Sequential overnight runner for baseline, WL benchmark, matcher quality, determinism stress, and final summary generation; supports bounded execution via per-step timeout, scoped WL graph inputs, optional baseline stage-timing capture (`--baseline-engine-timings`), and resumable step skipping via `--resume` with incremental manifest checkpoints.
 - `scripts/explore/` — Exploratory/investigative scripts.
 - Benchmark harnesses should emit visible progress logs (graph/case/backend + iteration) for long runs.
 

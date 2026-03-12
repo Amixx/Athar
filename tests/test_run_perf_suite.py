@@ -126,3 +126,45 @@ def test_run_perf_suite_resume_reruns_if_artifact_missing(monkeypatch, tmp_path)
     assert manifest["steps"][0]["name"] == "baseline"
     assert manifest["steps"][0].get("resumed_skip") is not True
     assert manifest["steps"][0]["artifact_exists"] is True
+
+
+def test_run_perf_suite_passes_baseline_engine_timings_flag(monkeypatch, tmp_path):
+    out_dir = tmp_path / "perf"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tag = "engine-timings"
+
+    captured: dict[str, list[str]] = {}
+
+    def _run_step_stub(**kwargs):
+        captured["cmd"] = kwargs["cmd"]
+        return {
+            "name": kwargs["name"],
+            "command": kwargs["cmd"],
+            "exit_code": 0,
+            "elapsed_s": 0.01,
+            "timed_out": False,
+            "artifact": kwargs["artifact"] and str(kwargs["artifact"]),
+            "artifact_exists": False,
+        }
+
+    monkeypatch.setattr(run_perf_suite, "_run_step", _run_step_stub)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_perf_suite",
+            "--out-dir",
+            str(out_dir),
+            "--tag",
+            tag,
+            "--baseline-engine-timings",
+            "--skip-wl",
+            "--skip-wl-consistency",
+            "--skip-owner-benchmark",
+            "--skip-matcher-quality",
+            "--skip-determinism",
+            "--skip-summary",
+        ],
+    )
+
+    run_perf_suite.main()
+    assert "--engine-timings" in captured["cmd"]

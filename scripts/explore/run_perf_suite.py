@@ -122,6 +122,11 @@ def main() -> None:
     )
     parser.add_argument("--baseline-warmup", type=int, default=1)
     parser.add_argument("--baseline-iterations", type=int, default=2)
+    parser.add_argument(
+        "--baseline-engine-timings",
+        action="store_true",
+        help="Enable `benchmark_diff_engine --engine-timings` for per-stage diff_graphs timing breakdowns.",
+    )
     parser.add_argument("--wl-warmup", type=int, default=1)
     parser.add_argument("--wl-iterations", type=int, default=2)
     parser.add_argument(
@@ -210,6 +215,8 @@ def main() -> None:
             "--out",
             str(baseline_path),
         ]
+        if args.baseline_engine_timings:
+            cmd.append("--engine-timings")
         for case in args.case:
             cmd.extend(["--case", case])
         step_specs.append(("baseline", cmd, baseline_path))
