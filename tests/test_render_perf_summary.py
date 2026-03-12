@@ -114,3 +114,38 @@ def test_render_suite_manifest_section():
     assert "- current step: `3/5` `wl_benchmark`" in text
     assert "| `baseline` | `0` | `False` | `12.345s` | no |" in text
     assert "| `wl_benchmark` | `124` | `True` | `3600.000s` | no |" in text
+
+
+def test_render_suite_manifest_includes_current_probe_snapshot():
+    report = {
+        "state": "running",
+        "completed_steps": 0,
+        "total_steps": 7,
+        "current_step": {
+            "index": 1,
+            "name": "baseline",
+            "heartbeat": {
+                "elapsed_s": 120.5,
+                "probe": {
+                    "state": "running",
+                    "current_case": {
+                        "name": "ifchouse",
+                        "metric": "diff_graphs",
+                        "stage": "emit_base_changes",
+                        "progress_fraction": 0.61,
+                        "eta_text": "4m 20s",
+                    },
+                },
+            },
+        },
+        "steps": [],
+    }
+
+    text = "\n".join(render_perf_summary._render_suite_manifest(report))
+    assert "- current heartbeat elapsed: `120.500s`" in text
+    assert "- baseline probe state: `running`" in text
+    assert "- baseline probe case: `ifchouse`" in text
+    assert "- baseline probe metric: `diff_graphs`" in text
+    assert "- baseline probe stage: `emit_base_changes`" in text
+    assert "- baseline probe progress: `61.0%`" in text
+    assert "- baseline probe eta: `4m 20s`" in text

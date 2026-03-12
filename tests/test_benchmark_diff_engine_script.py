@@ -7,13 +7,29 @@ def test_progress_eta_helper():
     assert benchmark_diff_engine._progress_eta(1000.0, None) is None
     assert benchmark_diff_engine._progress_eta(1000.0, 0.0) is None
     assert benchmark_diff_engine._progress_eta(2000.0, 10000.0) == ("20.0%", "8s")
-    assert benchmark_diff_engine._progress_eta(15000.0, 10000.0) == ("99.0%", "0s")
+    assert benchmark_diff_engine._progress_eta(15000.0, 10000.0) == ("99.0%", "overrun 5s")
 
 
 def test_eta_format_helper():
     assert benchmark_diff_engine._format_eta(8.2) == "8s"
     assert benchmark_diff_engine._format_eta(125) == "2m 5s"
     assert benchmark_diff_engine._format_eta(3675) == "1h 1m 15s"
+
+
+def test_progress_eta_from_probe_prefers_counts():
+    progress_eta = benchmark_diff_engine._progress_eta_from_probe(
+        100_000.0,
+        {"completed": 50, "total": 100, "overall_progress": 0.2},
+    )
+    assert progress_eta == (0.5, 100.0)
+
+
+def test_progress_eta_from_probe_uses_overall_progress_when_no_counts():
+    progress_eta = benchmark_diff_engine._progress_eta_from_probe(
+        100_000.0,
+        {"overall_progress": 0.25},
+    )
+    assert progress_eta == (0.25, 300.0)
 
 
 def test_benchmark_diff_engine_collects_engine_timings(monkeypatch, tmp_path):

@@ -141,6 +141,8 @@ def test_run_perf_suite_passes_baseline_engine_timings_flag(monkeypatch, tmp_pat
 
     def _run_step_stub(**kwargs):
         captured["cmd"] = kwargs["cmd"]
+        captured["heartbeat_probe"] = kwargs.get("heartbeat_probe")
+        captured["heartbeat_callback"] = kwargs.get("heartbeat_callback")
         return {
             "name": kwargs["name"],
             "command": kwargs["cmd"],
@@ -229,6 +231,8 @@ def test_run_perf_suite_summary_step_receives_suite_manifest_path(monkeypatch, t
 
     def _run_step_stub(**kwargs):
         captured["cmd"] = kwargs["cmd"]
+        captured["heartbeat_probe"] = kwargs.get("heartbeat_probe")
+        captured["heartbeat_callback"] = kwargs.get("heartbeat_callback")
         return {
             "name": kwargs["name"],
             "command": kwargs["cmd"],
@@ -272,6 +276,8 @@ def test_run_perf_suite_passes_baseline_progress_file(monkeypatch, tmp_path):
 
     def _run_step_stub(**kwargs):
         captured["cmd"] = kwargs["cmd"]
+        captured["heartbeat_probe"] = kwargs.get("heartbeat_probe")
+        captured["heartbeat_callback"] = kwargs.get("heartbeat_callback")
         return {
             "name": kwargs["name"],
             "command": kwargs["cmd"],
@@ -305,3 +311,57 @@ def test_run_perf_suite_passes_baseline_progress_file(monkeypatch, tmp_path):
     run_perf_suite.main()
     assert "--progress-file" in captured["cmd"]
     assert str(progress_file) in captured["cmd"]
+    assert callable(captured["heartbeat_probe"])
+    assert callable(captured["heartbeat_callback"])
+
+
+def test_format_heartbeat_probe_includes_nested_baseline_progress():
+    detail = run_perf_suite._format_heartbeat_probe(
+        lambda: {
+            "state": "running",
+            "current_case": {
+                "name": "ifchouse",
+                "metric": "diff_graphs",
+                "phase": "metrics",
+                "probe": {"stage": "emit_base_changes", "status": "running"},
+                "progress_fraction": 0.756,
+                "eta_text": "4m 12s",
+            },
+        }
+    )
+    assert "state=running" in detail
+    assert "case=ifchouse" in detail
+    assert "metric=diff_graphs" in detail
+    assert "stage=emit_base_changes" in detail
+    assert "progress~75.6%" in detail
+    assert "eta~4m 12s" in detail
+
+
+def test_summarize_probe_snapshot_extracts_current_case_fields():
+    summary = run_perf_suite._summarize_probe_snapshot({
+        "state": "running",
+        "completed_cases": 0,
+        "total_cases": 1,
+        "current_case": {
+            "name": "ifchouse",
+            "metric": "diff_graphs",
+            "phase": "metrics",
+            "progress_fraction": 0.25,
+            "eta_text": "8m 0s",
+            "probe": {"stage": "emit_base_changes", "status": "running"},
+        },
+    })
+    assert summary == {
+        "state": "running",
+        "completed_cases": 0,
+        "total_cases": 1,
+        "current_case": {
+            "name": "ifchouse",
+            "metric": "diff_graphs",
+            "phase": "metrics",
+            "progress_fraction": 0.25,
+            "eta_text": "8m 0s",
+            "stage": "emit_base_changes",
+            "stage_status": "running",
+        },
+    }

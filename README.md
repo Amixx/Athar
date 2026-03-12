@@ -104,6 +104,12 @@ Write live progress snapshots to a sidecar JSON:
 python -m scripts.explore.benchmark_diff_engine --case ifchouse:data/BasicHouse.ifc:data/BasicHouse.ifc --warmup 0 --iterations 1 --engine-timings --heartbeat-s 15 --progress-file /tmp/ifchouse-progress.json --out docs/perf/batch11_baseline_YYYY-MM-DD.json
 ```
 
+Watch that sidecar in another terminal:
+
+```bash
+python -m scripts.explore.watch_progress --file /tmp/ifchouse-progress.json --interval-s 2
+```
+
 Baseline reports also include parser timings per case under `parse_ms` (`old_graph`, `new_graph`, `total`).
 
 WL backend benchmark (`auto`, `sha256`, `xxh3_64`, `blake3`, `blake2b_64`):
@@ -147,6 +153,7 @@ python -m scripts.explore.render_perf_summary --baseline docs/perf/batch11_basel
 If the baseline report was produced with `--engine-timings`, the summary also includes a `Diff Stage Timings (diff_graphs)` section.
 The summary includes a `Parse Timings` section when baseline artifacts include `parse_ms`.
 If provided with a suite manifest (`--suite-manifest`), the summary includes a `Perf Suite Run` section with step status and elapsed times.
+If the manifest contains live heartbeat probe snapshots, the same section includes baseline case/metric/stage/progress/eta details.
 
 Run the full perf suite in one command (sequential, overnight-friendly):
 
@@ -177,6 +184,9 @@ Forward baseline benchmark progress sidecar through the suite runner:
 ```bash
 python -m scripts.explore.run_perf_suite --tag YYYY-MM-DD --baseline-progress-file /tmp/baseline-progress.json
 ```
+
+With `--heartbeat-s`, suite heartbeats include nested baseline detail from that sidecar (case/metric/stage/progress/eta).
+The suite manifest’s `current_step` also tracks the latest heartbeat/probe snapshot during execution.
 
 Resume an interrupted suite run (skips steps that already completed successfully and still have artifacts):
 

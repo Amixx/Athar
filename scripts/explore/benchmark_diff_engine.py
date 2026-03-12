@@ -96,22 +96,18 @@ def _benchmark_repeated(
                 if probe:
                     stage = probe.get("stage")
                     status = probe.get("status")
-                    completed = probe.get("completed")
-                    total = probe.get("total")
+                    counts = _counts_from_probe(probe)
                     if isinstance(stage, str):
                         extra += f" stage={stage}"
                     if isinstance(status, str):
                         extra += f" status={status}"
-                    if isinstance(completed, int) and isinstance(total, int) and total > 0:
+                    if counts is not None:
+                        completed, total = counts
                         extra += f" items={completed}/{total}"
-                    observed = probe.get("overall_progress")
-                    if isinstance(observed, (int, float)) and 0.0 < float(observed) <= 1.0:
-                        observed_clamped = min(max(float(observed), 0.0), 1.0)
+                    probe_eta = _progress_eta_from_probe(elapsed_ms, probe)
+                    if probe_eta is not None:
+                        observed_clamped, eta_seconds = probe_eta
                         pct = observed_clamped * 100.0
-                        if observed_clamped >= 1.0:
-                            eta_seconds = 0.0
-                        else:
-                            eta_seconds = (elapsed_ms / 1000.0) * (1.0 - observed_clamped) / observed_clamped
                         eta_text = _format_eta(eta_seconds)
                         extra += f" progress~{pct:.1f}% eta~{eta_text}"
                         _emit_progress_update(progress_update, {
@@ -230,8 +226,12 @@ def _summarize_named_float_samples(samples: list[dict[str, float]]) -> dict[str,
 def _progress_eta(elapsed_ms: float, expected_ms: float | None) -> tuple[str, str] | None:
     if expected_ms is None or expected_ms <= 0:
         return None
-    progress = min(max(elapsed_ms / expected_ms, 0.0), 0.99)
-    eta_s = max((expected_ms - elapsed_ms) / 1000.0, 0.0)
+    progress_raw = max(elapsed_ms / expected_ms, 0.0)
+    progress = min(progress_raw, 0.99)
+    if elapsed_ms > expected_ms:
+        overrun_s = (elapsed_ms - expected_ms) / 1000.0
+        return (f"{progress * 100.0:.1f}%", f"overrun {_format_eta(overrun_s)}")
+    eta_s = (expected_ms - elapsed_ms) / 1000.0
     return (f"{progress * 100.0:.1f}%", _format_eta(eta_s))
 
 
@@ -256,6 +256,43 @@ def _probe_progress(progress_probe: Callable[[], dict[str, Any] | None] | None) 
     if not isinstance(snapshot, dict):
         return None
     return dict(snapshot)
+
+
+def _counts_from_probe(probe: dict[str, Any]) -> tuple[int, int] | None:
+    completed = probe.get("completed")
+    total = probe.get("total")
+    if not (isinstance(completed, int) and isinstance(total, int) and total > 0):
+        completed = probe.get("completed_steps")
+        total = probe.get("total_steps")
+    if not (isinstance(completed, int) and isinstance(total, int) and total > 0):
+        return None
+    return (max(completed, 0), total)
+
+
+def _progress_eta_from_probe(elapsed_ms: float, probe: dict[str, Any]) -> tuple[float, float] | None:
+    counts = _counts_from_probe(probe)
+    if counts is not None:
+        completed, total = counts
+        if completed <= 0:
+            return None
+        progress = min(max(completed / total, 0.0), 1.0)
+        if progress >= 1.0:
+            return (1.0, 0.0)
+        elapsed_s = max(elapsed_ms / 1000.0, 0.0)
+        eta_s = elapsed_s * (total - completed) / completed
+        return (progress, max(eta_s, 0.0))
+
+    observed = probe.get("overall_progress")
+    if isinstance(observed, (int, float)):
+        progress = min(max(float(observed), 0.0), 1.0)
+        if progress <= 0.0:
+            return None
+        if progress >= 1.0:
+            return (1.0, 0.0)
+        elapsed_s = max(elapsed_ms / 1000.0, 0.0)
+        eta_s = elapsed_s * (1.0 - progress) / progress
+        return (progress, max(eta_s, 0.0))
+    return None
 
 
 def _summarize_float_samples(values: list[float]) -> dict[str, float]:
