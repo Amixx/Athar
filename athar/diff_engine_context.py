@@ -404,6 +404,8 @@ def prepare_diff_context(
         secondary_matches=len(secondary["old_to_new"]),
         old_dangling_refs=_dangling_ref_count(old_graph),
         new_dangling_refs=_dangling_ref_count(new_graph),
+        old_guid_quality=old_state.get("guid_quality"),
+        new_guid_quality=new_state.get("guid_quality"),
     )
     _record_timing(timing_collector, "build_stats", stage_started)
     _step_done("build_stats")
