@@ -13,8 +13,8 @@ dependencies = [
   "xxhash",
 ]
 
-[tool.setuptools]
-packages = ["athar", "athar_layers"]
+[tool.setuptools.packages.find]
+include = ["athar*", "athar_layers*"]
 
 [project.scripts]
 athar = "athar.__main__:main"

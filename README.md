@@ -11,6 +11,20 @@ pip install -e .
 ```
 
 Requires Python 3.10+, [ifcopenshell](https://ifcopenshell.org/), and `xxhash`.
+Optional native acceleration scaffolding lives under `athar/_native/` and is designed to be built separately with `maturin`/Rust while preserving pure-Python fallbacks when not installed.
+
+Recommended local dev flow is a repo-local virtualenv plus a separate native build step:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+make dev-setup
+make native-dev
+make test-native
+make test-perf
+```
+
+`athar/_native/pyproject.toml` is configured as a mixed Python/Rust project (`python-source = "../.."`), so `maturin develop --manifest-path athar/_native/Cargo.toml` installs the extension at `athar._native._core` inside the repo package rather than as a top-level `_core` module.
 
 ## Usage
 
@@ -235,6 +249,9 @@ Diff strategy now lives under `athar/diff/`: low-overlap rooted GUID churn uses 
 `athar/diff/context.py` normalizes `G:` entity attribute/ref targets to matched identity IDs during equality checks, preventing false `MODIFY` noise from pure STEP-ID renumbering. It also runs an early conservative similarity seeding pass (`athar/diff/similarity_seed.py` + `athar/diff/text_fingerprint.py`): non-GUID text fingerprints are pre-matched (unique buckets first, then small ambiguous-bucket neighbor refinement) and used as precompute seeds so unchanged entities can skip structural hash work, while GUID-bearing entities remain on GUID/root/path match paths first. Stream framing is centralized in `athar/diff/streaming.py` for both full-result and live event paths, while graph-only `TypedDict` contracts live in `athar/graph/types.py` and diff-layer contracts live in `athar/diff/types.py`.
 
 `athar/diff/wl_refinement.py` supports pluggable fast hash backends for WL refinement rounds (`auto`, `xxh3_64`, `blake3`, `blake2b_64`, `sha256`), while external/wire identity IDs remain `sha256`; WL round payload construction avoids per-node JSON/dict allocations in the hot loop. `athar/graph/structural_hash.py` hashes canonical entity fields directly in the hot path (deterministic streaming hash over entity type/attributes/edge multiset) instead of building per-entity JSON payloads. `athar/diff/engine.py` overlaps opening the second IFC while extracting the first graph (`graph_parser.open_ifc()` + `graph_parser.graph_from_ifc()`), reducing `diff_files`/`stream_diff_files` parse wall time on large pairs, and also short-circuits same-graph inputs (including same-path parses reused as one graph object) to immediate empty diff/stream output after schema/profile/GUID/matcher-policy validation.
+
+The native-acceleration seam now exists under `athar/_native/`: the package is structured for an optional `athar._native._core` PyO3 extension, while `athar/diff/text_fingerprint.py` keeps the pure-Python implementation as the authoritative fallback until the compiled module is available and parity-tested.
+At the current checkpoint, the exported native fingerprint entrypoint is wired through the authoritative Python implementation to keep build/install/module-placement/parity workflow stable while the true Rust hot-path implementation is completed.
 
 Rooted-owner projection is demand-driven by default (reverse reachability per changed step with caching). Set `ATHAR_OWNER_INDEX_DISK_THRESHOLD` to opt into eager full owner-index mode; when estimated owner pairs exceed that threshold, indexing spills to a temporary SQLite store instead of keeping full closure sets in memory.
 

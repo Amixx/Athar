@@ -109,15 +109,18 @@ def test_diff_package_only_imports_diff_and_graph_internal_modules():
                         continue
                     assert alias.name.startswith("athar.diff.") or alias.name.startswith(
                         "athar.graph."
-                    ), (
+                    ) or alias.name.startswith("athar._native."), (
                         f"{path.relative_to(REPO_ROOT)} imports forbidden internal module {alias.name}"
                     )
             elif isinstance(node, ast.ImportFrom):
                 resolved = _resolved_import_name(path, node)
                 if not resolved or not resolved.startswith("athar."):
                     continue
-                assert resolved == "athar.graph" or resolved == "athar.diff" or resolved.startswith(
-                    "athar.graph."
-                ) or resolved.startswith("athar.diff."), (
-                    f"{path.relative_to(REPO_ROOT)} imports forbidden internal module {resolved}"
-                )
+                assert (
+                    resolved == "athar.graph"
+                    or resolved == "athar.diff"
+                    or resolved == "athar._native"
+                    or resolved.startswith("athar.graph.")
+                    or resolved.startswith("athar.diff.")
+                    or resolved.startswith("athar._native.")
+                ), f"{path.relative_to(REPO_ROOT)} imports forbidden internal module {resolved}"
