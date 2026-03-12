@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "athar"
+version = "0.1.0"
+description = "Semantic IFC diff engine"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "ifcopenshell",
+]
+
+[tool.setuptools]
+packages = ["athar", "athar_layers"]
+
+[project.scripts]
+athar = "athar.__main__:main"

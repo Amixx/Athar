@@ -3,9 +3,11 @@
 import sys
 import json
 import argparse
+import os
 from typing import Any
 
 from athar.diff_engine import diff_files, stream_diff_files
+from athar.diff_engine_markers import OWNER_INDEX_DISK_THRESHOLD_ENV
 from athar.guid_policy import GUID_POLICY_CHOICES, GUID_POLICY_FAIL_FAST
 from athar.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
 
@@ -92,7 +94,18 @@ def main():
         default=None,
         help="Override iterative deepening depth-3 block limit",
     )
+    parser.add_argument(
+        "--owner-index-disk-threshold",
+        type=int,
+        default=None,
+        help=(
+            "Optional estimated owner-pair threshold for spilling rooted-owner index to disk "
+            f"(sets {OWNER_INDEX_DISK_THRESHOLD_ENV} for this run; <=0 disables spill)"
+        ),
+    )
     args = parser.parse_args()
+    if args.owner_index_disk_threshold is not None:
+        os.environ[OWNER_INDEX_DISK_THRESHOLD_ENV] = str(max(0, args.owner_index_disk_threshold))
     matcher_policy = _matcher_policy_overrides(args)
 
     try:

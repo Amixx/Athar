@@ -1,6 +1,8 @@
+import os
 import sys
 
 import athar.__main__ as main_mod
+from athar.diff_engine_markers import OWNER_INDEX_DISK_THRESHOLD_ENV
 
 
 def test_cli_graph_engine_calls_diff_files(monkeypatch, capsys):
@@ -126,3 +128,23 @@ def test_cli_passes_matcher_policy_overrides(monkeypatch, capsys):
             "secondary_match": {"score_margin": 0.14, "depth2_max": 7},
         },
     )
+
+
+def test_cli_owner_index_disk_threshold_sets_env_for_run(monkeypatch, capsys):
+    called = {}
+
+    def fake_diff_files(old, new, profile, guid_policy, matcher_policy):
+        called["threshold"] = os.environ.get(OWNER_INDEX_DISK_THRESHOLD_ENV)
+        return {"ok": True}
+
+    monkeypatch.delenv(OWNER_INDEX_DISK_THRESHOLD_ENV, raising=False)
+    monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["athar", "old.ifc", "new.ifc", "--owner-index-disk-threshold", "12345"],
+    )
+
+    main_mod.main()
+    _ = capsys.readouterr().out
+    assert called["threshold"] == "12345"
