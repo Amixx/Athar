@@ -5,6 +5,7 @@ import json
 import argparse
 
 from athar.diff_engine import diff_files, stream_diff_files
+from athar.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
 
 def main():
     parser = argparse.ArgumentParser(prog="athar-core")
@@ -12,8 +13,8 @@ def main():
     parser.add_argument("new", help="Path to new IFC file")
     parser.add_argument(
         "--profile",
-        choices=["raw_exact", "semantic_stable"],
-        default="semantic_stable",
+        choices=SUPPORTED_PROFILES,
+        default=DEFAULT_PROFILE,
         help="Canonicalization profile",
     )
     parser.add_argument(

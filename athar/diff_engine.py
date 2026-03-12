@@ -17,15 +17,16 @@ from .diff_engine_context import (
 from .diff_engine_markers import build_derived_markers, summarize_rooted_owners
 from .diff_engine_streaming import json_line, stream_diff_result
 from .graph_parser import parse_graph
+from .profile_policy import DEFAULT_PROFILE
 
 
-def diff_files(old_path: str, new_path: str, *, profile: str = "semantic_stable") -> dict:
+def diff_files(old_path: str, new_path: str, *, profile: str = DEFAULT_PROFILE) -> dict:
     old_graph = parse_graph(old_path, profile=profile)
     new_graph = parse_graph(new_path, profile=profile)
     return diff_graphs(old_graph, new_graph, profile=profile)
 
 
-def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_stable") -> dict:
+def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = DEFAULT_PROFILE) -> dict:
     context = prepare_diff_context(old_graph, new_graph, profile=profile)
     base_changes: list[dict[str, Any]] = []
     change_index: dict[str, list[str]] = {}
@@ -48,7 +49,7 @@ def stream_diff_files(
     old_path: str,
     new_path: str,
     *,
-    profile: str = "semantic_stable",
+    profile: str = DEFAULT_PROFILE,
     mode: str = "ndjson",
     chunk_size: int = 1000,
 ):
@@ -68,7 +69,7 @@ def stream_diff_graphs(
     old_graph: dict,
     new_graph: dict,
     *,
-    profile: str = "semantic_stable",
+    profile: str = DEFAULT_PROFILE,
     mode: str = "ndjson",
     chunk_size: int = 1000,
 ):

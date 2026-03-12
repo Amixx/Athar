@@ -17,10 +17,12 @@ from .canonical_values import (
     canonical_simple,
     canonical_string,
 )
+from .profile_policy import validate_profile
 
 
 def parse_graph(filepath: str, *, profile: str = PROFILE_RAW_EXACT) -> dict:
     """Parse a full IFC model into graph-friendly IR."""
+    validate_profile(profile)
     ifc = ifcopenshell.open(filepath)
     entities: dict[int, dict] = {}
 

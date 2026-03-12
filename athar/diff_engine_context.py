@@ -11,13 +11,11 @@ from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unre
 from .root_remap import plan_root_remap
 from .diff_engine_markers import RootedOwnerProjector
 from .diff_engine_stats import build_stats
-
-_VOLATILE_ATTRIBUTE_NAMES = frozenset({"OwnerHistory"})
-_VOLATILE_REF_PATH_PREFIXES = ("/OwnerHistory",)
-_VOLATILE_ENTITY_TYPES = frozenset({"IfcOwnerHistory"})
+from .profile_policy import entity_for_profile, validate_profile
 
 
 def prepare_diff_context(old_graph: dict, new_graph: dict, *, profile: str) -> dict[str, Any]:
+    validate_profile(profile)
     _validate_schema(old_graph, new_graph)
 
     remap = plan_root_remap(old_graph, new_graph)
@@ -194,34 +192,6 @@ def resolve_identity(old_item: dict | None, new_item: dict | None) -> dict[str, 
     if old_identity.get("match_confidence", 0.0) >= new_identity.get("match_confidence", 0.0):
         return dict(old_identity)
     return dict(new_identity)
-
-
-def entity_for_profile(entity: dict, *, profile: str) -> dict:
-    if profile != "semantic_stable":
-        return entity
-
-    if entity.get("entity_type") in _VOLATILE_ENTITY_TYPES:
-        return {
-            "entity_type": entity.get("entity_type"),
-            "attributes": {},
-            "refs": [],
-        }
-
-    attributes = {
-        name: value
-        for name, value in (entity.get("attributes") or {}).items()
-        if name not in _VOLATILE_ATTRIBUTE_NAMES
-    }
-    refs = [
-        ref
-        for ref in (entity.get("refs") or [])
-        if not any(str(ref.get("path", "")).startswith(prefix) for prefix in _VOLATILE_REF_PATH_PREFIXES)
-    ]
-    return {
-        "entity_type": entity.get("entity_type"),
-        "attributes": attributes,
-        "refs": refs,
-    }
 
 
 def _validate_schema(old_graph: dict, new_graph: dict) -> None:

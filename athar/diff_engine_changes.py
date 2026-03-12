@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .diff_engine_context import entity_for_profile
 from .diff_engine_markers import summarize_rooted_owners
+from .profile_policy import entity_for_profile
 
 
 def snapshot(entity: dict | None, *, profile: str) -> dict | None:
