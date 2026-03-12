@@ -27,12 +27,19 @@ def diff_files(
     *,
     profile: str = DEFAULT_PROFILE,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
+    matcher_policy: dict[str, dict[str, Any]] | None = None,
 ) -> dict:
     validate_guid_policy(guid_policy)
     old_graph = parse_graph(old_path, profile=profile)
     new_graph = parse_graph(new_path, profile=profile)
     _validate_same_schema(old_graph, new_graph)
-    return diff_graphs(old_graph, new_graph, profile=profile, guid_policy=guid_policy)
+    return diff_graphs(
+        old_graph,
+        new_graph,
+        profile=profile,
+        guid_policy=guid_policy,
+        matcher_policy=matcher_policy,
+    )
 
 
 def diff_graphs(
@@ -41,9 +48,16 @@ def diff_graphs(
     *,
     profile: str = DEFAULT_PROFILE,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
+    matcher_policy: dict[str, dict[str, Any]] | None = None,
 ) -> dict:
     validate_guid_policy(guid_policy)
-    context = prepare_diff_context(old_graph, new_graph, profile=profile, guid_policy=guid_policy)
+    context = prepare_diff_context(
+        old_graph,
+        new_graph,
+        profile=profile,
+        guid_policy=guid_policy,
+        matcher_policy=matcher_policy,
+    )
     base_changes: list[dict[str, Any]] = []
     change_index: dict[str, list[str]] = {}
 
@@ -67,6 +81,7 @@ def stream_diff_files(
     *,
     profile: str = DEFAULT_PROFILE,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
+    matcher_policy: dict[str, dict[str, Any]] | None = None,
     mode: str = "ndjson",
     chunk_size: int = 1000,
 ):
@@ -80,6 +95,7 @@ def stream_diff_files(
         new_graph,
         profile=profile,
         guid_policy=guid_policy,
+        matcher_policy=matcher_policy,
         mode=mode,
         chunk_size=chunk_size,
     )
@@ -91,6 +107,7 @@ def stream_diff_graphs(
     *,
     profile: str = DEFAULT_PROFILE,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
+    matcher_policy: dict[str, dict[str, Any]] | None = None,
     mode: str = "ndjson",
     chunk_size: int = 1000,
 ):
@@ -99,7 +116,13 @@ def stream_diff_graphs(
         raise ValueError("chunk_size must be > 0")
     validate_guid_policy(guid_policy)
 
-    context = prepare_diff_context(old_graph, new_graph, profile=profile, guid_policy=guid_policy)
+    context = prepare_diff_context(
+        old_graph,
+        new_graph,
+        profile=profile,
+        guid_policy=guid_policy,
+        matcher_policy=matcher_policy,
+    )
     header = result_header(context)
     change_index: dict[str, list[str]] = {}
 

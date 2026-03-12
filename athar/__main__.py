@@ -3,10 +3,12 @@
 import sys
 import json
 import argparse
+from typing import Any
 
 from athar.diff_engine import diff_files, stream_diff_files
 from athar.guid_policy import GUID_POLICY_CHOICES, GUID_POLICY_FAIL_FAST
 from athar.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
+
 
 def main():
     parser = argparse.ArgumentParser(prog="athar-core")
@@ -36,7 +38,62 @@ def main():
         default=1000,
         help="Chunk size for --stream chunked_json",
     )
+    parser.add_argument(
+        "--root-remap-guid-overlap-threshold",
+        type=float,
+        default=None,
+        help="Override root remap GUID-overlap gate (0..1)",
+    )
+    parser.add_argument(
+        "--root-remap-score-threshold",
+        type=float,
+        default=None,
+        help="Override root remap scored-assignment threshold (0..1)",
+    )
+    parser.add_argument(
+        "--root-remap-score-margin",
+        type=float,
+        default=None,
+        help="Override root remap scored-assignment tie margin (0..1)",
+    )
+    parser.add_argument(
+        "--root-remap-assignment-max",
+        type=int,
+        default=None,
+        help="Override root remap assignment cap",
+    )
+    parser.add_argument(
+        "--secondary-score-threshold",
+        type=float,
+        default=None,
+        help="Override secondary matcher score threshold (0..1)",
+    )
+    parser.add_argument(
+        "--secondary-score-margin",
+        type=float,
+        default=None,
+        help="Override secondary matcher ambiguity margin (0..1)",
+    )
+    parser.add_argument(
+        "--secondary-assignment-max",
+        type=int,
+        default=None,
+        help="Override secondary matcher assignment cap",
+    )
+    parser.add_argument(
+        "--secondary-depth2-max",
+        type=int,
+        default=None,
+        help="Override iterative deepening depth-2 block limit",
+    )
+    parser.add_argument(
+        "--secondary-depth3-max",
+        type=int,
+        default=None,
+        help="Override iterative deepening depth-3 block limit",
+    )
     args = parser.parse_args()
+    matcher_policy = _matcher_policy_overrides(args)
 
     try:
         if args.stream != "none":
@@ -45,19 +102,62 @@ def main():
                 args.new,
                 profile=args.profile,
                 guid_policy=args.guid_policy,
+                matcher_policy=matcher_policy,
                 mode=args.stream,
                 chunk_size=args.chunk_size,
             ):
                 print(line)
             return
 
-        result = diff_files(args.old, args.new, profile=args.profile, guid_policy=args.guid_policy)
+        result = diff_files(
+            args.old,
+            args.new,
+            profile=args.profile,
+            guid_policy=args.guid_policy,
+            matcher_policy=matcher_policy,
+        )
         if args.stream == "none":
             json.dump(result, sys.stdout, indent=2)
             print()
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def _matcher_policy_overrides(args: argparse.Namespace) -> dict[str, dict[str, Any]] | None:
+    root_remap: dict[str, Any] = {}
+    secondary_match: dict[str, Any] = {}
+
+    if args.root_remap_guid_overlap_threshold is not None:
+        root_remap["guid_overlap_threshold"] = args.root_remap_guid_overlap_threshold
+    if args.root_remap_score_threshold is not None:
+        root_remap["score_threshold"] = args.root_remap_score_threshold
+    if args.root_remap_score_margin is not None:
+        root_remap["score_margin"] = args.root_remap_score_margin
+    if args.root_remap_assignment_max is not None:
+        root_remap["assignment_max"] = args.root_remap_assignment_max
+
+    if args.secondary_score_threshold is not None:
+        secondary_match["score_threshold"] = args.secondary_score_threshold
+    if args.secondary_score_margin is not None:
+        secondary_match["score_margin"] = args.secondary_score_margin
+    if args.secondary_assignment_max is not None:
+        secondary_match["assignment_max"] = args.secondary_assignment_max
+    if args.secondary_depth2_max is not None:
+        secondary_match["depth2_max"] = args.secondary_depth2_max
+    if args.secondary_depth3_max is not None:
+        secondary_match["depth3_max"] = args.secondary_depth3_max
+
+    if not root_remap and not secondary_match:
+        return None
+
+    out: dict[str, dict[str, Any]] = {}
+    if root_remap:
+        out["root_remap"] = root_remap
+    if secondary_match:
+        out["secondary_match"] = secondary_match
+    return out
+
 
 if __name__ == "__main__":
     main()
