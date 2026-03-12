@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from typing import Any
+from typing import Any, Callable
 
 
 def _default_tag() -> str:
@@ -24,6 +24,8 @@ def _run_step(
     fail_fast: bool,
     timeout_s: int,
     heartbeat_s: int,
+    heartbeat_probe: Callable[[], dict[str, Any] | None] | None = None,
+    heartbeat_callback: Callable[[dict[str, Any]], None] | None = None,
     step_index: int,
     total_steps: int,
 ) -> dict[str, Any]:
@@ -33,6 +35,7 @@ def _run_step(
     exit_code = 0
     process = subprocess.Popen(cmd)
     next_heartbeat = started + float(heartbeat_s) if heartbeat_s > 0 else None
+    last_probe_summary: dict[str, Any] | None = None
     while True:
         polled = process.poll()
         if polled is not None:
@@ -51,10 +54,21 @@ def _run_step(
             process.wait()
             break
         if next_heartbeat is not None and now >= next_heartbeat:
+            raw_snapshot = None
+            if heartbeat_probe is not None:
+                raw_snapshot = heartbeat_probe()
+            last_probe_summary = _summarize_probe_snapshot(raw_snapshot)
+            detail = _format_heartbeat_snapshot(raw_snapshot)
             print(
-                f"[suite] heartbeat step {step_index}/{total_steps} {name} elapsed={round(elapsed, 1)}s",
+                f"[suite] heartbeat step {step_index}/{total_steps} {name} elapsed={round(elapsed, 1)}s"
+                f"{' ' + detail if detail else ''}",
                 flush=True,
             )
+            if heartbeat_callback is not None:
+                heartbeat_callback({
+                    "elapsed_s": round(elapsed, 3),
+                    "probe": last_probe_summary,
+                })
             next_heartbeat = now + float(heartbeat_s)
         time.sleep(1.0)
     elapsed_s = round(time.perf_counter() - started, 3)
@@ -68,6 +82,8 @@ def _run_step(
     if artifact is not None:
         record["artifact"] = str(artifact)
         record["artifact_exists"] = artifact.exists()
+    if last_probe_summary is not None:
+        record["last_probe"] = last_probe_summary
     print(
         f"[suite] done step {step_index}/{total_steps} {name}: exit={exit_code} timed_out={timed_out} elapsed={elapsed_s}s",
         flush=True,
@@ -80,6 +96,109 @@ def _run_step(
 def _append_optional_path(cmd: list[str], flag: str, path: Path) -> None:
     if path.exists():
         cmd.extend([flag, str(path)])
+
+
+def _load_json_snapshot(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _format_heartbeat_probe(probe: Callable[[], dict[str, Any] | None] | None) -> str:
+    if probe is None:
+        return ""
+    try:
+        snapshot = probe()
+    except Exception:
+        return ""
+    return _format_heartbeat_snapshot(snapshot)
+
+
+def _format_heartbeat_snapshot(snapshot: dict[str, Any] | None) -> str:
+    if not isinstance(snapshot, dict):
+        return ""
+    parts: list[str] = []
+    state = snapshot.get("state")
+    if isinstance(state, str):
+        parts.append(f"state={state}")
+    current_case = snapshot.get("current_case")
+    if isinstance(current_case, dict):
+        name = current_case.get("name")
+        metric = current_case.get("metric")
+        phase = current_case.get("phase")
+        probe_payload = current_case.get("probe")
+        progress_fraction = current_case.get("progress_fraction")
+        eta_text = current_case.get("eta_text")
+        if isinstance(name, str):
+            parts.append(f"case={name}")
+        if isinstance(metric, str):
+            parts.append(f"metric={metric}")
+        if isinstance(phase, str):
+            parts.append(f"phase={phase}")
+        if isinstance(probe_payload, dict):
+            stage = probe_payload.get("stage")
+            status = probe_payload.get("status")
+            if isinstance(stage, str):
+                parts.append(f"stage={stage}")
+            if isinstance(status, str):
+                parts.append(f"status={status}")
+        if isinstance(progress_fraction, (int, float)):
+            parts.append(f"progress~{float(progress_fraction) * 100.0:.1f}%")
+        if isinstance(eta_text, str):
+            parts.append(f"eta~{eta_text}")
+    return " ".join(parts)
+
+
+def _summarize_probe_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(snapshot, dict):
+        return None
+    out: dict[str, Any] = {}
+    state = snapshot.get("state")
+    if isinstance(state, str):
+        out["state"] = state
+    current_case = snapshot.get("current_case")
+    if isinstance(current_case, dict):
+        cc: dict[str, Any] = {}
+        for key in (
+            "index",
+            "total",
+            "name",
+            "phase",
+            "metric",
+            "event",
+            "status",
+            "iteration",
+            "iterations",
+            "elapsed_ms",
+            "progress_fraction",
+            "eta_seconds",
+            "eta_text",
+        ):
+            value = current_case.get(key)
+            if value is not None:
+                cc[key] = value
+        probe_payload = current_case.get("probe")
+        if isinstance(probe_payload, dict):
+            stage = probe_payload.get("stage")
+            status = probe_payload.get("status")
+            if stage is not None:
+                cc["stage"] = stage
+            if status is not None:
+                cc["stage_status"] = status
+        out["current_case"] = cc
+    completed = snapshot.get("completed_cases")
+    total = snapshot.get("total_cases")
+    if isinstance(completed, int):
+        out["completed_cases"] = completed
+    if isinstance(total, int):
+        out["total_cases"] = total
+    return out
 
 
 def _load_previous_steps(manifest_path: Path) -> dict[str, dict[str, Any]]:
@@ -376,6 +495,12 @@ def main() -> None:
                 "name": name,
                 "started_at": datetime.now(timezone.utc).isoformat(),
             }
+            heartbeat_probe = None
+            if name == "baseline" and args.baseline_progress_file:
+                baseline_progress_path = Path(args.baseline_progress_file)
+                current_step["baseline_progress_file"] = str(baseline_progress_path)
+                heartbeat_probe = lambda path=baseline_progress_path: _load_json_snapshot(path)
+
             _write_manifest(
                 manifest_path=manifest_path,
                 tag=tag,
@@ -411,6 +536,21 @@ def main() -> None:
                 )
                 continue
 
+            def _on_step_heartbeat(payload: dict[str, Any]) -> None:
+                if current_step is None:
+                    return
+                current_step["heartbeat"] = payload
+                _write_manifest(
+                    manifest_path=manifest_path,
+                    tag=tag,
+                    out_dir=out_dir,
+                    started_at=started_at,
+                    steps=steps,
+                    total_steps=total_steps,
+                    state="running",
+                    current_step=current_step,
+                )
+
             steps.append(_run_step(
                 name=name,
                 cmd=cmd,
@@ -418,6 +558,8 @@ def main() -> None:
                 fail_fast=args.fail_fast,
                 timeout_s=args.step_timeout_s,
                 heartbeat_s=args.heartbeat_s,
+                heartbeat_probe=heartbeat_probe,
+                heartbeat_callback=_on_step_heartbeat,
                 step_index=idx,
                 total_steps=total_steps,
             ))

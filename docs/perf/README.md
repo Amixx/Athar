@@ -28,6 +28,12 @@ Write live progress snapshots to a sidecar JSON file:
 python -m scripts.explore.benchmark_diff_engine --warmup 0 --iterations 1 --progress-file /tmp/benchmark-progress.json --out docs/perf/batch11_baseline_YYYY-MM-DD.json
 ```
 
+Watch sidecar progress in a separate terminal:
+
+```bash
+python -m scripts.explore.watch_progress --file /tmp/benchmark-progress.json --interval-s 2
+```
+
 By default, the harness benchmarks same-file comparisons for:
 
 - `data/BasicHouse.ifc`
@@ -52,6 +58,7 @@ Operational notes:
 - `benchmark_diff_engine --engine-timings` records per-stage `diff_graphs` timing breakdowns from `stats.timings_ms` under `metrics.diff_graphs.engine_timings_ms`.
 - `benchmark_diff_engine` stores parser timings per case under `parse_ms` (`old_graph`, `new_graph`, `total`).
 - `benchmark_diff_engine --heartbeat-s N` prints heartbeat logs during each metric iteration (`0` disables), including coarse `progress~...` / `eta~...` estimates using stage-aware progress where available. ETA is rendered in human duration form (`h m s` when needed).
+- If a heuristic ETA model is exceeded, heartbeat reports `eta~overrun ...` instead of `0s`.
 - `benchmark_diff_engine --progress-file PATH` writes live sidecar snapshots (`state`, `current_case`, metric/stage progress, ETA hints) for external monitoring.
 - For `diff_graphs`, heartbeat progress includes context-step granularity (`root_remap`, ID assignment/matching stages, indexing/stats), then base-change scan progress, then derived-marker completion.
 - `stress_determinism` prints per-round progress (`--progress-every`) and completion timing to stderr.
@@ -62,9 +69,12 @@ Operational notes:
 - `run_perf_suite --baseline-engine-timings` forwards `--engine-timings` to the baseline benchmark step.
 - `run_perf_suite --heartbeat-s N` prints suite-level heartbeat logs while a step is running (set `0` to disable).
 - `run_perf_suite --baseline-progress-file PATH` forwards baseline benchmark sidecar progress output (`benchmark_diff_engine --progress-file`).
+- When both `--heartbeat-s` and `--baseline-progress-file` are set, suite heartbeat lines include nested baseline detail (`case/metric/stage/progress/eta`) from the sidecar.
+- Suite manifest `current_step` now includes latest heartbeat snapshot (including nested baseline probe summary when available) while running.
 - The suite manifest includes `state` (`running|failed|completed`) and transient `current_step` metadata while execution is in progress.
 - `render_perf_summary` includes a `Diff Stage Timings (diff_graphs)` section when baseline artifacts contain `engine_timings_ms`.
 - `render_perf_summary` includes a `Perf Suite Run` section when a suite manifest is provided (`--suite-manifest`), showing step status/elapsed and current in-progress step.
+- If suite manifest `current_step.heartbeat.probe` is present, `render_perf_summary` includes live baseline probe details (case/metric/stage/progress/eta) in `Perf Suite Run`.
 
 For every metric, it captures:
 

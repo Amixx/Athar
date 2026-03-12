@@ -88,8 +88,12 @@ python -m athar old.ifc new.ifc                       # raw JSON diff
 - `scripts/explore/evaluate_matcher_quality.py` — Deterministic matcher quality harness (precision/recall/F1) across rooted remap, typed-path propagation, and secondary matching scenarios; prints per-scenario progress to stderr.
 - `scripts/explore/stress_determinism.py` — Repeated-run hash stability harness for `diff_graphs` and both stream modes; prints per-round progress (configurable via `--progress-every`) to stderr.
 - `scripts/explore/render_perf_summary.py` — Render benchmark/quality/stability JSON artifacts into a concise markdown summary, including optional `diff_graphs` stage timing tables when baseline artifacts include `engine_timings_ms`, parse timing tables, and suite-step status summaries when passed a perf-suite manifest.
+- `scripts/explore/render_perf_summary.py` also renders live suite heartbeat probe snapshots (when present in manifest `current_step`) for in-progress baseline visibility.
 - `scripts/explore/run_perf_suite.py` — Sequential overnight runner for baseline, WL benchmark, matcher quality, determinism stress, and final summary generation; supports bounded execution via per-step timeout, suite-level heartbeat logs (`--heartbeat-s`), scoped WL graph inputs, optional baseline stage-timing capture (`--baseline-engine-timings`), and resumable step skipping via `--resume` with incremental manifest checkpoints and run-state metadata.
 - `scripts/explore/run_perf_suite.py` can forward baseline sidecar progress output via `--baseline-progress-file`.
+- With `--heartbeat-s`, `run_perf_suite` heartbeat output can include nested baseline sidecar details (case/metric/stage/progress/eta).
+- While running, `run_perf_suite` manifest `current_step` can include latest heartbeat/probe snapshots for file-based monitoring.
+- `scripts/explore/watch_progress.py` — Poll and render concise live status from benchmark sidecar progress JSON (`--file`, `--interval-s`, optional `--follow`).
 - `scripts/explore/` — Exploratory/investigative scripts.
 - Benchmark harnesses should emit visible progress logs (graph/case/backend + iteration) for long runs.
 

@@ -215,6 +215,33 @@ def _render_suite_manifest(report: dict[str, Any]) -> list[str]:
             f"- current step: `{current_step.get('index', '?')}/{report.get('total_steps', '?')}` "
             f"`{current_step.get('name', 'unknown')}`"
         )
+        heartbeat = current_step.get("heartbeat")
+        if isinstance(heartbeat, dict):
+            elapsed_s = heartbeat.get("elapsed_s")
+            if isinstance(elapsed_s, (int, float)):
+                lines.append(f"- current heartbeat elapsed: `{float(elapsed_s):.3f}s`")
+            probe = heartbeat.get("probe")
+            if isinstance(probe, dict):
+                probe_state = probe.get("state")
+                probe_case = probe.get("current_case", {})
+                if isinstance(probe_state, str):
+                    lines.append(f"- baseline probe state: `{probe_state}`")
+                if isinstance(probe_case, dict):
+                    case_name = probe_case.get("name")
+                    metric = probe_case.get("metric")
+                    stage = probe_case.get("stage")
+                    progress = probe_case.get("progress_fraction")
+                    eta_text = probe_case.get("eta_text")
+                    if isinstance(case_name, str):
+                        lines.append(f"- baseline probe case: `{case_name}`")
+                    if isinstance(metric, str):
+                        lines.append(f"- baseline probe metric: `{metric}`")
+                    if isinstance(stage, str):
+                        lines.append(f"- baseline probe stage: `{stage}`")
+                    if isinstance(progress, (int, float)):
+                        lines.append(f"- baseline probe progress: `{float(progress) * 100.0:.1f}%`")
+                    if isinstance(eta_text, str):
+                        lines.append(f"- baseline probe eta: `{eta_text}`")
     lines.extend([
         "",
         "| Step | Exit | Timed Out | Elapsed | Resumed Skip |",
