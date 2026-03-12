@@ -31,6 +31,12 @@ Unsupported profile values are rejected with `ValueError("Unknown profile: ...")
 - `H:<sha256>` for non-root structural identity.
 - `C:<sha256>` for unresolved indistinguishable/ambiguous equivalence classes.
 
+WL refinement round hashing policy:
+
+- Round hashing may use fast internal backends (`xxh3_64` or `blake3`) when configured/available.
+- `auto` mode resolves deterministically in this order: `xxh3_64`, `blake3`, `blake2b_64`.
+- External wire IDs (`G/H/C`) remain `sha256`-based.
+
 `identity.match_method` currently includes:
 - `exact_guid`
 - `root_remap`
