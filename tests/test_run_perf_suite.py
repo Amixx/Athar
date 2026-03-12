@@ -261,3 +261,47 @@ def test_run_perf_suite_summary_step_receives_suite_manifest_path(monkeypatch, t
     expected_manifest = str(out_dir / f"perf_suite_run_{tag}.json")
     assert "--suite-manifest" in captured["cmd"]
     assert expected_manifest in captured["cmd"]
+
+
+def test_run_perf_suite_passes_baseline_progress_file(monkeypatch, tmp_path):
+    out_dir = tmp_path / "perf"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tag = "baseline-progress-file"
+    progress_file = tmp_path / "baseline-progress.json"
+    captured: dict[str, list[str]] = {}
+
+    def _run_step_stub(**kwargs):
+        captured["cmd"] = kwargs["cmd"]
+        return {
+            "name": kwargs["name"],
+            "command": kwargs["cmd"],
+            "exit_code": 0,
+            "elapsed_s": 0.01,
+            "timed_out": False,
+            "artifact": kwargs["artifact"] and str(kwargs["artifact"]),
+            "artifact_exists": False,
+        }
+
+    monkeypatch.setattr(run_perf_suite, "_run_step", _run_step_stub)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_perf_suite",
+            "--out-dir",
+            str(out_dir),
+            "--tag",
+            tag,
+            "--baseline-progress-file",
+            str(progress_file),
+            "--skip-wl",
+            "--skip-wl-consistency",
+            "--skip-owner-benchmark",
+            "--skip-matcher-quality",
+            "--skip-determinism",
+            "--skip-summary",
+        ],
+    )
+
+    run_perf_suite.main()
+    assert "--progress-file" in captured["cmd"]
+    assert str(progress_file) in captured["cmd"]

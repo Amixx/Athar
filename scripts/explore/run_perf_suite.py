@@ -149,6 +149,11 @@ def main() -> None:
         action="store_true",
         help="Enable `benchmark_diff_engine --engine-timings` for per-stage diff_graphs timing breakdowns.",
     )
+    parser.add_argument(
+        "--baseline-progress-file",
+        default=None,
+        help="Optional path for `benchmark_diff_engine --progress-file` live sidecar JSON.",
+    )
     parser.add_argument("--wl-warmup", type=int, default=1)
     parser.add_argument("--wl-iterations", type=int, default=2)
     parser.add_argument(
@@ -247,6 +252,8 @@ def main() -> None:
         ]
         if args.baseline_engine_timings:
             cmd.append("--engine-timings")
+        if args.baseline_progress_file:
+            cmd.extend(["--progress-file", args.baseline_progress_file])
         for case in args.case:
             cmd.extend(["--case", case])
         step_specs.append(("baseline", cmd, baseline_path))

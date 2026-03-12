@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import time
 from typing import Any
 
@@ -23,6 +24,12 @@ from .guid_policy import GUID_POLICY_FAIL_FAST, validate_guid_policy
 from .profile_policy import DEFAULT_PROFILE
 from .types import DiffContext, GraphIR
 
+ProgressCallback = Callable[[dict[str, Any]], None]
+_PROGRESS_PREPARE_CONTEXT_WEIGHT = 0.55
+_PROGRESS_EMIT_BASE_CHANGES_WEIGHT = 0.35
+_PROGRESS_EMIT_DERIVED_MARKERS_WEIGHT = 0.10
+_BASE_CHANGES_PROGRESS_INTERVAL = 10000
+
 
 def diff_files(
     old_path: str,
@@ -32,6 +39,7 @@ def diff_files(
     guid_policy: str = GUID_POLICY_FAIL_FAST,
     matcher_policy: dict[str, dict[str, Any]] | None = None,
     timings: bool = False,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict:
     validate_guid_policy(guid_policy)
     parse_timings_ms: dict[str, float] | None = None
@@ -55,6 +63,7 @@ def diff_files(
         matcher_policy=matcher_policy,
         timings=timings,
         parse_timings_ms=parse_timings_ms,
+        progress_callback=progress_callback,
     )
 
 
@@ -67,10 +76,29 @@ def diff_graphs(
     matcher_policy: dict[str, dict[str, Any]] | None = None,
     timings: bool = False,
     parse_timings_ms: dict[str, float] | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict:
     validate_guid_policy(guid_policy)
     total_started = time.perf_counter()
+    _emit_progress(progress_callback, {
+        "stage": "prepare_context",
+        "status": "start",
+        "overall_progress": 0.0,
+    })
     context_timings_ms: dict[str, float] | None = {} if timings else None
+    def _on_context_progress(event: dict[str, Any]) -> None:
+        stage_progress = event.get("stage_progress")
+        mapped = {
+            **event,
+            "stage": "prepare_context",
+        }
+        if isinstance(stage_progress, (int, float)):
+            mapped["overall_progress"] = round(
+                _PROGRESS_PREPARE_CONTEXT_WEIGHT * min(max(float(stage_progress), 0.0), 1.0),
+                6,
+            )
+        _emit_progress(progress_callback, mapped)
+
     started = time.perf_counter()
     context = prepare_diff_context(
         old_graph,
@@ -79,18 +107,34 @@ def diff_graphs(
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
         timing_collector=context_timings_ms,
+        progress_callback=_on_context_progress if progress_callback is not None else None,
     )
     prepare_context_ms = _elapsed_ms(started)
+    _emit_progress(progress_callback, {
+        "stage": "prepare_context",
+        "status": "done",
+        "elapsed_ms": prepare_context_ms,
+        "overall_progress": _PROGRESS_PREPARE_CONTEXT_WEIGHT,
+    })
     try:
         base_changes: list[dict[str, Any]] = []
         change_index: dict[str, list[str]] = {}
 
         started = time.perf_counter()
-        for change in _iter_base_changes(context, include_snapshots=True):
+        for change in _iter_base_changes(
+            context,
+            include_snapshots=True,
+            progress_callback=progress_callback,
+        ):
             base_changes.append(change)
             index_change(change_index, change)
         emit_base_changes_ms = _elapsed_ms(started)
 
+        _emit_progress(progress_callback, {
+            "stage": "emit_derived_markers",
+            "status": "start",
+            "overall_progress": _PROGRESS_PREPARE_CONTEXT_WEIGHT + _PROGRESS_EMIT_BASE_CHANGES_WEIGHT,
+        })
         started = time.perf_counter()
         derived_markers = build_derived_markers(
             old_graph=context["old_graph"],
@@ -100,6 +144,17 @@ def diff_graphs(
             change_index=change_index,
         )
         emit_derived_markers_ms = _elapsed_ms(started)
+        _emit_progress(progress_callback, {
+            "stage": "emit_derived_markers",
+            "status": "done",
+            "elapsed_ms": emit_derived_markers_ms,
+            "overall_progress": (
+                _PROGRESS_PREPARE_CONTEXT_WEIGHT
+                + _PROGRESS_EMIT_BASE_CHANGES_WEIGHT
+                + _PROGRESS_EMIT_DERIVED_MARKERS_WEIGHT
+            ),
+            "derived_marker_count": len(derived_markers),
+        })
         result = build_result(context, base_changes=base_changes, derived_markers=derived_markers)
         if timings:
             timings_ms: dict[str, float] = {}
@@ -113,6 +168,18 @@ def diff_graphs(
             timings_ms["emit_derived_markers"] = emit_derived_markers_ms
             timings_ms["total"] = _elapsed_ms(total_started)
             result.setdefault("stats", {})["timings_ms"] = timings_ms
+        _emit_progress(progress_callback, {
+            "stage": "done",
+            "status": "done",
+            "overall_progress": (
+                _PROGRESS_PREPARE_CONTEXT_WEIGHT
+                + _PROGRESS_EMIT_BASE_CHANGES_WEIGHT
+                + _PROGRESS_EMIT_DERIVED_MARKERS_WEIGHT
+            ),
+            "elapsed_ms": _elapsed_ms(total_started),
+            "base_change_count": len(base_changes),
+            "derived_marker_count": len(derived_markers),
+        })
         return result
     finally:
         _close_owner_projectors(context)
@@ -198,7 +265,12 @@ def stream_diff_graphs(
         _close_owner_projectors(context)
 
 
-def _iter_base_changes(context: DiffContext, *, include_snapshots: bool):
+def _iter_base_changes(
+    context: DiffContext,
+    *,
+    include_snapshots: bool,
+    progress_callback: ProgressCallback | None = None,
+):
     profile = context["profile"]
     old_by_id = context["old_by_id"]
     new_by_id = context["new_by_id"]
@@ -207,8 +279,18 @@ def _iter_base_changes(context: DiffContext, *, include_snapshots: bool):
     old_owner_projector = context["old_owner_projector"]
     new_owner_projector = context["new_owner_projector"]
 
+    entity_ids = sorted(set(old_by_id) | set(new_by_id))
+    total = len(entity_ids)
+    _emit_progress(progress_callback, {
+        "stage": "emit_base_changes",
+        "status": "start",
+        "completed": 0,
+        "total": total,
+        "stage_progress": 0.0,
+        "overall_progress": _PROGRESS_PREPARE_CONTEXT_WEIGHT,
+    })
     change_id = 0
-    for entity_id in sorted(set(old_by_id) | set(new_by_id)):
+    for idx, entity_id in enumerate(entity_ids, start=1):
         old_items = sorted(old_by_id.get(entity_id, []), key=lambda item: item["step_id"])
         new_items = sorted(new_by_id.get(entity_id, []), key=lambda item: item["step_id"])
         if entity_id.startswith("C:") and len(old_items) == len(new_items):
@@ -294,6 +376,30 @@ def _iter_base_changes(context: DiffContext, *, include_snapshots: bool):
                 profile=profile,
                 include_snapshots=include_snapshots,
             )
+        if idx == 1 or idx % _BASE_CHANGES_PROGRESS_INTERVAL == 0 or idx == total:
+            stage_progress = idx / total if total > 0 else 1.0
+            _emit_progress(progress_callback, {
+                "stage": "emit_base_changes",
+                "status": "running",
+                "completed": idx,
+                "total": total,
+                "emitted_changes": change_id,
+                "stage_progress": round(stage_progress, 6),
+                "overall_progress": round(
+                    _PROGRESS_PREPARE_CONTEXT_WEIGHT + (_PROGRESS_EMIT_BASE_CHANGES_WEIGHT * stage_progress),
+                    6,
+                ),
+            })
+
+    _emit_progress(progress_callback, {
+        "stage": "emit_base_changes",
+        "status": "done",
+        "completed": total,
+        "total": total,
+        "emitted_changes": change_id,
+        "stage_progress": 1.0,
+        "overall_progress": _PROGRESS_PREPARE_CONTEXT_WEIGHT + _PROGRESS_EMIT_BASE_CHANGES_WEIGHT,
+    })
 
 
 def _iter_stream_events(context: DiffContext):
@@ -325,3 +431,12 @@ def _close_owner_projectors(context: DiffContext) -> None:
 
 def _elapsed_ms(started: float) -> float:
     return round((time.perf_counter() - started) * 1000.0, 3)
+
+
+def _emit_progress(callback: ProgressCallback | None, payload: dict[str, Any]) -> None:
+    if callback is None:
+        return
+    try:
+        callback(payload)
+    except Exception:
+        return

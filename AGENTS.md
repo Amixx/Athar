@@ -79,7 +79,9 @@ python -m athar old.ifc new.ifc                       # raw JSON diff
 - `scripts/inspect_guid_overlap.py` — Show entity GUID overlap matrix between files.
 - `scripts/explore/canonical_reference_impl.py` — Executable reference for canonical value normalization (value grammar, ordering, and profiles).
 - `scripts/explore/generate_determinism_fixtures.py` — Regenerate frozen golden outputs for deterministic low-level diff/stream payloads and environment fingerprint fixture.
-- `scripts/explore/benchmark_diff_engine.py` — Reproducible runtime/peak-memory benchmark harness for `diff_graphs` and streaming modes (`ndjson`, `chunked_json`) on default or explicit IFC case pairs; captures per-case parser timings (`parse_ms`) and optional `--engine-timings` per-stage `diff_graphs` timing breakdowns from engine stats.
+- `scripts/explore/benchmark_diff_engine.py` — Reproducible runtime/peak-memory benchmark harness for `diff_graphs` and streaming modes (`ndjson`, `chunked_json`) on default or explicit IFC case pairs; captures per-case parser timings (`parse_ms`), supports iteration heartbeat logs (`--heartbeat-s`) with stage-aware coarse progress/ETA estimates (ETA rendered as `h m s` when needed), and optional `--engine-timings` per-stage `diff_graphs` timing breakdowns from engine stats.
+- `scripts/explore/benchmark_diff_engine.py` also supports live progress sidecar output (`--progress-file`) with run state + current case/metric/stage progress for external monitors.
+- `athar/diff_engine.py` + `athar/diff_engine_context.py` expose stage-progress callbacks used by benchmark heartbeats (`prepare_context` substeps, base-change scan progress, derived-marker completion).
 - `scripts/explore/benchmark_wl_backends.py` — WL refinement backend benchmark harness (`auto`, `sha256`, `xxh3_64`, `blake3`, `blake2b_64`) with runtime/peak-memory summaries.
 - `scripts/explore/check_wl_backend_consistency.py` — WL backend consistency checker that compares compact color/class partition fingerprints against `sha256` baseline per graph.
 - `scripts/explore/benchmark_owner_projection.py` — Rooted-owner projection benchmark comparing in-memory index vs disk-spill mode (`ATHAR_OWNER_INDEX_DISK_THRESHOLD`).
@@ -87,6 +89,7 @@ python -m athar old.ifc new.ifc                       # raw JSON diff
 - `scripts/explore/stress_determinism.py` — Repeated-run hash stability harness for `diff_graphs` and both stream modes; prints per-round progress (configurable via `--progress-every`) to stderr.
 - `scripts/explore/render_perf_summary.py` — Render benchmark/quality/stability JSON artifacts into a concise markdown summary, including optional `diff_graphs` stage timing tables when baseline artifacts include `engine_timings_ms`, parse timing tables, and suite-step status summaries when passed a perf-suite manifest.
 - `scripts/explore/run_perf_suite.py` — Sequential overnight runner for baseline, WL benchmark, matcher quality, determinism stress, and final summary generation; supports bounded execution via per-step timeout, suite-level heartbeat logs (`--heartbeat-s`), scoped WL graph inputs, optional baseline stage-timing capture (`--baseline-engine-timings`), and resumable step skipping via `--resume` with incremental manifest checkpoints and run-state metadata.
+- `scripts/explore/run_perf_suite.py` can forward baseline sidecar progress output via `--baseline-progress-file`.
 - `scripts/explore/` — Exploratory/investigative scripts.
 - Benchmark harnesses should emit visible progress logs (graph/case/backend + iteration) for long runs.
 
@@ -100,3 +103,4 @@ python -m pytest tests/
 
 - Don't write throwaway scripts. Save exploratory ones in `scripts/explore/`.
 - **Preserve knowledge during feature work.** Update README.md and AGENTS.md with what was built, why, and domain insights learned.
+- Don't state obvious operational facts to the user (for example, that an already-running process won't pick up new code until restarted).
