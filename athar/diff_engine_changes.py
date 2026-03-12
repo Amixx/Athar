@@ -30,6 +30,7 @@ def make_change(
     identity: dict[str, Any],
     rooted_owners: dict[str, Any],
     profile: str,
+    include_snapshots: bool = True,
 ) -> dict[str, Any]:
     field_ops = []
     if op == "MODIFY":
@@ -50,8 +51,8 @@ def make_change(
             "matched_on": identity.get("matched_on"),
         },
         "field_ops": field_ops,
-        "old_snapshot": snapshot(old_ent, profile=profile) if op == "REMOVE" else None,
-        "new_snapshot": snapshot(new_ent, profile=profile) if op == "ADD" else None,
+        "old_snapshot": snapshot(old_ent, profile=profile) if include_snapshots and op == "REMOVE" else None,
+        "new_snapshot": snapshot(new_ent, profile=profile) if include_snapshots and op == "ADD" else None,
         "rooted_owners": rooted_owners,
         "change_categories": [],
         "equivalence_class": None,

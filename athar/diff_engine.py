@@ -30,7 +30,7 @@ def diff_graphs(old_graph: dict, new_graph: dict, *, profile: str = "semantic_st
     base_changes: list[dict[str, Any]] = []
     change_index: dict[str, list[str]] = {}
 
-    for change in _iter_base_changes(context):
+    for change in _iter_base_changes(context, include_snapshots=True):
         base_changes.append(change)
         index_change(change_index, change)
 
@@ -83,8 +83,12 @@ def stream_diff_graphs(
     if mode == "ndjson":
         yield json_line({"record_type": "header", **header})
         base_count = 0
-        for base_count, change in enumerate(_iter_base_changes(context), start=1):
+        op_counts: dict[str, int] = {}
+        for base_count, change in enumerate(_iter_base_changes(context, include_snapshots=False), start=1):
             index_change(change_index, change)
+            op = change.get("op")
+            if isinstance(op, str):
+                op_counts[op] = op_counts.get(op, 0) + 1
             yield json_line({"record_type": "base_change", "index": base_count - 1, "change": change})
         derived_markers = build_derived_markers(
             old_graph=context["old_graph"],
@@ -99,6 +103,7 @@ def stream_diff_graphs(
             "record_type": "end",
             "base_change_count": base_count,
             "derived_marker_count": len(derived_markers),
+            "op_counts": {k: op_counts[k] for k in sorted(op_counts)},
         })
         return
 
@@ -107,10 +112,14 @@ def stream_diff_graphs(
         buffer: list[dict[str, Any]] = []
         offset = 0
         base_count = 0
-        for change in _iter_base_changes(context):
+        op_counts: dict[str, int] = {}
+        for change in _iter_base_changes(context, include_snapshots=False):
             index_change(change_index, change)
             buffer.append(change)
             base_count += 1
+            op = change.get("op")
+            if isinstance(op, str):
+                op_counts[op] = op_counts.get(op, 0) + 1
             if len(buffer) >= chunk_size:
                 yield json_line({
                     "chunk_type": "base_changes",
@@ -149,13 +158,14 @@ def stream_diff_graphs(
             "chunk_type": "end",
             "base_change_count": base_count,
             "derived_marker_count": len(derived_markers),
+            "op_counts": {k: op_counts[k] for k in sorted(op_counts)},
         })
         return
 
     raise ValueError(f"Unknown stream mode: {mode}")
 
 
-def _iter_base_changes(context: dict[str, Any]):
+def _iter_base_changes(context: dict[str, Any], *, include_snapshots: bool):
     profile = context["profile"]
     old_by_id = context["old_by_id"]
     new_by_id = context["new_by_id"]
@@ -202,6 +212,7 @@ def _iter_base_changes(context: dict[str, Any]):
                     | new_owner_projector.owners_for_step(new_item["step_id"])
                 ),
                 profile=profile,
+                include_snapshots=include_snapshots,
             )
 
         for old_item in old_items[paired:]:
@@ -219,6 +230,7 @@ def _iter_base_changes(context: dict[str, Any]):
                     old_owner_projector.owners_for_step(old_item["step_id"])
                 ),
                 profile=profile,
+                include_snapshots=include_snapshots,
             )
 
         for new_item in new_items[paired:]:
@@ -236,4 +248,5 @@ def _iter_base_changes(context: dict[str, Any]):
                     new_owner_projector.owners_for_step(new_item["step_id"])
                 ),
                 profile=profile,
+                include_snapshots=include_snapshots,
             )

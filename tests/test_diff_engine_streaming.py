@@ -116,3 +116,61 @@ def test_stream_diff_graphs_chunked_json_honors_chunk_size():
     base_chunks = [r for r in records if r.get("chunk_type") == "base_changes"]
     assert base_chunks
     assert all(chunk["count"] <= 1 for chunk in base_chunks)
+
+
+def test_stream_diff_graphs_omits_add_remove_snapshots():
+    old_graph = _graph_with_entities({})
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+    })
+    records = [json.loads(line) for line in stream_diff_graphs(old_graph, new_graph, mode="ndjson")]
+    change = next(r["change"] for r in records if r.get("record_type") == "base_change")
+    assert change["op"] == "ADD"
+    assert change["new_snapshot"] is None
+    end = records[-1]
+    assert end["record_type"] == "end"
+    assert end["op_counts"]["ADD"] == 1
+
+
+def test_diff_graphs_keeps_add_remove_snapshots():
+    old_graph = _graph_with_entities({})
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+    })
+    result = diff_graphs(old_graph, new_graph)
+    change = result["base_changes"][0]
+    assert change["op"] == "ADD"
+    assert change["new_snapshot"] is not None
+
+
+def test_stream_diff_graphs_chunked_end_includes_op_counts():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A v2"}},
+            "refs": [],
+        },
+    })
+    records = [json.loads(line) for line in stream_diff_graphs(old_graph, new_graph, mode="chunked_json", chunk_size=1)]
+    end = records[-1]
+    assert end["chunk_type"] == "end"
+    assert end["op_counts"]["MODIFY"] == 1
