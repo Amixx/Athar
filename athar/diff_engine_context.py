@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from .structural_hash import structural_hash
@@ -32,6 +33,7 @@ def prepare_diff_context(
     profile: str,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
     matcher_policy: dict[str, dict[str, Any]] | None = None,
+    timing_collector: dict[str, float] | None = None,
 ) -> DiffContext:
     validate_profile(profile)
     validate_guid_policy(guid_policy)
@@ -39,11 +41,14 @@ def prepare_diff_context(
 
     resolved_matcher_policy = resolve_matcher_policy(matcher_policy)
 
+    stage_started = time.perf_counter()
     remap = plan_root_remap(
         old_graph,
         new_graph,
         **resolved_matcher_policy["root_remap"],
     )
+    _record_timing(timing_collector, "root_remap", stage_started)
+    stage_started = time.perf_counter()
     old_ids, old_identity = _assign_ids(
         old_graph,
         profile=profile,
@@ -52,16 +57,24 @@ def prepare_diff_context(
         root_remap_diagnostics=remap.get("diagnostics", {}),
         side="old",
     )
+    _record_timing(timing_collector, "assign_old_ids", stage_started)
+    stage_started = time.perf_counter()
     new_ids, new_identity = _assign_ids(
         new_graph,
         profile=profile,
         guid_policy=guid_policy,
         side="new",
     )
+    _record_timing(timing_collector, "assign_new_ids", stage_started)
+    stage_started = time.perf_counter()
     root_pairs = _match_root_steps(old_graph, new_graph, remap["old_to_new"])
+    _record_timing(timing_collector, "match_root_steps", stage_started)
+    stage_started = time.perf_counter()
     exact_pairs = _match_steps_by_unique_id(old_ids, new_ids)
+    _record_timing(timing_collector, "match_unique_ids", stage_started)
     pre_old = set(root_pairs) | set(exact_pairs)
     pre_new = set(root_pairs.values()) | set(exact_pairs.values())
+    stage_started = time.perf_counter()
     path_propagation = propagate_matches_by_typed_path(
         old_graph,
         new_graph,
@@ -69,6 +82,8 @@ def prepare_diff_context(
         pre_matched_old=pre_old,
         pre_matched_new=pre_new,
     )
+    _record_timing(timing_collector, "path_propagation", stage_started)
+    stage_started = time.perf_counter()
     _apply_step_matches(
         old_ids,
         old_identity,
@@ -77,7 +92,11 @@ def prepare_diff_context(
         method="path_propagation",
         diagnostics=path_propagation.get("diagnostics", {}),
     )
+    _record_timing(timing_collector, "apply_path_matches", stage_started)
+    stage_started = time.perf_counter()
     matched_after_path = _match_steps_by_unique_id(old_ids, new_ids)
+    _record_timing(timing_collector, "match_after_path", stage_started)
+    stage_started = time.perf_counter()
     secondary = secondary_match_unresolved(
         old_graph,
         new_graph,
@@ -85,6 +104,8 @@ def prepare_diff_context(
         pre_matched_new=set(matched_after_path.values()),
         **resolved_matcher_policy["secondary_match"],
     )
+    _record_timing(timing_collector, "secondary_match", stage_started)
+    stage_started = time.perf_counter()
     _apply_step_matches(
         old_ids,
         old_identity,
@@ -93,6 +114,8 @@ def prepare_diff_context(
         method="secondary_match",
         diagnostics=secondary.get("diagnostics", {}),
     )
+    _record_timing(timing_collector, "apply_secondary_matches", stage_started)
+    stage_started = time.perf_counter()
     apply_ambiguous_equivalence_classes(
         old_ids=old_ids,
         old_identity=old_identity,
@@ -100,11 +123,35 @@ def prepare_diff_context(
         new_identity=new_identity,
         partitions=secondary.get("ambiguous_partitions", []),
     )
+    _record_timing(timing_collector, "apply_equivalence_classes", stage_started)
 
+    stage_started = time.perf_counter()
     old_by_id = _index_by_identity(old_graph, old_ids, old_identity)
+    _record_timing(timing_collector, "index_old_by_identity", stage_started)
+    stage_started = time.perf_counter()
     new_by_id = _index_by_identity(new_graph, new_ids, new_identity)
+    _record_timing(timing_collector, "index_new_by_identity", stage_started)
+    stage_started = time.perf_counter()
     old_owner_projector = RootedOwnerProjector(old_graph, old_ids)
     new_owner_projector = RootedOwnerProjector(new_graph, new_ids)
+    _record_timing(timing_collector, "build_owner_projectors", stage_started)
+
+    stage_started = time.perf_counter()
+    stats = build_stats(
+        old_graph=old_graph,
+        new_graph=new_graph,
+        old_by_id=old_by_id,
+        new_by_id=new_by_id,
+        remap_ambiguous=remap["ambiguous"],
+        path_ambiguous=path_propagation["ambiguous"],
+        secondary_ambiguous=secondary["ambiguous"],
+        remap_matches=len(remap["old_to_new"]),
+        path_matches=len(path_propagation["old_to_new"]),
+        secondary_matches=len(secondary["old_to_new"]),
+        old_dangling_refs=_dangling_ref_count(old_graph),
+        new_dangling_refs=_dangling_ref_count(new_graph),
+    )
+    _record_timing(timing_collector, "build_stats", stage_started)
 
     return {
         "version": "2",
@@ -126,20 +173,7 @@ def prepare_diff_context(
             "guid_policy": guid_policy,
             "matcher_policy": resolved_matcher_policy,
         },
-        "stats": build_stats(
-            old_graph=old_graph,
-            new_graph=new_graph,
-            old_by_id=old_by_id,
-            new_by_id=new_by_id,
-            remap_ambiguous=remap["ambiguous"],
-            path_ambiguous=path_propagation["ambiguous"],
-            secondary_ambiguous=secondary["ambiguous"],
-            remap_matches=len(remap["old_to_new"]),
-            path_matches=len(path_propagation["old_to_new"]),
-            secondary_matches=len(secondary["old_to_new"]),
-            old_dangling_refs=_dangling_ref_count(old_graph),
-            new_dangling_refs=_dangling_ref_count(new_graph),
-        ),
+        "stats": stats,
     }
 
 
@@ -248,3 +282,9 @@ def _dangling_ref_count(graph: dict) -> int:
     if isinstance(meta_count, int):
         return meta_count
     return count_dangling_refs(graph)
+
+
+def _record_timing(target: dict[str, float] | None, key: str, started: float) -> None:
+    if target is None:
+        return
+    target[key] = round((time.perf_counter() - started) * 1000.0, 3)

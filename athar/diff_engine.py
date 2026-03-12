@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from .diff_engine_changes import make_change, make_class_delta_change
@@ -30,10 +31,21 @@ def diff_files(
     profile: str = DEFAULT_PROFILE,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
     matcher_policy: dict[str, dict[str, Any]] | None = None,
+    timings: bool = False,
 ) -> dict:
     validate_guid_policy(guid_policy)
-    old_graph = parse_graph(old_path, profile=profile)
-    new_graph = parse_graph(new_path, profile=profile)
+    parse_timings_ms: dict[str, float] | None = None
+    if timings:
+        parse_timings_ms = {}
+        started = time.perf_counter()
+        old_graph = parse_graph(old_path, profile=profile)
+        parse_timings_ms["parse_old_graph"] = _elapsed_ms(started)
+        started = time.perf_counter()
+        new_graph = parse_graph(new_path, profile=profile)
+        parse_timings_ms["parse_new_graph"] = _elapsed_ms(started)
+    else:
+        old_graph = parse_graph(old_path, profile=profile)
+        new_graph = parse_graph(new_path, profile=profile)
     _validate_schema(old_graph, new_graph)
     return diff_graphs(
         old_graph,
@@ -41,6 +53,8 @@ def diff_files(
         profile=profile,
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
+        timings=timings,
+        parse_timings_ms=parse_timings_ms,
     )
 
 
@@ -51,23 +65,33 @@ def diff_graphs(
     profile: str = DEFAULT_PROFILE,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
     matcher_policy: dict[str, dict[str, Any]] | None = None,
+    timings: bool = False,
+    parse_timings_ms: dict[str, float] | None = None,
 ) -> dict:
     validate_guid_policy(guid_policy)
+    total_started = time.perf_counter()
+    context_timings_ms: dict[str, float] | None = {} if timings else None
+    started = time.perf_counter()
     context = prepare_diff_context(
         old_graph,
         new_graph,
         profile=profile,
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
+        timing_collector=context_timings_ms,
     )
+    prepare_context_ms = _elapsed_ms(started)
     try:
         base_changes: list[dict[str, Any]] = []
         change_index: dict[str, list[str]] = {}
 
+        started = time.perf_counter()
         for change in _iter_base_changes(context, include_snapshots=True):
             base_changes.append(change)
             index_change(change_index, change)
+        emit_base_changes_ms = _elapsed_ms(started)
 
+        started = time.perf_counter()
         derived_markers = build_derived_markers(
             old_graph=context["old_graph"],
             new_graph=context["new_graph"],
@@ -75,7 +99,21 @@ def diff_graphs(
             new_ids=context["new_ids"],
             change_index=change_index,
         )
-        return build_result(context, base_changes=base_changes, derived_markers=derived_markers)
+        emit_derived_markers_ms = _elapsed_ms(started)
+        result = build_result(context, base_changes=base_changes, derived_markers=derived_markers)
+        if timings:
+            timings_ms: dict[str, float] = {}
+            if parse_timings_ms:
+                timings_ms.update(parse_timings_ms)
+            timings_ms["prepare_context"] = prepare_context_ms
+            if context_timings_ms:
+                for key in sorted(context_timings_ms):
+                    timings_ms[f"context.{key}"] = context_timings_ms[key]
+            timings_ms["emit_base_changes"] = emit_base_changes_ms
+            timings_ms["emit_derived_markers"] = emit_derived_markers_ms
+            timings_ms["total"] = _elapsed_ms(total_started)
+            result.setdefault("stats", {})["timings_ms"] = timings_ms
+        return result
     finally:
         _close_owner_projectors(context)
 
@@ -89,11 +127,22 @@ def stream_diff_files(
     matcher_policy: dict[str, dict[str, Any]] | None = None,
     mode: str = "ndjson",
     chunk_size: int = 1000,
+    timings: bool = False,
 ):
     """Stream diff output directly from files without materializing full result."""
     validate_guid_policy(guid_policy)
-    old_graph = parse_graph(old_path, profile=profile)
-    new_graph = parse_graph(new_path, profile=profile)
+    parse_timings_ms: dict[str, float] | None = None
+    if timings:
+        parse_timings_ms = {}
+        started = time.perf_counter()
+        old_graph = parse_graph(old_path, profile=profile)
+        parse_timings_ms["parse_old_graph"] = _elapsed_ms(started)
+        started = time.perf_counter()
+        new_graph = parse_graph(new_path, profile=profile)
+        parse_timings_ms["parse_new_graph"] = _elapsed_ms(started)
+    else:
+        old_graph = parse_graph(old_path, profile=profile)
+        new_graph = parse_graph(new_path, profile=profile)
     _validate_schema(old_graph, new_graph)
     yield from stream_diff_graphs(
         old_graph,
@@ -103,6 +152,8 @@ def stream_diff_files(
         matcher_policy=matcher_policy,
         mode=mode,
         chunk_size=chunk_size,
+        timings=timings,
+        parse_timings_ms=parse_timings_ms,
     )
 
 
@@ -115,17 +166,31 @@ def stream_diff_graphs(
     matcher_policy: dict[str, dict[str, Any]] | None = None,
     mode: str = "ndjson",
     chunk_size: int = 1000,
+    timings: bool = False,
+    parse_timings_ms: dict[str, float] | None = None,
 ):
     """Stream diff output directly from graph inputs."""
     validate_guid_policy(guid_policy)
 
+    started = time.perf_counter()
+    context_timings_ms: dict[str, float] | None = {} if timings else None
     context = prepare_diff_context(
         old_graph,
         new_graph,
         profile=profile,
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
+        timing_collector=context_timings_ms,
     )
+    if timings:
+        timings_ms: dict[str, float] = {}
+        if parse_timings_ms:
+            timings_ms.update(parse_timings_ms)
+        timings_ms["prepare_context"] = _elapsed_ms(started)
+        if context_timings_ms:
+            for key in sorted(context_timings_ms):
+                timings_ms[f"context.{key}"] = context_timings_ms[key]
+        context["stats"]["timings_ms"] = timings_ms
     try:
         events = _iter_stream_events(context)
         yield from stream_diff_events(events, mode=mode, chunk_size=chunk_size)
@@ -247,3 +312,7 @@ def _close_owner_projectors(context: DiffContext) -> None:
     new_owner_projector = context.get("new_owner_projector")
     if new_owner_projector is not None:
         new_owner_projector.close()
+
+
+def _elapsed_ms(started: float) -> float:
+    return round((time.perf_counter() - started) * 1000.0, 3)

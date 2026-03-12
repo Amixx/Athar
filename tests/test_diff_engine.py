@@ -1,5 +1,6 @@
 import athar.diff_engine_markers as diff_engine_markers
-from athar.diff_engine import diff_graphs, stream_diff_graphs
+import athar.diff_engine as diff_engine_mod
+from athar.diff_engine import diff_files, diff_graphs, stream_diff_graphs
 from athar.diff_engine_markers import RootedOwnerProjector
 
 
@@ -905,3 +906,57 @@ def test_diff_engine_relationship_change_category_for_rel_entities():
     assert add["op"] == "ADD"
     assert "RELATIONSHIP" in add["change_categories"]
     assert "ENTITY" in add["change_categories"]
+
+
+def test_diff_graphs_timings_are_opt_in():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A v2"}},
+            "refs": [],
+        },
+    })
+
+    default_result = diff_graphs(old_graph, new_graph)
+    assert "timings_ms" not in default_result["stats"]
+
+    timed = diff_graphs(old_graph, new_graph, timings=True)
+    timings = timed["stats"].get("timings_ms")
+    assert isinstance(timings, dict)
+    assert "prepare_context" in timings
+    assert "emit_base_changes" in timings
+    assert "emit_derived_markers" in timings
+    assert "total" in timings
+
+
+def test_diff_files_timings_include_parse_stages(monkeypatch):
+    graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {},
+            "refs": [],
+        },
+    })
+
+    calls = {"count": 0}
+
+    def fake_parse_graph(_path: str, *, profile: str):
+        calls["count"] += 1
+        return graph
+
+    monkeypatch.setattr(diff_engine_mod, "parse_graph", fake_parse_graph)
+    result = diff_files("old.ifc", "new.ifc", timings=True)
+    timings = result["stats"].get("timings_ms", {})
+    assert calls["count"] == 2
+    assert "parse_old_graph" in timings
+    assert "parse_new_graph" in timings

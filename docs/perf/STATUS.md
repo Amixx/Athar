@@ -2,6 +2,10 @@
 
 Date: 2026-03-12
 
+Phase status:
+- Phase 0-3: implemented
+- Phase 4: in progress (benchmarking + hardening)
+
 ## Completed Artifacts
 
 - `docs/perf/matcher_quality_2026-03-12.json`

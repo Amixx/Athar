@@ -8,8 +8,8 @@ from athar.diff_engine_markers import OWNER_INDEX_DISK_THRESHOLD_ENV
 def test_cli_graph_engine_calls_diff_files(monkeypatch, capsys):
     called = {}
 
-    def fake_diff_files(old, new, profile, guid_policy, matcher_policy):
-        called["args"] = (old, new, profile, guid_policy, matcher_policy)
+    def fake_diff_files(old, new, profile, guid_policy, matcher_policy, timings):
+        called["args"] = (old, new, profile, guid_policy, matcher_policy, timings)
         return {"ok": True}
 
     monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
@@ -18,14 +18,14 @@ def test_cli_graph_engine_calls_diff_files(monkeypatch, capsys):
     main_mod.main()
     out = capsys.readouterr().out
     assert "\"ok\": true" in out
-    assert called["args"] == ("old.ifc", "new.ifc", "raw_exact", "fail_fast", None)
+    assert called["args"] == ("old.ifc", "new.ifc", "raw_exact", "fail_fast", None, False)
 
 
 def test_cli_graph_engine_streams_ndjson(monkeypatch, capsys):
     called = {}
 
-    def fake_stream_files(old, new, profile, guid_policy, matcher_policy, mode, chunk_size):
-        called["stream"] = (old, new, profile, guid_policy, matcher_policy, mode, chunk_size)
+    def fake_stream_files(old, new, profile, guid_policy, matcher_policy, mode, chunk_size, timings):
+        called["stream"] = (old, new, profile, guid_policy, matcher_policy, mode, chunk_size, timings)
         return iter(["{\"record_type\":\"header\"}", "{\"record_type\":\"end\"}"])
 
     monkeypatch.setattr(main_mod, "stream_diff_files", fake_stream_files)
@@ -40,14 +40,23 @@ def test_cli_graph_engine_streams_ndjson(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "{\"record_type\":\"header\"}" in out
     assert "{\"record_type\":\"end\"}" in out
-    assert called["stream"] == ("old.ifc", "new.ifc", "semantic_stable", "fail_fast", None, "ndjson", 1000)
+    assert called["stream"] == (
+        "old.ifc",
+        "new.ifc",
+        "semantic_stable",
+        "fail_fast",
+        None,
+        "ndjson",
+        1000,
+        False,
+    )
 
 
 def test_cli_chunked_stream_passes_chunk_size(monkeypatch, capsys):
     called = {}
 
-    def fake_stream_files(old, new, profile, guid_policy, matcher_policy, mode, chunk_size):
-        called["stream"] = (old, new, profile, guid_policy, matcher_policy, mode, chunk_size)
+    def fake_stream_files(old, new, profile, guid_policy, matcher_policy, mode, chunk_size, timings):
+        called["stream"] = (old, new, profile, guid_policy, matcher_policy, mode, chunk_size, timings)
         return iter(["{\"chunk_type\":\"header\"}", "{\"chunk_type\":\"end\"}"])
 
     monkeypatch.setattr(main_mod, "stream_diff_files", fake_stream_files)
@@ -68,14 +77,15 @@ def test_cli_chunked_stream_passes_chunk_size(monkeypatch, capsys):
         None,
         "chunked_json",
         7,
+        False,
     )
 
 
 def test_cli_passes_guid_policy(monkeypatch, capsys):
     called = {}
 
-    def fake_diff_files(old, new, profile, guid_policy, matcher_policy):
-        called["args"] = (old, new, profile, guid_policy, matcher_policy)
+    def fake_diff_files(old, new, profile, guid_policy, matcher_policy, timings):
+        called["args"] = (old, new, profile, guid_policy, matcher_policy, timings)
         return {"ok": True}
 
     monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
@@ -87,14 +97,14 @@ def test_cli_passes_guid_policy(monkeypatch, capsys):
 
     main_mod.main()
     _ = capsys.readouterr().out
-    assert called["args"] == ("old.ifc", "new.ifc", "semantic_stable", "disambiguate", None)
+    assert called["args"] == ("old.ifc", "new.ifc", "semantic_stable", "disambiguate", None, False)
 
 
 def test_cli_passes_matcher_policy_overrides(monkeypatch, capsys):
     called = {}
 
-    def fake_diff_files(old, new, profile, guid_policy, matcher_policy):
-        called["args"] = (old, new, profile, guid_policy, matcher_policy)
+    def fake_diff_files(old, new, profile, guid_policy, matcher_policy, timings):
+        called["args"] = (old, new, profile, guid_policy, matcher_policy, timings)
         return {"ok": True}
 
     monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
@@ -127,14 +137,16 @@ def test_cli_passes_matcher_policy_overrides(monkeypatch, capsys):
             "root_remap": {"score_threshold": 0.61, "assignment_max": 5},
             "secondary_match": {"score_margin": 0.14, "depth2_max": 7},
         },
+        False,
     )
 
 
 def test_cli_owner_index_disk_threshold_sets_env_for_run(monkeypatch, capsys):
     called = {}
 
-    def fake_diff_files(old, new, profile, guid_policy, matcher_policy):
+    def fake_diff_files(old, new, profile, guid_policy, matcher_policy, timings):
         called["threshold"] = os.environ.get(OWNER_INDEX_DISK_THRESHOLD_ENV)
+        called["timings"] = timings
         return {"ok": True}
 
     monkeypatch.delenv(OWNER_INDEX_DISK_THRESHOLD_ENV, raising=False)
@@ -148,3 +160,23 @@ def test_cli_owner_index_disk_threshold_sets_env_for_run(monkeypatch, capsys):
     main_mod.main()
     _ = capsys.readouterr().out
     assert called["threshold"] == "12345"
+    assert called["timings"] is False
+
+
+def test_cli_passes_timings_flag(monkeypatch, capsys):
+    called = {}
+
+    def fake_diff_files(old, new, profile, guid_policy, matcher_policy, timings):
+        called["timings"] = timings
+        return {"ok": True}
+
+    monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["athar", "old.ifc", "new.ifc", "--timings"],
+    )
+
+    main_mod.main()
+    _ = capsys.readouterr().out
+    assert called["timings"] is True

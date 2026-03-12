@@ -41,6 +41,11 @@ def main():
         help="Chunk size for --stream chunked_json",
     )
     parser.add_argument(
+        "--timings",
+        action="store_true",
+        help="Include non-deterministic runtime timings in stats.timings_ms",
+    )
+    parser.add_argument(
         "--root-remap-guid-overlap-threshold",
         type=float,
         default=None,
@@ -118,6 +123,7 @@ def main():
                 matcher_policy=matcher_policy,
                 mode=args.stream,
                 chunk_size=args.chunk_size,
+                timings=args.timings,
             ):
                 print(line)
             return
@@ -128,6 +134,7 @@ def main():
             profile=args.profile,
             guid_policy=args.guid_policy,
             matcher_policy=matcher_policy,
+            timings=args.timings,
         )
         if args.stream == "none":
             json.dump(result, sys.stdout, indent=2)
