@@ -59,7 +59,9 @@ Operational notes:
 - `benchmark_diff_engine` stores parser timings per case under `parse_ms` (`old_graph`, `new_graph`, `total`).
 - `benchmark_diff_engine --heartbeat-s N` prints heartbeat logs during each metric iteration (`0` disables), including coarse `progress~...` / `eta~...` estimates using stage-aware progress where available. ETA is rendered in human duration form (`h m s` when needed).
 - If a heuristic ETA model is exceeded, heartbeat reports `eta~overrun ...` instead of `0s`.
+- Stream metrics (`stream_ndjson`, `stream_chunked_json`) now expose count-based heartbeat progress from emitted stream record counts, with ETA derived from observed throughput when expected record counts are known.
 - `benchmark_diff_engine --progress-file PATH` writes live sidecar snapshots (`state`, `current_case`, metric/stage progress, ETA hints) for external monitoring.
+- Sidecar `current_case` snapshots include stream counters (`completed`, `total`) and emitted `bytes` where available.
 - For `diff_graphs`, heartbeat progress includes context-step granularity (`root_remap`, ID assignment/matching stages, indexing/stats), then base-change scan progress, then derived-marker completion.
 - `stress_determinism` prints per-round progress (`--progress-every`) and completion timing to stderr.
 - `evaluate_matcher_quality` prints per-scenario start/done progress and total completion timing to stderr.

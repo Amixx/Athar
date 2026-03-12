@@ -32,6 +32,21 @@ def test_progress_eta_from_probe_uses_overall_progress_when_no_counts():
     assert progress_eta == (0.25, 300.0)
 
 
+def test_expected_stream_record_count_helpers():
+    assert benchmark_diff_engine._expected_stream_record_count(
+        mode="ndjson",
+        base_change_count=3,
+        derived_marker_count=2,
+        chunk_size=10,
+    ) == 7
+    assert benchmark_diff_engine._expected_stream_record_count(
+        mode="chunked_json",
+        base_change_count=3,
+        derived_marker_count=2,
+        chunk_size=2,
+    ) == 5
+
+
 def test_benchmark_diff_engine_collects_engine_timings(monkeypatch, tmp_path):
     out = tmp_path / "bench.json"
     diff_timings_args: list[bool] = []

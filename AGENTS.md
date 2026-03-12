@@ -81,6 +81,7 @@ python -m athar old.ifc new.ifc                       # raw JSON diff
 - `scripts/explore/generate_determinism_fixtures.py` — Regenerate frozen golden outputs for deterministic low-level diff/stream payloads and environment fingerprint fixture.
 - `scripts/explore/benchmark_diff_engine.py` — Reproducible runtime/peak-memory benchmark harness for `diff_graphs` and streaming modes (`ndjson`, `chunked_json`) on default or explicit IFC case pairs; captures per-case parser timings (`parse_ms`), supports iteration heartbeat logs (`--heartbeat-s`) with stage-aware coarse progress/ETA estimates (ETA rendered as `h m s` when needed), and optional `--engine-timings` per-stage `diff_graphs` timing breakdowns from engine stats.
 - `scripts/explore/benchmark_diff_engine.py` also supports live progress sidecar output (`--progress-file`) with run state + current case/metric/stage progress for external monitors.
+- For stream metrics, `benchmark_diff_engine` heartbeat uses emitted-record count progress (`items=...`) with ETA from observed throughput when expected stream record counts are derivable.
 - `athar/diff_engine.py` + `athar/diff_engine_context.py` expose stage-progress callbacks used by benchmark heartbeats (`prepare_context` substeps, base-change scan progress, derived-marker completion).
 - `scripts/explore/benchmark_wl_backends.py` — WL refinement backend benchmark harness (`auto`, `sha256`, `xxh3_64`, `blake3`, `blake2b_64`) with runtime/peak-memory summaries.
 - `scripts/explore/check_wl_backend_consistency.py` — WL backend consistency checker that compares compact color/class partition fingerprints against `sha256` baseline per graph.
@@ -94,6 +95,7 @@ python -m athar old.ifc new.ifc                       # raw JSON diff
 - With `--heartbeat-s`, `run_perf_suite` heartbeat output can include nested baseline sidecar details (case/metric/stage/progress/eta).
 - While running, `run_perf_suite` manifest `current_step` can include latest heartbeat/probe snapshots for file-based monitoring.
 - `scripts/explore/watch_progress.py` — Poll and render concise live status from benchmark sidecar progress JSON (`--file`, `--interval-s`, optional `--follow`).
+- Watcher/status output includes stream counters (`items`) and emitted `bytes` when present in sidecar snapshots.
 - `scripts/explore/` — Exploratory/investigative scripts.
 - Benchmark harnesses should emit visible progress logs (graph/case/backend + iteration) for long runs.
 

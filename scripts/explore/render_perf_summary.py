@@ -230,6 +230,9 @@ def _render_suite_manifest(report: dict[str, Any]) -> list[str]:
                     case_name = probe_case.get("name")
                     metric = probe_case.get("metric")
                     stage = probe_case.get("stage")
+                    completed = probe_case.get("completed")
+                    total = probe_case.get("total")
+                    bytes_out = probe_case.get("bytes")
                     progress = probe_case.get("progress_fraction")
                     eta_text = probe_case.get("eta_text")
                     if isinstance(case_name, str):
@@ -238,6 +241,10 @@ def _render_suite_manifest(report: dict[str, Any]) -> list[str]:
                         lines.append(f"- baseline probe metric: `{metric}`")
                     if isinstance(stage, str):
                         lines.append(f"- baseline probe stage: `{stage}`")
+                    if isinstance(completed, int) and isinstance(total, int) and total > 0:
+                        lines.append(f"- baseline probe items: `{completed}/{total}`")
+                    if isinstance(bytes_out, int):
+                        lines.append(f"- baseline probe bytes: `{bytes_out}`")
                     if isinstance(progress, (int, float)):
                         lines.append(f"- baseline probe progress: `{float(progress) * 100.0:.1f}%`")
                     if isinstance(eta_text, str):

@@ -38,12 +38,19 @@ def _format_progress_line(snapshot: dict[str, Any]) -> str:
         name = current_case.get("name")
         metric = current_case.get("metric")
         phase = current_case.get("phase")
+        completed = current_case.get("completed")
+        total = current_case.get("total")
+        bytes_out = current_case.get("bytes")
         if isinstance(name, str):
             parts.append(f"case={name}")
         if isinstance(metric, str):
             parts.append(f"metric={metric}")
         if isinstance(phase, str):
             parts.append(f"phase={phase}")
+        if isinstance(completed, int) and isinstance(total, int) and total > 0:
+            parts.append(f"items={completed}/{total}")
+        if isinstance(bytes_out, int):
+            parts.append(f"bytes={bytes_out}")
         probe = current_case.get("probe")
         if isinstance(probe, dict):
             stage = probe.get("stage")
