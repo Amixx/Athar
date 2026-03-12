@@ -29,7 +29,7 @@ from .profile_policy import entity_for_profile, validate_profile
 from .types import DiffContext, EntityIR, GraphIR, IdentityInfo
 
 ProgressCallback = Callable[[dict[str, Any]], None]
-_PREPARE_CONTEXT_TOTAL_STEPS = 15
+_PREPARE_CONTEXT_TOTAL_STEPS = 17
 
 
 def prepare_diff_context(
@@ -59,9 +59,6 @@ def prepare_diff_context(
         identity_precompute_cache[key] = precomputed
         return precomputed
 
-    old_state = _identity_precompute(old_graph)
-    new_state = _identity_precompute(new_graph)
-
     _emit_progress(progress_callback, {
         "status": "start",
         "completed_steps": 0,
@@ -80,6 +77,15 @@ def prepare_diff_context(
             "total_steps": _PREPARE_CONTEXT_TOTAL_STEPS,
             "stage_progress": round(completed_steps / _PREPARE_CONTEXT_TOTAL_STEPS, 6),
         })
+
+    stage_started = time.perf_counter()
+    old_state = _identity_precompute(old_graph)
+    _record_timing(timing_collector, "precompute_old_identity", stage_started)
+    _step_done("precompute_old_identity")
+    stage_started = time.perf_counter()
+    new_state = _identity_precompute(new_graph)
+    _record_timing(timing_collector, "precompute_new_identity", stage_started)
+    _step_done("precompute_new_identity")
 
     stage_started = time.perf_counter()
     remap = plan_root_remap(
@@ -522,11 +528,13 @@ def _build_compare_entities(
     comparable_ids: set[str] | None = None,
 ) -> dict[int, EntityIR]:
     out: dict[int, EntityIR] = {}
-    for step_id, entity in profile_entities.items():
-        entity_id = ids_by_step.get(step_id, "")
+    for step_id, entity_id in ids_by_step.items():
         if not isinstance(entity_id, str) or entity_id.startswith("H:"):
             continue
         if comparable_ids is not None and entity_id not in comparable_ids:
+            continue
+        entity = profile_entities.get(step_id)
+        if entity is None:
             continue
         out[step_id] = _normalize_entity_ref_targets(entity, ids_by_step)
     return out
