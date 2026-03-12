@@ -377,7 +377,44 @@ def _iter_base_changes(
     old_compare_cache: dict[int, EntityIR] = {}
     new_compare_cache: dict[int, EntityIR] = {}
 
-    entity_ids = sorted(set(old_by_id) | set(new_by_id))
+    # Pre-filter: identify entity IDs that actually need processing.
+    # For near-identical files (99.99% unchanged), this avoids sorting and
+    # iterating ~1M entity IDs with per-iteration overhead.
+    old_keys = old_by_id.keys()
+    new_keys = new_by_id.keys()
+    candidate_ids: set[str] = set()
+    # IDs only on one side → ADD or REMOVE
+    candidate_ids.update(old_keys - new_keys)
+    candidate_ids.update(new_keys - old_keys)
+    # IDs on both sides → check if they can be skipped cheaply
+    for eid in old_keys & new_keys:
+        old_items = old_by_id[eid]
+        new_items = new_by_id[eid]
+        if eid.startswith("C:") and len(old_items) == len(new_items):
+            continue
+        if len(old_items) != len(new_items):
+            candidate_ids.add(eid)
+            continue
+        if eid.startswith("H:"):
+            skip = True
+            for oi, ni in zip(old_items, new_items):
+                oi_identity = oi.get("identity", {})
+                ni_identity = ni.get("identity", {})
+                if (
+                    oi_identity.get("match_method") == "exact_hash"
+                    and ni_identity.get("match_method") == "exact_hash"
+                ):
+                    continue
+                oh = oi.get("profile_hash")
+                if isinstance(oh, str) and oh == ni.get("profile_hash"):
+                    continue
+                skip = False
+                break
+            if skip:
+                continue
+        candidate_ids.add(eid)
+
+    entity_ids = sorted(candidate_ids)
     total = len(entity_ids)
     _emit_progress(progress_callback, {
         "stage": "emit_base_changes",
@@ -391,8 +428,6 @@ def _iter_base_changes(
     for idx, entity_id in enumerate(entity_ids, start=1):
         old_items = old_by_id.get(entity_id, [])
         new_items = new_by_id.get(entity_id, [])
-        if entity_id.startswith("C:") and len(old_items) == len(new_items):
-            continue
         if should_emit_class_delta(entity_id, old_items, new_items):
             change_id += 1
             owner_ids = old_owner_projector.owners_for_steps([item["step_id"] for item in old_items])
@@ -413,17 +448,6 @@ def _iter_base_changes(
             new_item = new_items[i]
             old_ent = old_item["entity"]
             new_ent = new_item["entity"]
-            if (
-                entity_id.startswith("H:")
-                and old_item.get("identity", {}).get("match_method") == "exact_hash"
-                and new_item.get("identity", {}).get("match_method") == "exact_hash"
-            ):
-                continue
-            if entity_id.startswith("H:"):
-                old_hash = old_item.get("profile_hash")
-                new_hash = new_item.get("profile_hash")
-                if isinstance(old_hash, str) and old_hash == new_hash:
-                    continue
             old_compare_entity = None
             new_compare_entity = None
             if not entity_id.startswith("H:"):

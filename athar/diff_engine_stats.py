@@ -20,6 +20,8 @@ def build_stats(
     secondary_matches: int,
     old_dangling_refs: int,
     new_dangling_refs: int,
+    old_guid_quality: dict[str, int] | None = None,
+    new_guid_quality: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     ambiguous_total = remap_ambiguous + path_ambiguous + secondary_ambiguous
     matched_total, matched_methods = _matched_summary(old_by_id, new_by_id)
@@ -29,8 +31,8 @@ def build_stats(
         "matched": matched_total,
         "matched_by_method": matched_methods,
         "root_guid_quality": {
-            "old": root_guid_quality(old_graph),
-            "new": root_guid_quality(new_graph),
+            "old": old_guid_quality if old_guid_quality is not None else root_guid_quality(old_graph),
+            "new": new_guid_quality if new_guid_quality is not None else root_guid_quality(new_graph),
         },
         "ambiguous": ambiguous_total,
         "ambiguous_by_stage": {

@@ -26,7 +26,7 @@ def _precompute_identity_state(
     precomputed_profile_entities: dict[int, dict] | None = None,
 ) -> dict[str, Any]:
     entities = graph.get("entities", {})
-    guid_counts = _guid_index(entities)
+    guid_counts, guid_quality = _guid_quality(entities)
     unique_guid_steps = _unique_guid_step_index(entities, guid_counts=guid_counts)
     graph_adjacency = build_adjacency(entities)
     graph_reverse_adjacency = build_reverse_adjacency(entities, graph_adjacency)
@@ -39,7 +39,24 @@ def _precompute_identity_state(
         id_adjacency = graph_adjacency
         id_reverse_adjacency = graph_reverse_adjacency
     else:
-        id_adjacency = build_adjacency(id_entities)
+        # Derive profile adjacency from full-graph adjacency.
+        # entity_for_profile returns the same object when no filtering was needed,
+        # so we can reuse edges for the majority of entities (those without
+        # OwnerHistory).  Only rebuild edges for entities whose refs changed.
+        id_adjacency: dict[int, list[tuple[str, str | None, int]]] = {}
+        for step_id in id_entities:
+            profile_ent = id_entities[step_id]
+            orig_ent = entities[step_id]
+            if profile_ent is orig_ent or profile_ent.get("refs") is orig_ent.get("refs"):
+                id_adjacency[step_id] = graph_adjacency.get(step_id, [])
+            else:
+                edges: list[tuple[str, str | None, int]] = []
+                for ref in profile_ent.get("refs", []):
+                    target = ref.get("target")
+                    if target in id_entities:
+                        edges.append((ref.get("path", ""), ref.get("target_type"), target))
+                edges.sort(key=lambda item: (item[0], item[1] or "", item[2]))
+                id_adjacency[step_id] = edges
         id_reverse_adjacency = build_reverse_adjacency(id_entities, id_adjacency)
     seeded_colors = seeded_colors or {}
     if seeded_colors and len(seeded_colors) >= len(id_entities):
@@ -64,6 +81,7 @@ def _precompute_identity_state(
     return {
         "entities": entities,
         "guid_counts": guid_counts,
+        "guid_quality": guid_quality,
         "unique_guid_steps": unique_guid_steps,
         "graph_adjacency": graph_adjacency,
         "graph_reverse_adjacency": graph_reverse_adjacency,
@@ -166,6 +184,35 @@ def _guid_index(entities: dict[int, dict]) -> dict[str, int]:
         if gid:
             counts[gid] = counts.get(gid, 0) + 1
     return counts
+
+
+def _guid_quality(entities: dict[int, dict]) -> tuple[dict[str, int], dict[str, int]]:
+    """Compute GUID counts and quality metrics in a single pass.
+
+    Returns (guid_counts, quality_dict) where quality_dict matches the
+    ``root_guid_quality`` output shape.
+    """
+    counts: dict[str, int] = {}
+    invalid = 0
+    for entity in entities.values():
+        gid = entity.get("global_id")
+        if gid is None:
+            continue
+        if not isinstance(gid, str) or gid.strip() == "":
+            invalid += 1
+            continue
+        counts[gid] = counts.get(gid, 0) + 1
+    valid_total = sum(counts.values())
+    unique_valid = sum(1 for c in counts.values() if c == 1)
+    duplicate_ids = sum(1 for c in counts.values() if c > 1)
+    duplicate_occurrences = sum(c for c in counts.values() if c > 1)
+    return counts, {
+        "valid_total": valid_total,
+        "unique_valid": unique_valid,
+        "duplicate_ids": duplicate_ids,
+        "duplicate_occurrences": duplicate_occurrences,
+        "invalid": invalid,
+    }
 
 
 def _unique_guid_step_index(
