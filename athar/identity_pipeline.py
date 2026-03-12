@@ -13,12 +13,16 @@ from .types import GraphIR, IdentityInfo
 
 def _precompute_identity_state(graph: GraphIR, *, profile: str) -> dict[str, Any]:
     entities = graph.get("entities", {})
+    guid_counts = _guid_index(entities)
+    unique_guid_steps = _unique_guid_step_index(entities, guid_counts=guid_counts)
     id_graph = _graph_for_profile(graph, profile=profile)
     id_entities = id_graph.get("entities", {})
     wl_diagnostics: dict[str, Any] = {}
     colors, scc_classes = wl_refine_with_scc_fallback(id_graph, diagnostics=wl_diagnostics)
     return {
         "entities": entities,
+        "guid_counts": guid_counts,
+        "unique_guid_steps": unique_guid_steps,
         "id_entities": id_entities,
         "colors": colors,
         "scc_classes": scc_classes,
@@ -53,7 +57,7 @@ def _assign_ids(
         policy=guid_policy,
         side=side,
     )
-    guid_index = _guid_index(entities)
+    guid_index = identity_state.get("guid_counts") or _guid_index(entities)
     disambiguated = guid_policy_out["disambiguated"]
     ids: dict[int, str] = {}
     identity: dict[int, IdentityInfo] = {}
@@ -120,8 +124,11 @@ def _guid_index(entities: dict[int, dict]) -> dict[str, int]:
     return counts
 
 
-def _unique_guid_step_index(entities: dict[int, dict]) -> dict[str, int]:
-    counts = _guid_index(entities)
+def _unique_guid_step_index(
+    entities: dict[int, dict],
+    guid_counts: dict[str, int] | None = None,
+) -> dict[str, int]:
+    counts = guid_counts if guid_counts is not None else _guid_index(entities)
     out: dict[str, int] = {}
     for step_id, entity in entities.items():
         gid = entity.get("global_id")
@@ -134,9 +141,20 @@ def _match_root_steps(
     old_graph: GraphIR,
     new_graph: GraphIR,
     root_remap: dict[str, str],
+    *,
+    old_unique_guid_steps: dict[str, int] | None = None,
+    new_unique_guid_steps: dict[str, int] | None = None,
 ) -> dict[int, int]:
-    old_roots = _unique_guid_step_index(old_graph.get("entities", {}))
-    new_roots = _unique_guid_step_index(new_graph.get("entities", {}))
+    old_roots = (
+        old_unique_guid_steps
+        if old_unique_guid_steps is not None
+        else _unique_guid_step_index(old_graph.get("entities", {}))
+    )
+    new_roots = (
+        new_unique_guid_steps
+        if new_unique_guid_steps is not None
+        else _unique_guid_step_index(new_graph.get("entities", {}))
+    )
     pairs: dict[int, int] = {}
     for old_gid, old_step in sorted(old_roots.items()):
         mapped_gid = root_remap.get(old_gid, old_gid)
@@ -147,19 +165,21 @@ def _match_root_steps(
 
 
 def _match_steps_by_unique_id(old_ids: dict[int, str], new_ids: dict[int, str]) -> dict[int, int]:
-    old_by_id: dict[str, list[int]] = {}
-    new_by_id: dict[str, list[int]] = {}
+    old_first: dict[str, int] = {}
+    old_counts: dict[str, int] = {}
     for step_id, entity_id in old_ids.items():
-        old_by_id.setdefault(entity_id, []).append(step_id)
+        old_counts[entity_id] = old_counts.get(entity_id, 0) + 1
+        old_first.setdefault(entity_id, step_id)
+    new_first: dict[str, int] = {}
+    new_counts: dict[str, int] = {}
     for step_id, entity_id in new_ids.items():
-        new_by_id.setdefault(entity_id, []).append(step_id)
+        new_counts[entity_id] = new_counts.get(entity_id, 0) + 1
+        new_first.setdefault(entity_id, step_id)
 
     pairs: dict[int, int] = {}
-    for entity_id in sorted(set(old_by_id) & set(new_by_id)):
-        old_steps = old_by_id[entity_id]
-        new_steps = new_by_id[entity_id]
-        if len(old_steps) == 1 and len(new_steps) == 1:
-            pairs[old_steps[0]] = new_steps[0]
+    for entity_id in sorted(set(old_counts) & set(new_counts)):
+        if old_counts[entity_id] == 1 and new_counts[entity_id] == 1:
+            pairs[old_first[entity_id]] = new_first[entity_id]
     return pairs
 
 
@@ -212,10 +232,18 @@ def _index_by_identity(
     graph: GraphIR,
     ids: dict[int, str],
     identity: dict[int, IdentityInfo],
+    *,
+    profile_entities: dict[int, dict] | None = None,
+    compare_entities: dict[int, dict] | None = None,
 ) -> dict[str, list[dict]]:
     by_id: dict[str, list[dict]] = {}
-    for step_id, entity in graph.get("entities", {}).items():
-        by_id.setdefault(ids[step_id], []).append({
+    entities = graph.get("entities", {})
+    profile_entities = profile_entities or entities
+    compare_entities = compare_entities or {}
+    for step_id in sorted(entities):
+        entity = entities[step_id]
+        profile_entity = profile_entities.get(step_id, entity)
+        item = {
             "step_id": step_id,
             "entity": entity,
             "identity": identity.get(step_id, {
@@ -223,7 +251,10 @@ def _index_by_identity(
                 "match_confidence": 1.0,
                 "matched_on": None,
             }),
-        })
-    for items in by_id.values():
-        items.sort(key=lambda item: item["step_id"])
+        }
+        if profile_entity is not entity:
+            item["profile_entity"] = profile_entity
+        if step_id in compare_entities:
+            item["compare_entity"] = compare_entities[step_id]
+        by_id.setdefault(ids[step_id], []).append(item)
     return by_id

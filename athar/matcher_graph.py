@@ -103,6 +103,14 @@ def secondary_match_unresolved(
         step_id for step_id, entity in new_entities.items()
         if step_id not in used_new and not _is_root(entity)
     ]
+    if not unresolved_old or not unresolved_new:
+        return {
+            "method": "secondary_match",
+            "old_to_new": {},
+            "diagnostics": {},
+            "ambiguous": 0,
+            "ambiguous_partitions": [],
+        }
     if (
         isinstance(unresolved_limit, int)
         and unresolved_limit > 0
@@ -125,9 +133,8 @@ def secondary_match_unresolved(
     old_reverse = build_reverse_adjacency(old_entities, old_adjacency)
     new_reverse = build_reverse_adjacency(new_entities, new_adjacency)
 
-    for step_id, entity in old_entities.items():
-        if step_id in used_old or _is_root(entity):
-            continue
+    for step_id in unresolved_old:
+        entity = old_entities[step_id]
         family = entity_type_family(entity.get("entity_type"))
         old_blocks[family].append(step_id)
         old_features[step_id] = build_feature_vector(
@@ -138,9 +145,8 @@ def secondary_match_unresolved(
             reverse_adjacency=old_reverse,
         )
 
-    for step_id, entity in new_entities.items():
-        if step_id in used_new or _is_root(entity):
-            continue
+    for step_id in unresolved_new:
+        entity = new_entities[step_id]
         family = entity_type_family(entity.get("entity_type"))
         new_blocks[family].append(step_id)
         new_features[step_id] = build_feature_vector(
@@ -372,5 +378,4 @@ def _with_block_diagnostics(
             "matched_on": matched_on,
         }
     return out
-
 

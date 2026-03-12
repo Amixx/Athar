@@ -59,6 +59,9 @@ def prepare_diff_context(
         identity_precompute_cache[key] = precomputed
         return precomputed
 
+    old_state = _identity_precompute(old_graph)
+    new_state = _identity_precompute(new_graph)
+
     _emit_progress(progress_callback, {
         "status": "start",
         "completed_steps": 0,
@@ -95,7 +98,7 @@ def prepare_diff_context(
         root_remap=remap["old_to_new"],
         root_remap_diagnostics=remap.get("diagnostics", {}),
         side="old",
-        precomputed=_identity_precompute(old_graph),
+        precomputed=old_state,
         diagnostics=old_assign_diagnostics,
     )
     _record_timing(timing_collector, "assign_old_ids", stage_started)
@@ -108,14 +111,20 @@ def prepare_diff_context(
         profile=profile,
         guid_policy=guid_policy,
         side="new",
-        precomputed=_identity_precompute(new_graph),
+        precomputed=new_state,
         diagnostics=new_assign_diagnostics,
     )
     _record_timing(timing_collector, "assign_new_ids", stage_started)
     _record_identity_diagnostics(timing_collector, "assign_new_ids", new_assign_diagnostics)
     _step_done("assign_new_ids")
     stage_started = time.perf_counter()
-    root_pairs = _match_root_steps(old_graph, new_graph, remap["old_to_new"])
+    root_pairs = _match_root_steps(
+        old_graph,
+        new_graph,
+        remap["old_to_new"],
+        old_unique_guid_steps=old_state.get("unique_guid_steps"),
+        new_unique_guid_steps=new_state.get("unique_guid_steps"),
+    )
     _record_timing(timing_collector, "match_root_steps", stage_started)
     _step_done("match_root_steps")
     stage_started = time.perf_counter()
@@ -182,11 +191,42 @@ def prepare_diff_context(
     _step_done("apply_equivalence_classes")
 
     stage_started = time.perf_counter()
-    old_by_id = _index_by_identity(old_graph, old_ids, old_identity)
+    old_profile_entities = old_state.get("id_entities", old_graph.get("entities", {}))
+    new_profile_entities = new_state.get("id_entities", new_graph.get("entities", {}))
+    comparable_non_h_ids = {
+        entity_id
+        for entity_id in (set(old_ids.values()) & set(new_ids.values()))
+        if isinstance(entity_id, str) and not entity_id.startswith("H:")
+    }
+    old_compare_entities = _build_compare_entities(
+        old_profile_entities,
+        old_ids,
+        comparable_ids=comparable_non_h_ids,
+    )
+    new_compare_entities = _build_compare_entities(
+        new_profile_entities,
+        new_ids,
+        comparable_ids=comparable_non_h_ids,
+    )
+    _record_timing(timing_collector, "build_compare_entities", stage_started)
+
+    old_by_id = _index_by_identity(
+        old_graph,
+        old_ids,
+        old_identity,
+        profile_entities=old_profile_entities,
+        compare_entities=old_compare_entities,
+    )
     _record_timing(timing_collector, "index_old_by_identity", stage_started)
     _step_done("index_old_by_identity")
     stage_started = time.perf_counter()
-    new_by_id = _index_by_identity(new_graph, new_ids, new_identity)
+    new_by_id = _index_by_identity(
+        new_graph,
+        new_ids,
+        new_identity,
+        profile_entities=new_profile_entities,
+        compare_entities=new_compare_entities,
+    )
     _record_timing(timing_collector, "index_new_by_identity", stage_started)
     _step_done("index_new_by_identity")
     stage_started = time.perf_counter()
@@ -284,7 +324,15 @@ def entities_equal(
     profile: str,
     old_ids: dict[int, str] | None = None,
     new_ids: dict[int, str] | None = None,
+    old_compare_entity: EntityIR | None = None,
+    new_compare_entity: EntityIR | None = None,
 ) -> bool:
+    if old_compare_entity is not None and new_compare_entity is not None:
+        return (
+            old_compare_entity.get("entity_type") == new_compare_entity.get("entity_type")
+            and old_compare_entity.get("attributes") == new_compare_entity.get("attributes")
+            and old_compare_entity.get("refs") == new_compare_entity.get("refs")
+        )
     old_norm = entity_for_profile(old_ent, profile=profile)
     new_norm = entity_for_profile(new_ent, profile=profile)
     if entity_id.startswith("H:"):
@@ -398,31 +446,64 @@ def _emit_progress(callback: ProgressCallback | None, payload: dict[str, Any]) -
 
 
 def _normalize_entity_ref_targets(entity: EntityIR, ids_by_step: dict[int, str]) -> EntityIR:
-    refs = []
-    for ref in entity.get("refs", []):
+    refs_in = entity.get("refs", [])
+    attrs_in = entity.get("attributes", {})
+    if not refs_in:
+        return entity
+
+    refs_changed = False
+    refs: list[dict[str, Any]] = []
+    for ref in refs_in:
         target = ref.get("target")
+        mapped_target = _map_ref_target(target, ids_by_step)
+        if mapped_target == target:
+            refs.append(ref)
+            continue
+        refs_changed = True
         refs.append({
             **ref,
-            "target": _map_ref_target(target, ids_by_step),
+            "target": mapped_target,
         })
-    attrs = _normalize_attr_refs(entity.get("attributes", {}), ids_by_step)
+
+    attrs = _normalize_attr_refs(attrs_in, ids_by_step)
+    if attrs is attrs_in and not refs_changed:
+        return entity
     return {
         **entity,
         "attributes": attrs,
-        "refs": refs,
+        "refs": refs if refs_changed else refs_in,
     }
 
 
 def _normalize_attr_refs(value: Any, ids_by_step: dict[int, str]) -> Any:
     if isinstance(value, dict):
-        if value.get("kind") == "ref":
-            return {
-                **value,
-                "id": _map_ref_target(value.get("id"), ids_by_step),
-            }
-        return {k: _normalize_attr_refs(v, ids_by_step) for k, v in value.items()}
+        kind = value.get("kind")
+        if kind == "ref":
+            mapped = _map_ref_target(value.get("id"), ids_by_step)
+            if mapped == value.get("id"):
+                return value
+            out = dict(value)
+            out["id"] = mapped
+            return out
+        if kind in {"null", "bool", "int", "real", "string"}:
+            return value
+        changed = False
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized = _normalize_attr_refs(item, ids_by_step)
+            out[key] = normalized
+            if normalized is not item:
+                changed = True
+        return out if changed else value
     if isinstance(value, list):
-        return [_normalize_attr_refs(item, ids_by_step) for item in value]
+        changed = False
+        out: list[Any] = []
+        for item in value:
+            normalized = _normalize_attr_refs(item, ids_by_step)
+            out.append(normalized)
+            if normalized is not item:
+                changed = True
+        return out if changed else value
     return value
 
 
@@ -430,3 +511,20 @@ def _map_ref_target(target: Any, ids_by_step: dict[int, str]) -> Any:
     if isinstance(target, int):
         return ids_by_step.get(target, f"STEP:{target}")
     return target
+
+
+def _build_compare_entities(
+    profile_entities: dict[int, EntityIR],
+    ids_by_step: dict[int, str],
+    *,
+    comparable_ids: set[str] | None = None,
+) -> dict[int, EntityIR]:
+    out: dict[int, EntityIR] = {}
+    for step_id, entity in profile_entities.items():
+        entity_id = ids_by_step.get(step_id, "")
+        if not isinstance(entity_id, str) or entity_id.startswith("H:"):
+            continue
+        if comparable_ids is not None and entity_id not in comparable_ids:
+            continue
+        out[step_id] = _normalize_entity_ref_targets(entity, ids_by_step)
+    return out

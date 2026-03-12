@@ -16,6 +16,11 @@ def test_eta_format_helper():
     assert benchmark_diff_engine._format_eta(3675) == "1h 1m 15s"
 
 
+def test_duration_format_helper():
+    assert benchmark_diff_engine._format_duration_ms(999.9) == "0m 0s 999.9ms"
+    assert benchmark_diff_engine._format_duration_ms(61_234.0) == "1m 1s 234.0ms"
+
+
 def test_progress_eta_from_probe_prefers_counts():
     progress_eta = benchmark_diff_engine._progress_eta_from_probe(
         100_000.0,
@@ -99,6 +104,7 @@ def test_benchmark_diff_engine_collects_engine_timings(monkeypatch, tmp_path):
     report = json.loads(out.read_text(encoding="utf-8"))
 
     assert report["config"]["engine_timings"] is True
+    assert "run_summary" in report
     assert report["config"]["heartbeat_s"] == 30
     parse_ms = report["results"][0]["parse_ms"]
     assert set(parse_ms) == {"old_graph", "new_graph", "total"}
@@ -152,6 +158,7 @@ def test_benchmark_diff_engine_does_not_collect_timings_by_default(monkeypatch, 
     report = json.loads(out.read_text(encoding="utf-8"))
 
     assert report["config"]["engine_timings"] is False
+    assert "run_summary" in report
     assert report["config"]["heartbeat_s"] == 30
     parse_ms = report["results"][0]["parse_ms"]
     assert set(parse_ms) == {"old_graph", "new_graph", "total"}

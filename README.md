@@ -106,8 +106,10 @@ python -m scripts.explore.benchmark_diff_engine --case ifchouse:data/BasicHouse.
 ```
 
 Heartbeat lines include coarse `progress~...` and `eta~...` estimates (stage-aware where available), with ETA shown in human duration format (`h m s` when needed).
+Console logs for parse/heartbeat/metric means now print elapsed durations as `Xm Ys Zms` (not millisecond-only values).
 For `diff_graphs`, stage-aware progress includes context pipeline steps, base-change scan progress, and derived-marker completion.
 For stream metrics, heartbeat also reports emitted-record progress (`items=...`) and ETA when expected record counts are known.
+Benchmark JSON reports include end-to-end run wall time under `run_summary.total_elapsed_ms` and `run_summary.total_elapsed_text`.
 
 Write live progress snapshots to a sidecar JSON:
 

@@ -156,7 +156,7 @@ def _benchmark_repeated(
                             "eta_text": eta_text,
                         })
                 print(
-                    f"[bench] {label} iter {i + 1}/{iterations} heartbeat elapsed_ms={elapsed_ms:.1f}{extra}",
+                    f"[bench] {label} iter {i + 1}/{iterations} heartbeat elapsed={_format_duration_ms(elapsed_ms)}{extra}",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -174,7 +174,7 @@ def _benchmark_repeated(
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         print(
-            f"[bench] {label} iter {i + 1}/{iterations} done elapsed_ms={elapsed_ms:.2f} peak_bytes={int(peak)}",
+            f"[bench] {label} iter {i + 1}/{iterations} done elapsed={_format_duration_ms(elapsed_ms)} peak_bytes={int(peak)}",
             file=sys.stderr,
             flush=True,
         )
@@ -250,6 +250,13 @@ def _format_eta(seconds: float) -> str:
     if minutes > 0:
         return f"{minutes}m {secs}s"
     return f"{secs}s"
+
+
+def _format_duration_ms(milliseconds: float) -> str:
+    total_ms = max(float(milliseconds), 0.0)
+    minutes, rem_ms = divmod(total_ms, 60_000.0)
+    seconds, millis = divmod(rem_ms, 1_000.0)
+    return f"{int(minutes)}m {int(seconds)}s {millis:.1f}ms"
 
 
 def _probe_progress(progress_probe: Callable[[], dict[str, Any] | None] | None) -> dict[str, Any] | None:
@@ -362,7 +369,7 @@ def _run_case(
     old_graph = parse_graph(str(case.old_path), profile=profile)
     old_parse_ms = (time.perf_counter() - parse_started) * 1000.0
     print(
-        f"[bench] case={case.name} parsed old graph in {old_parse_ms:.1f} ms",
+        f"[bench] case={case.name} parsed old graph in {_format_duration_ms(old_parse_ms)}",
         file=sys.stderr,
         flush=True,
     )
@@ -389,7 +396,7 @@ def _run_case(
         new_graph = parse_graph(str(case.new_path), profile=profile)
         new_parse_ms = (time.perf_counter() - parse_started) * 1000.0
         print(
-            f"[bench] case={case.name} parsed new graph in {new_parse_ms:.1f} ms",
+            f"[bench] case={case.name} parsed new graph in {_format_duration_ms(new_parse_ms)}",
             file=sys.stderr,
             flush=True,
         )
@@ -453,7 +460,7 @@ def _run_case(
         # Coarse prior: full diff usually dominates parse by a large constant factor.
         diff_expected_ms = max(parse_total_ms * 8.0, 120000.0)
         print(
-            f"[bench] case={case.name} metric=diff_graphs eta_model=heuristic expected_ms={diff_expected_ms:.1f}",
+            f"[bench] case={case.name} metric=diff_graphs eta_model=heuristic expected={_format_duration_ms(diff_expected_ms)}",
             file=sys.stderr,
             flush=True,
         )
@@ -477,7 +484,7 @@ def _run_case(
         if engine_timings and diff_timing_samples:
             diff_stats["engine_timings_ms"] = _summarize_named_float_samples(diff_timing_samples)
         print(
-            f"[bench] case={case.name} metric=diff_graphs mean_ms={diff_stats['summary']['time_ms']['mean']}",
+            f"[bench] case={case.name} metric=diff_graphs mean={_format_duration_ms(diff_stats['summary']['time_ms']['mean'])}",
             file=sys.stderr,
             flush=True,
         )
@@ -530,7 +537,7 @@ def _run_case(
             ),
         )
         print(
-            f"[bench] case={case.name} metric=stream_ndjson mean_ms={ndjson_stats['summary']['time_ms']['mean']}",
+            f"[bench] case={case.name} metric=stream_ndjson mean={_format_duration_ms(ndjson_stats['summary']['time_ms']['mean'])}",
             file=sys.stderr,
             flush=True,
         )
@@ -585,7 +592,7 @@ def _run_case(
             ),
         )
         print(
-            f"[bench] case={case.name} metric=stream_chunked_json mean_ms={chunked_stats['summary']['time_ms']['mean']}",
+            f"[bench] case={case.name} metric=stream_chunked_json mean={_format_duration_ms(chunked_stats['summary']['time_ms']['mean'])}",
             file=sys.stderr,
             flush=True,
         )
@@ -817,6 +824,7 @@ def main() -> None:
         },
         "results": [],
     }
+    run_started = time.perf_counter()
     total_cases = len(cases)
     try:
         for idx, case in enumerate(cases, start=1):
@@ -859,6 +867,7 @@ def main() -> None:
                 progress_update=_case_progress,
             )
             report["results"].append(case_result)
+            case_elapsed_ms = (time.perf_counter() - case_start) * 1000.0
             _progress_update({
                 "state": "running",
                 "completed_cases": idx,
@@ -867,7 +876,8 @@ def main() -> None:
                     "total": total_cases,
                     "name": case.name,
                     "phase": "completed",
-                    "elapsed_ms": round((time.perf_counter() - case_start) * 1000.0, 3),
+                    "elapsed_ms": round(case_elapsed_ms, 3),
+                    "elapsed_text": _format_duration_ms(case_elapsed_ms),
                 },
             })
     except Exception as exc:
@@ -877,6 +887,12 @@ def main() -> None:
         })
         raise
 
+    total_elapsed_ms = (time.perf_counter() - run_started) * 1000.0
+    report["run_summary"] = {
+        "total_elapsed_ms": round(total_elapsed_ms, 3),
+        "total_elapsed_text": _format_duration_ms(total_elapsed_ms),
+        "total_cases": total_cases,
+    }
     payload = canonical_json(report) + "\n"
     if args.out:
         out_path = Path(args.out)
@@ -892,7 +908,14 @@ def main() -> None:
         "completed_cases": total_cases,
         "current_case": None,
         "report_path": str(out_path) if args.out else None,
+        "total_elapsed_ms": round(total_elapsed_ms, 3),
+        "total_elapsed_text": _format_duration_ms(total_elapsed_ms),
     })
+    print(
+        f"[bench] completed cases={total_cases}/{total_cases} total_elapsed={_format_duration_ms(total_elapsed_ms)}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

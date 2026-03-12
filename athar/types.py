@@ -34,6 +34,8 @@ class ContextEntityItem(TypedDict, total=False):
     step_id: int
     entity: EntityIR
     identity: IdentityInfo
+    profile_entity: EntityIR
+    compare_entity: EntityIR
 
 
 class DiffContext(TypedDict, total=False):

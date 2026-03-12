@@ -31,10 +31,12 @@ def make_change(
     rooted_owners: dict[str, Any],
     profile: str,
     include_snapshots: bool = True,
+    old_profile_entity: dict | None = None,
+    new_profile_entity: dict | None = None,
 ) -> dict[str, Any]:
     field_ops = []
-    old_view = snapshot(old_ent, profile=profile)
-    new_view = snapshot(new_ent, profile=profile)
+    old_view = _snapshot_from_profile_entity(old_profile_entity) if old_profile_entity is not None else snapshot(old_ent, profile=profile)
+    new_view = _snapshot_from_profile_entity(new_profile_entity) if new_profile_entity is not None else snapshot(new_ent, profile=profile)
     if op == "MODIFY":
         field_ops = diff_values(
             old_view,
@@ -64,6 +66,16 @@ def make_change(
         "rooted_owners": rooted_owners,
         "change_categories": change_categories,
         "equivalence_class": None,
+    }
+
+
+def _snapshot_from_profile_entity(entity: dict | None) -> dict | None:
+    if entity is None:
+        return None
+    return {
+        "entity_type": entity.get("entity_type"),
+        "attributes": entity.get("attributes"),
+        "refs": entity.get("refs"),
     }
 
 
