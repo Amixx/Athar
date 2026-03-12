@@ -15,12 +15,14 @@ def _precompute_identity_state(graph: GraphIR, *, profile: str) -> dict[str, Any
     entities = graph.get("entities", {})
     id_graph = _graph_for_profile(graph, profile=profile)
     id_entities = id_graph.get("entities", {})
-    colors, scc_classes = wl_refine_with_scc_fallback(id_graph)
+    wl_diagnostics: dict[str, Any] = {}
+    colors, scc_classes = wl_refine_with_scc_fallback(id_graph, diagnostics=wl_diagnostics)
     return {
         "entities": entities,
         "id_entities": id_entities,
         "colors": colors,
         "scc_classes": scc_classes,
+        "wl_diagnostics": wl_diagnostics,
     }
 
 
@@ -33,6 +35,7 @@ def _assign_ids(
     root_remap_diagnostics: dict[str, dict[str, Any]] | None = None,
     side: str,
     precomputed: dict[str, Any] | None = None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> tuple[dict[int, str], dict[int, IdentityInfo]]:
     identity_state = precomputed if precomputed is not None else _precompute_identity_state(
         graph, profile=profile
@@ -41,6 +44,10 @@ def _assign_ids(
     id_entities = identity_state["id_entities"]
     colors = identity_state["colors"]
     scc_classes = identity_state["scc_classes"]
+    if diagnostics is not None and isinstance(identity_state.get("wl_diagnostics"), dict):
+        wl_diag = identity_state["wl_diagnostics"]
+        if isinstance(wl_diag.get("wl"), dict):
+            diagnostics["wl"] = dict(wl_diag["wl"])
     guid_policy_out = enforce_or_disambiguate_guid_policy(
         entities,
         policy=guid_policy,

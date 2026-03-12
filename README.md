@@ -60,6 +60,7 @@ python -m athar old.ifc new.ifc --timings
 # Override matcher policy knobs
 python -m athar old.ifc new.ifc --secondary-score-threshold 0.65 --secondary-assignment-max 6
 python -m athar old.ifc new.ifc --root-remap-score-threshold 0.7 --root-remap-score-margin 0.06
+python -m athar old.ifc new.ifc --secondary-unresolved-limit 120000
 ```
 
 See the [sample report](docs/SAMPLE_REPORT.md) for what the output looks like.
@@ -87,6 +88,12 @@ Include per-stage `diff_graphs` timings (from engine `stats.timings_ms`) when bo
 
 ```bash
 python -m scripts.explore.benchmark_diff_engine --case ifchouse:data/BasicHouse.ifc:data/BasicHouse.ifc --warmup 0 --iterations 1 --engine-timings --out docs/perf/batch11_baseline_YYYY-MM-DD.json
+```
+
+Run only one metric (recommended during active tuning loops):
+
+```bash
+python -m scripts.explore.benchmark_diff_engine --case ifchouse:data/BasicHouse.ifc:data/BasicHouse.ifc --metric diff_graphs --warmup 0 --iterations 1 --engine-timings --heartbeat-s 15 --out /tmp/ifchouse-diff-only.json
 ```
 
 Show liveness during long metric iterations:

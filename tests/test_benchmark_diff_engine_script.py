@@ -242,3 +242,48 @@ def test_benchmark_diff_engine_reuses_parse_for_same_path_case(monkeypatch, tmp_
 
     benchmark_diff_engine.main()
     assert calls == ["old.ifc"]
+
+
+def test_benchmark_diff_engine_can_run_single_metric(monkeypatch, tmp_path):
+    out = tmp_path / "bench.json"
+    stream_calls = {"count": 0}
+
+    monkeypatch.setattr(
+        benchmark_diff_engine,
+        "parse_graph",
+        lambda _path, profile: {"entities": {}, "metadata": {"schema": "IFC4"}},
+    )
+    monkeypatch.setattr(
+        benchmark_diff_engine,
+        "diff_graphs",
+        lambda *_args, **_kwargs: {"base_changes": [], "derived_markers": [], "stats": {}},
+    )
+
+    def _fake_stream(*_args, **_kwargs):
+        stream_calls["count"] += 1
+        return iter(['{"kind":"end"}'])
+
+    monkeypatch.setattr(benchmark_diff_engine, "stream_diff_graphs", _fake_stream)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "benchmark_diff_engine",
+            "--case",
+            "one:old.ifc:new.ifc",
+            "--warmup",
+            "0",
+            "--iterations",
+            "1",
+            "--metric",
+            "diff_graphs",
+            "--out",
+            str(out),
+        ],
+    )
+
+    benchmark_diff_engine.main()
+    report = json.loads(out.read_text(encoding="utf-8"))
+    metrics = report["results"][0]["metrics"]
+    assert set(metrics) == {"diff_graphs"}
+    assert report["config"]["metrics"] == ["diff_graphs"]
+    assert stream_calls["count"] == 0
