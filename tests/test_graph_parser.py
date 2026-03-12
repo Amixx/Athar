@@ -1,4 +1,5 @@
 import ifcopenshell
+import pytest
 
 from athar.graph_parser import parse_graph
 
@@ -29,3 +30,12 @@ def test_select_wrapper_and_refs_are_canonicalized():
     wall_rec = graph["entities"][wall.id()]
     assert wall_rec["attributes"]["ObjectPlacement"]["kind"] == "ref"
     assert any(r["path"] == "/ObjectPlacement" for r in wall_rec["refs"])
+
+
+@pytest.mark.parametrize("schema", ["IFC2X3", "IFC4", "IFC4X3"])
+def test_graph_parser_supports_core_ifc_schemas(tmp_path, schema):
+    filepath = tmp_path / f"minimal_{schema}.ifc"
+    ifcopenshell.file(schema=schema).write(str(filepath))
+    graph = parse_graph(str(filepath))
+    assert graph["metadata"]["schema"] == schema
+    assert graph["entities"] == {}
