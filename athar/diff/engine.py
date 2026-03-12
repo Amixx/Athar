@@ -8,8 +8,8 @@ import os
 import time
 from typing import Any
 
-from .diff_engine_changes import make_change, make_class_delta_change
-from .diff_engine_context import (
+from .changes import make_change, make_class_delta_change
+from .context import (
     _dangling_ref_count,
     _normalize_entity_ref_targets,
     build_result,
@@ -21,9 +21,9 @@ from .diff_engine_context import (
     result_header,
     should_emit_class_delta,
 )
-from .diff_engine_markers import build_derived_markers, summarize_rooted_owners
-from .diff_engine_stats import root_guid_quality
-from .diff_engine_streaming import stream_diff_events
+from .markers import build_derived_markers, summarize_rooted_owners
+from .stats import root_guid_quality
+from .streaming import stream_diff_events
 from .geometry_invariants import representation_invariants_match
 from .geometry_policy import (
     GEOMETRY_POLICY_STRICT_SYNTAX,
@@ -31,10 +31,10 @@ from .geometry_policy import (
     validate_geometry_policy,
 )
 from .graph_cache import content_hash, load_cached, restore_identity_state, save_cached
-from .graph_parser import graph_from_ifc, open_ifc, parse_graph
+from ..graph.graph_parser import graph_from_ifc, open_ifc, parse_graph
 from .guid_policy import GUID_POLICY_FAIL_FAST, enforce_or_disambiguate_guid_policy, validate_guid_policy
 from .matcher_policy import resolve_matcher_policy
-from .profile_policy import DEFAULT_PROFILE, validate_profile
+from ..graph.profile_policy import DEFAULT_PROFILE, validate_profile
 from .types import DiffContext, EntityIR, GraphIR
 
 ProgressCallback = Callable[[dict[str, Any]], None]

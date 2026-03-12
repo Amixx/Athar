@@ -9,8 +9,8 @@ from pathlib import Path
 import sys
 import time
 
-from athar.determinism import canonical_json
-from athar.diff_engine import diff_graphs, stream_diff_graphs
+from athar.graph.determinism import canonical_json
+from athar.diff.engine import diff_graphs, stream_diff_graphs
 
 
 def _graph(entities: dict[int, dict]) -> dict:

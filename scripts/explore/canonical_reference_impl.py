@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from athar.canonical_values import (
+from athar.graph.canonical_values import (
     PROFILE_RAW_EXACT,
     canonical_bag,
     canonical_list,

@@ -27,11 +27,11 @@ import time
 import tracemalloc
 from typing import Any, Callable
 
-from athar.diff_engine_context import prepare_diff_context
-from athar.geometry_policy import GEOMETRY_POLICY_CHOICES, GEOMETRY_POLICY_STRICT_SYNTAX
-from athar.graph_parser import parse_graph
-from athar.guid_policy import GUID_POLICY_CHOICES, GUID_POLICY_FAIL_FAST
-from athar.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
+from athar.diff.context import prepare_diff_context
+from athar.diff.geometry_policy import GEOMETRY_POLICY_CHOICES, GEOMETRY_POLICY_STRICT_SYNTAX
+from athar.graph.graph_parser import parse_graph
+from athar.diff.guid_policy import GUID_POLICY_CHOICES, GUID_POLICY_FAIL_FAST
+from athar.graph.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
 
 
 @dataclass(frozen=True)

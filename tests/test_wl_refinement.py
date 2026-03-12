@@ -2,7 +2,7 @@ import importlib.util
 
 import pytest
 
-from athar.wl_refinement import wl_refine_colors, wl_refine_with_scc_fallback
+from athar.diff.wl_refinement import wl_refine_colors, wl_refine_with_scc_fallback
 
 
 def _make_graph(offset: int = 0, edge_path: str = "/Ref") -> dict:
@@ -134,11 +134,11 @@ def test_wl_scc_fallback_can_reuse_prebuilt_adjacency(monkeypatch):
         2: [("/Ref", "IfcWall", 1)],
     }
     monkeypatch.setattr(
-        "athar.wl_refinement.build_adjacency",
+        "athar.diff.wl_refinement.build_adjacency",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("build_adjacency should not be called")),
     )
     monkeypatch.setattr(
-        "athar.wl_refinement.build_reverse_adjacency",
+        "athar.diff.wl_refinement.build_reverse_adjacency",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("build_reverse_adjacency should not be called")),
     )
     colors, _classes = wl_refine_with_scc_fallback(

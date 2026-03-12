@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from .profile_policy import entity_for_profile
+from ..graph.profile_policy import entity_for_profile
 from .text_fingerprint import entity_text_fingerprint
 from .types import GraphIR
 
@@ -54,35 +54,64 @@ def text_fingerprint_pairs(
     exclude_old: set[int] | None = None,
     exclude_new: set[int] | None = None,
 ) -> dict[str, Any]:
+    old_collection = collect_text_fingerprint_side(
+        old_graph,
+        profile=profile,
+        exclude_steps=exclude_old,
+    )
+    new_collection = collect_text_fingerprint_side(
+        new_graph,
+        profile=profile,
+        exclude_steps=exclude_new,
+    )
+    return match_text_fingerprint_collections(
+        old_graph,
+        new_graph,
+        old_collection=old_collection,
+        new_collection=new_collection,
+    )
+
+
+def collect_text_fingerprint_side(
+    graph: GraphIR,
+    *,
+    profile: str,
+    exclude_steps: set[int] | None = None,
+) -> dict[str, Any]:
+    entities = graph.get("entities", {})
+    excluded = exclude_steps or set()
+    match_buckets: dict[str, list[int]] = {}
+    all_fingerprints: dict[int, str] = {}
+    profile_entities: dict[int, dict[str, Any]] = {}
+
+    for step_id, entity in entities.items():
+        profile_entity = entity_for_profile(entity, profile=profile)
+        fingerprint = entity_text_fingerprint(profile_entity)
+        all_fingerprints[step_id] = fingerprint
+        profile_entities[step_id] = profile_entity
+        if step_id not in excluded and not entity.get("global_id"):
+            match_buckets.setdefault(fingerprint, []).append(step_id)
+
+    return {
+        "match_buckets": match_buckets,
+        "all_fingerprints": all_fingerprints,
+        "profile_entities": profile_entities,
+    }
+
+
+def match_text_fingerprint_collections(
+    old_graph: GraphIR,
+    new_graph: GraphIR,
+    *,
+    old_collection: dict[str, Any],
+    new_collection: dict[str, Any],
+) -> dict[str, Any]:
     old_entities = old_graph.get("entities", {})
     new_entities = new_graph.get("entities", {})
-    exclude_old = exclude_old or set()
-    exclude_new = exclude_new or set()
-
-    old_buckets: dict[str, list[int]] = {}
-    new_buckets: dict[str, list[int]] = {}
-    # Fingerprint ALL entities (for WL initial colors), but only put
-    # non-GUID, non-excluded entities into cross-file matching buckets.
-    old_all_fingerprints: dict[int, str] = {}
-    new_all_fingerprints: dict[int, str] = {}
-    old_profile_entities: dict[int, dict[str, Any]] = {}
-    new_profile_entities: dict[int, dict[str, Any]] = {}
-
-    for step_id, entity in old_entities.items():
-        profile_entity = entity_for_profile(entity, profile=profile)
-        fp = entity_text_fingerprint(profile_entity)
-        old_all_fingerprints[step_id] = fp
-        old_profile_entities[step_id] = profile_entity
-        if step_id not in exclude_old and not entity.get("global_id"):
-            old_buckets.setdefault(fp, []).append(step_id)
-
-    for step_id, entity in new_entities.items():
-        profile_entity = entity_for_profile(entity, profile=profile)
-        fp = entity_text_fingerprint(profile_entity)
-        new_all_fingerprints[step_id] = fp
-        new_profile_entities[step_id] = profile_entity
-        if step_id not in exclude_new and not entity.get("global_id"):
-            new_buckets.setdefault(fp, []).append(step_id)
+    old_buckets: dict[str, list[int]] = old_collection["match_buckets"]
+    new_buckets: dict[str, list[int]] = new_collection["match_buckets"]
+    old_all_fingerprints: dict[int, str] = old_collection["all_fingerprints"]
+    new_all_fingerprints: dict[int, str] = new_collection["all_fingerprints"]
 
     old_to_new: dict[int, int] = {}
     diagnostics: dict[int, dict[str, Any]] = {}
@@ -135,8 +164,8 @@ def text_fingerprint_pairs(
         "diagnostics": diagnostics,
         "old_all_fingerprints": old_all_fingerprints,
         "new_all_fingerprints": new_all_fingerprints,
-        "old_profile_entities": old_profile_entities,
-        "new_profile_entities": new_profile_entities,
+        "old_profile_entities": old_collection["profile_entities"],
+        "new_profile_entities": new_collection["profile_entities"],
         "ambiguous_buckets": ambiguous,
         "refined_buckets": refined,
         "fingerprints": fingerprints,

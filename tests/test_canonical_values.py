@@ -1,4 +1,4 @@
-from athar.canonical_values import (
+from athar.graph.canonical_values import (
     CanonicalizationError,
     canonical_bag,
     canonical_list,

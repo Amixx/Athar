@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from .graph_utils import build_adjacency, build_reverse_adjacency
-from .structural_hash import structural_hash
+from ..graph.graph_utils import build_adjacency, build_reverse_adjacency
+from ..graph.structural_hash import structural_hash
 from .wl_refinement import wl_refine_with_scc_fallback
 from .guid_policy import enforce_or_disambiguate_guid_policy
-from .profile_policy import entity_for_profile
+from ..graph.profile_policy import entity_for_profile
 from .types import GraphIR, IdentityInfo
 
 _DEFAULT_EXACT_HASH_IDENTITY: IdentityInfo = {

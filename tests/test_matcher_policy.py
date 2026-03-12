@@ -1,7 +1,7 @@
 import pytest
 
-from athar.diff_engine import diff_graphs
-from athar.matcher_policy import default_matcher_policy, resolve_matcher_policy
+from athar.diff.engine import diff_graphs
+from athar.diff.matcher_policy import default_matcher_policy, resolve_matcher_policy
 
 
 def _graph(entities: dict[int, dict]) -> dict:

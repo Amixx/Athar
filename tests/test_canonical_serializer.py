@@ -1,4 +1,4 @@
-from athar.canonical_serializer import build_class_record, build_entity_record, serialize_records
+from athar.graph.canonical_serializer import build_class_record, build_entity_record, serialize_records
 
 
 def test_serializer_orders_by_id():

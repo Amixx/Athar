@@ -1,4 +1,4 @@
-from athar.semantic_signature import semantic_signature
+from athar.diff.semantic_signature import semantic_signature
 
 
 def test_semantic_signature_ignores_literal_value_changes():

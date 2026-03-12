@@ -10,9 +10,9 @@ import sys
 import time
 from typing import Any
 
-from athar.determinism import canonical_json
-from athar.graph_parser import parse_graph
-from athar.wl_refinement import wl_refine_with_scc_fallback
+from athar.graph.determinism import canonical_json
+from athar.graph.graph_parser import parse_graph
+from athar.diff.wl_refinement import wl_refine_with_scc_fallback
 
 BACKENDS = ("auto", "sha256", "xxh3_64", "blake3", "blake2b_64")
 

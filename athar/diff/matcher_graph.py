@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Any
 
-from .graph_utils import build_adjacency, build_reverse_adjacency
+from ..graph.graph_utils import build_adjacency, build_reverse_adjacency
 from .matcher_graph_scoring import (
     SECONDARY_ASSIGNMENT_MAX,
     SECONDARY_ASSIGNMENT_AMBIGUITY_MARGIN,

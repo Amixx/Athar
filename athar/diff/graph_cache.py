@@ -142,7 +142,7 @@ def restore_identity_state(
     Re-attaches the ``entities`` and ``id_entities`` references that
     were stripped during serialization.
     """
-    from .profile_policy import entity_for_profile
+    from ..graph.profile_policy import entity_for_profile
 
     identity = dict(cached["identity_state"])
     entities = graph.get("entities", {})

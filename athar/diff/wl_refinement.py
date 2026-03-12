@@ -11,8 +11,8 @@ import time
 from collections import Counter
 from typing import Any, Callable
 
-from .graph_utils import build_adjacency, build_reverse_adjacency
-from .structural_hash import structural_hash
+from ..graph.graph_utils import build_adjacency, build_reverse_adjacency
+from ..graph.structural_hash import structural_hash
 
 _DEFAULT_WL_ROUNDS = 8
 _WL_ROUND_HASH_AUTO = "auto"

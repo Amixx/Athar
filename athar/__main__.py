@@ -6,12 +6,12 @@ import argparse
 import os
 from typing import Any
 
-from athar.diff_engine import diff_files, stream_diff_files
-from athar.diff_engine_markers import OWNER_INDEX_DISK_THRESHOLD_ENV
-from athar.graph_cache import _CACHE_DIR_ENV, _CACHE_ENABLED_ENV, clear_cache
-from athar.geometry_policy import GEOMETRY_POLICY_CHOICES, GEOMETRY_POLICY_STRICT_SYNTAX
-from athar.guid_policy import GUID_POLICY_CHOICES, GUID_POLICY_FAIL_FAST
-from athar.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
+from athar.diff.engine import diff_files, stream_diff_files
+from athar.diff.markers import OWNER_INDEX_DISK_THRESHOLD_ENV
+from athar.diff.graph_cache import _CACHE_DIR_ENV, _CACHE_ENABLED_ENV, clear_cache
+from athar.diff.geometry_policy import GEOMETRY_POLICY_CHOICES, GEOMETRY_POLICY_STRICT_SYNTAX
+from athar.diff.guid_policy import GUID_POLICY_CHOICES, GUID_POLICY_FAIL_FAST
+from athar.graph.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
 
 
 def main():

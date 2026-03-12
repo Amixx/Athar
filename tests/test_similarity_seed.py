@@ -1,7 +1,7 @@
-import athar.identity_pipeline as identity_pipeline_mod
-import athar.diff_engine_context as diff_engine_context_mod
-from athar.diff_engine_context import prepare_diff_context
-from athar.similarity_seed import text_fingerprint_pairs, unique_guid_pairs
+import athar.diff.identity_pipeline as identity_pipeline_mod
+import athar.diff.context as diff_engine_context_mod
+from athar.diff.context import prepare_diff_context
+from athar.diff.similarity_seed import text_fingerprint_pairs, unique_guid_pairs
 
 
 def _graph_with_entities(entities: dict[int, dict]) -> dict:
@@ -222,3 +222,65 @@ def test_prepare_context_does_not_cache_seeded_identity_state(monkeypatch):
     context["new_owner_projector"].close()
 
     assert save_calls["count"] == 0
+
+
+def test_prepare_context_uses_parallel_seeded_side_results_when_enabled(monkeypatch):
+    old_graph = _graph_with_entities({
+        1: {"entity_type": "IfcBeam", "attributes": {"Name": {"kind": "string", "value": "Keep"}}, "refs": []},
+        2: {"entity_type": "IfcBeam", "attributes": {"Name": {"kind": "string", "value": "Old"}}, "refs": []},
+    })
+    new_graph = _graph_with_entities({
+        10: {"entity_type": "IfcBeam", "attributes": {"Name": {"kind": "string", "value": "Keep"}}, "refs": []},
+        20: {"entity_type": "IfcBeam", "attributes": {"Name": {"kind": "string", "value": "New"}}, "refs": []},
+    })
+    calls = {"count": 0}
+
+    def fake_parallel(*_args, **kwargs):
+        calls["count"] += 1
+        return (
+            diff_engine_context_mod._prepare_seeded_side_state(
+                old_graph,
+                profile=kwargs["profile"],
+                exclude_steps=kwargs["exclude_old"],
+            ),
+            diff_engine_context_mod._prepare_seeded_side_state(
+                new_graph,
+                profile=kwargs["profile"],
+                exclude_steps=kwargs["exclude_new"],
+            ),
+        )
+
+    monkeypatch.setattr(diff_engine_context_mod, "_parallel_enabled", lambda: True)
+    monkeypatch.setattr(diff_engine_context_mod, "_prepare_seeded_sides_parallel", fake_parallel)
+
+    context = prepare_diff_context(old_graph, new_graph, profile="semantic_stable")
+    context["old_owner_projector"].close()
+    context["new_owner_projector"].close()
+
+    assert calls["count"] == 1
+    assert context["stats"]["matched_by_method"].get("text_fingerprint") == 1
+
+
+def test_prepare_context_falls_back_to_sequential_seed_collection(monkeypatch):
+    old_graph = _graph_with_entities({
+        1: {"entity_type": "IfcBeam", "attributes": {"Name": {"kind": "string", "value": "Keep"}}, "refs": []},
+    })
+    new_graph = _graph_with_entities({
+        10: {"entity_type": "IfcBeam", "attributes": {"Name": {"kind": "string", "value": "Keep"}}, "refs": []},
+    })
+    calls = {"count": 0}
+    real_text_fingerprint_pairs = diff_engine_context_mod.text_fingerprint_pairs
+
+    def wrapped_text_fingerprint_pairs(*args, **kwargs):
+        calls["count"] += 1
+        return real_text_fingerprint_pairs(*args, **kwargs)
+
+    monkeypatch.setattr(diff_engine_context_mod, "_parallel_enabled", lambda: True)
+    monkeypatch.setattr(diff_engine_context_mod, "_prepare_seeded_sides_parallel", lambda *args, **kwargs: None)
+    monkeypatch.setattr(diff_engine_context_mod, "text_fingerprint_pairs", wrapped_text_fingerprint_pairs)
+
+    context = prepare_diff_context(old_graph, new_graph, profile="semantic_stable")
+    context["old_owner_projector"].close()
+    context["new_owner_projector"].close()
+
+    assert calls["count"] == 1

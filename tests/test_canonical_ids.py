@@ -1,5 +1,5 @@
-from athar.structural_hash import structural_hash
-from athar.wl_refinement import wl_refine_colors
+from athar.graph.structural_hash import structural_hash
+from athar.diff.wl_refinement import wl_refine_colors
 
 
 def test_structural_hash_ignores_step_ids():
