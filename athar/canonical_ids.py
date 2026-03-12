@@ -26,6 +26,8 @@ _WL_ROUND_HASH_CHOICES = frozenset({
     _WL_ROUND_HASH_BLAKE3,
     _WL_ROUND_HASH_BLAKE2B64,
 })
+_SCC_AMBIGUOUS_PARTITION_MAX = 128
+_SCC_FALLBACK_REFINEMENT_ROUNDS = 4
 
 def structural_payload(entity: dict) -> dict:
     """Build a canonical payload for structural hashing."""
@@ -64,7 +66,7 @@ def wl_refine_colors(
     if not entities:
         return {}
 
-    hasher = _resolve_wl_round_hasher(round_hash)
+    hasher_name, hasher = _resolve_wl_round_hasher(round_hash)
     adjacency = _build_adjacency(entities)
     colors = {step_id: structural_hash(entity) for step_id, entity in entities.items()}
 
@@ -80,7 +82,8 @@ def wl_refine_colors(
                 "neighbors": neighbor_sig,
             }
             blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-            next_color = hasher(blob.encode("utf-8"))
+            digest = hasher(blob.encode("utf-8"))
+            next_color = digest if hasher_name == _WL_ROUND_HASH_SHA256 else _sha256_hexdigest(digest.encode("ascii"))
             next_colors[step_id] = next_color
             if next_color != colors[step_id]:
                 changed += 1
@@ -91,7 +94,64 @@ def wl_refine_colors(
     return colors
 
 
-def _resolve_wl_round_hasher(name: str) -> Callable[[bytes], str]:
+def wl_refine_with_scc_fallback(
+    graph: dict,
+    *,
+    max_rounds: int | None = None,
+    round_hash: str = _WL_ROUND_HASH_AUTO,
+    max_partition_size: int = _SCC_AMBIGUOUS_PARTITION_MAX,
+    refinement_rounds: int = _SCC_FALLBACK_REFINEMENT_ROUNDS,
+) -> tuple[dict[int, str], dict[int, str]]:
+    """Run WL refinement and emit deterministic C: IDs for unresolved SCC ambiguity."""
+    if max_partition_size <= 0:
+        raise ValueError("max_partition_size must be > 0")
+    if refinement_rounds < 0:
+        raise ValueError("refinement_rounds must be >= 0")
+
+    entities = graph.get("entities", {})
+    if not entities:
+        return {}, {}
+
+    colors = wl_refine_colors(
+        graph,
+        max_rounds=max_rounds,
+        round_hash=round_hash,
+    )
+    adjacency = _build_adjacency(entities)
+    reverse_adjacency = _build_reverse_adjacency(entities, adjacency)
+    class_ids: dict[int, str] = {}
+
+    sccs = _tarjan_scc(sorted(entities), adjacency)
+    for scc in sccs:
+        if len(scc) <= 1:
+            continue
+        by_color: dict[str, list[int]] = {}
+        for step_id in scc:
+            by_color.setdefault(colors.get(step_id, "MISSING"), []).append(step_id)
+        for color in sorted(by_color):
+            steps = sorted(by_color[color])
+            if len(steps) <= 1:
+                continue
+            unresolved_groups = _bounded_partition_refinement(
+                steps,
+                entities=entities,
+                adjacency=adjacency,
+                reverse_adjacency=reverse_adjacency,
+                colors=colors,
+                max_partition_size=max_partition_size,
+                refinement_rounds=refinement_rounds,
+            )
+            for group in unresolved_groups:
+                if len(group) <= 1:
+                    continue
+                class_id = _ambiguous_class_id(group, entities=entities, colors=colors)
+                for step_id in group:
+                    class_ids[step_id] = class_id
+
+    return colors, class_ids
+
+
+def _resolve_wl_round_hasher(name: str) -> tuple[str, Callable[[bytes], str]]:
     if name not in _WL_ROUND_HASH_CHOICES:
         raise ValueError(f"Unknown WL round hash: {name!r}")
 
@@ -99,16 +159,16 @@ def _resolve_wl_round_hasher(name: str) -> Callable[[bytes], str]:
         for candidate in (_WL_ROUND_HASH_XXH3, _WL_ROUND_HASH_BLAKE3, _WL_ROUND_HASH_BLAKE2B64):
             hasher = _resolve_optional_hasher(candidate)
             if hasher is not None:
-                return hasher
-        return _sha256_hexdigest
+                return candidate, hasher
+        return _WL_ROUND_HASH_SHA256, _sha256_hexdigest
 
     if name == _WL_ROUND_HASH_SHA256:
-        return _sha256_hexdigest
+        return _WL_ROUND_HASH_SHA256, _sha256_hexdigest
 
     hasher = _resolve_optional_hasher(name)
     if hasher is None:
         raise ValueError(f"WL round hash backend unavailable: {name!r}")
-    return hasher
+    return name, hasher
 
 
 def _resolve_optional_hasher(name: str) -> Callable[[bytes], str] | None:
@@ -170,6 +230,20 @@ def _build_adjacency(entities: dict[int, dict]) -> dict[int, list[tuple[str, str
     return adjacency
 
 
+def _build_reverse_adjacency(
+    entities: dict[int, dict],
+    adjacency: dict[int, list[tuple[str, str | None, int]]],
+) -> dict[int, list[tuple[str, str | None, int]]]:
+    reverse: dict[int, list[tuple[str, str | None, int]]] = {step_id: [] for step_id in entities}
+    for source_step, edges in adjacency.items():
+        source_type = entities.get(source_step, {}).get("entity_type")
+        for path, _target_type, target_step in edges:
+            if target_step not in entities:
+                continue
+            reverse.setdefault(target_step, []).append((path, source_type, source_step))
+    return reverse
+
+
 def _neighbor_signature(
     edges: list[tuple[str, str | None, int]],
     colors: dict[int, str],
@@ -183,3 +257,173 @@ def _neighbor_signature(
         })
     items.sort(key=lambda item: (item["path"], item["target_type"] or "", item["color"]))
     return items
+
+
+def _tarjan_scc(
+    nodes: list[int],
+    adjacency: dict[int, list[tuple[str, str | None, int]]],
+) -> list[list[int]]:
+    node_set = set(nodes)
+    index = 0
+    stack: list[int] = []
+    on_stack: set[int] = set()
+    indices: dict[int, int] = {}
+    lowlink: dict[int, int] = {}
+    sccs: list[list[int]] = []
+
+    def strongconnect(v: int) -> None:
+        nonlocal index
+        indices[v] = index
+        lowlink[v] = index
+        index += 1
+        stack.append(v)
+        on_stack.add(v)
+
+        for _path, _target_type, w in adjacency.get(v, []):
+            if w not in node_set:
+                continue
+            if w not in indices:
+                strongconnect(w)
+                lowlink[v] = min(lowlink[v], lowlink[w])
+            elif w in on_stack:
+                lowlink[v] = min(lowlink[v], indices[w])
+
+        if lowlink[v] == indices[v]:
+            component: list[int] = []
+            while True:
+                w = stack.pop()
+                on_stack.remove(w)
+                component.append(w)
+                if w == v:
+                    break
+            component.sort()
+            sccs.append(component)
+
+    for node in nodes:
+        if node not in indices:
+            strongconnect(node)
+
+    sccs.sort(key=lambda comp: (len(comp), comp))
+    return sccs
+
+
+def _bounded_partition_refinement(
+    steps: list[int],
+    *,
+    entities: dict[int, dict],
+    adjacency: dict[int, list[tuple[str, str | None, int]]],
+    reverse_adjacency: dict[int, list[tuple[str, str | None, int]]],
+    colors: dict[int, str],
+    max_partition_size: int,
+    refinement_rounds: int,
+) -> list[list[int]]:
+    ordered_steps = sorted(steps)
+    if len(ordered_steps) > max_partition_size:
+        return [ordered_steps]
+
+    partitions = [ordered_steps]
+    for _ in range(refinement_rounds):
+        changed = False
+        next_partitions: list[list[int]] = []
+        for part in partitions:
+            if len(part) <= 1:
+                next_partitions.append(part)
+                continue
+            buckets: dict[str, list[int]] = {}
+            for step_id in part:
+                sig = _partition_local_signature(
+                    step_id,
+                    entities=entities,
+                    adjacency=adjacency,
+                    reverse_adjacency=reverse_adjacency,
+                    colors=colors,
+                )
+                buckets.setdefault(sig, []).append(step_id)
+            if len(buckets) == 1:
+                next_partitions.append(part)
+                continue
+            changed = True
+            for sig in sorted(buckets):
+                next_partitions.append(sorted(buckets[sig]))
+        partitions = next_partitions
+        if not changed:
+            break
+
+    return [part for part in partitions if len(part) > 1]
+
+
+def _partition_local_signature(
+    step_id: int,
+    *,
+    entities: dict[int, dict],
+    adjacency: dict[int, list[tuple[str, str | None, int]]],
+    reverse_adjacency: dict[int, list[tuple[str, str | None, int]]],
+    colors: dict[int, str],
+) -> str:
+    out_counts: Counter[tuple[str, str | None, str]] = Counter()
+    for path, target_type, target_step in adjacency.get(step_id, []):
+        out_counts[(path, target_type, colors.get(target_step, "MISSING"))] += 1
+    in_counts: Counter[tuple[str, str | None, str]] = Counter()
+    for path, source_type, source_step in reverse_adjacency.get(step_id, []):
+        in_counts[(path, source_type, colors.get(source_step, "MISSING"))] += 1
+
+    payload = {
+        "entity_type": entities.get(step_id, {}).get("entity_type"),
+        "out": [
+            {"path": path, "type": edge_type, "color": color, "count": count}
+            for (path, edge_type, color), count in sorted(
+                out_counts.items(),
+                key=lambda item: (
+                    item[0][0],
+                    item[0][1] or "",
+                    item[0][2],
+                    item[1],
+                ),
+            )
+        ],
+        "in": [
+            {"path": path, "type": edge_type, "color": color, "count": count}
+            for (path, edge_type, color), count in sorted(
+                in_counts.items(),
+                key=lambda item: (
+                    item[0][0],
+                    item[0][1] or "",
+                    item[0][2],
+                    item[1],
+                ),
+            )
+        ],
+    }
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _ambiguous_class_id(
+    steps: list[int],
+    *,
+    entities: dict[int, dict],
+    colors: dict[int, str],
+) -> str:
+    entity_types = sorted({
+        str(entities.get(step_id, {}).get("entity_type") or "")
+        for step_id in steps
+    })
+    color_set = sorted({
+        colors.get(step_id, "MISSING")
+        for step_id in steps
+    })
+    edge_labels = sorted({
+        (ref.get("path", ""), ref.get("target_type"))
+        for step_id in steps
+        for ref in entities.get(step_id, {}).get("refs", [])
+    }, key=lambda item: (item[0], item[1] or ""))
+    payload = {
+        "entity_types": entity_types,
+        "color_set": color_set,
+        "edge_labels": [
+            {"path": path, "target_type": target_type}
+            for path, target_type in edge_labels
+        ],
+    }
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return f"C:{hashlib.sha256(blob.encode('utf-8')).hexdigest()}"
