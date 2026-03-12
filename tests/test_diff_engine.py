@@ -324,6 +324,66 @@ def test_diff_engine_preserves_occurrence_multiplicity():
     assert change["equivalence_class"]["id"].startswith("C:")
 
 
+def test_diff_engine_emits_class_delta_for_scc_symmetric_partition_count_change():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {},
+            "refs": [
+                {"path": "/Members", "target": 10, "target_type": "IfcProxy"},
+                {"path": "/Members", "target": 11, "target_type": "IfcProxy"},
+            ],
+        },
+        10: {
+            "entity_type": "IfcProxy",
+            "attributes": {},
+            "refs": [{"path": "/Peer", "target": 11, "target_type": "IfcProxy"}],
+        },
+        11: {
+            "entity_type": "IfcProxy",
+            "attributes": {},
+            "refs": [{"path": "/Peer", "target": 10, "target_type": "IfcProxy"}],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {},
+            "refs": [
+                {"path": "/Members", "target": 20, "target_type": "IfcProxy"},
+                {"path": "/Members", "target": 21, "target_type": "IfcProxy"},
+                {"path": "/Members", "target": 22, "target_type": "IfcProxy"},
+            ],
+        },
+        20: {
+            "entity_type": "IfcProxy",
+            "attributes": {},
+            "refs": [{"path": "/Peer", "target": 21, "target_type": "IfcProxy"}],
+        },
+        21: {
+            "entity_type": "IfcProxy",
+            "attributes": {},
+            "refs": [{"path": "/Peer", "target": 22, "target_type": "IfcProxy"}],
+        },
+        22: {
+            "entity_type": "IfcProxy",
+            "attributes": {},
+            "refs": [{"path": "/Peer", "target": 20, "target_type": "IfcProxy"}],
+        },
+    })
+
+    diff = diff_graphs(old_graph, new_graph)
+    class_delta = next(
+        change for change in diff["base_changes"]
+        if change["op"] == "CLASS_DELTA" and (change["old_entity_id"] or "").startswith("C:")
+    )
+    assert class_delta["equivalence_class"]["old_count"] == 2
+    assert class_delta["equivalence_class"]["new_count"] == 3
+    assert class_delta["identity"]["match_method"] == "equivalence_class"
+
+
 def test_diff_engine_ignores_step_id_churn_inside_h_matched_entity():
     old_graph = _graph_with_entities({
         1: {

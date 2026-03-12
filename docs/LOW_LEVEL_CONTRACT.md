@@ -36,6 +36,7 @@ WL refinement round hashing policy:
 - Round hashing may use fast internal backends (`xxh3_64` or `blake3`) when configured/available.
 - `auto` mode resolves deterministically in this order: `xxh3_64`, `blake3`, `blake2b_64`.
 - External wire IDs (`G/H/C`) remain `sha256`-based.
+- SCC ambiguity fallback uses bounded local refinement with default partition cap `K=128`; unresolved SCC partitions emit deterministic `C:` IDs.
 
 `identity.match_method` currently includes:
 - `exact_guid`

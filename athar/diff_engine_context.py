@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .canonical_ids import structural_hash, wl_refine_colors
+from .canonical_ids import structural_hash, wl_refine_with_scc_fallback
 from .equivalence_classes import apply_ambiguous_equivalence_classes
 from .graph_parser import count_dangling_refs
 from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
@@ -211,7 +211,7 @@ def _assign_ids(
     entities = graph.get("entities", {})
     id_graph = _graph_for_profile(graph, profile=profile)
     id_entities = id_graph.get("entities", {})
-    colors = wl_refine_colors(id_graph)
+    colors, scc_classes = wl_refine_with_scc_fallback(id_graph)
     guid_index = _guid_index(entities)
     ids: dict[int, str] = {}
     identity: dict[int, dict[str, Any]] = {}
@@ -237,12 +237,21 @@ def _assign_ids(
             }
         else:
             hash_entity = id_entities.get(step_id, entity)
-            ids[step_id] = f"H:{colors.get(step_id) or structural_hash(hash_entity)}"
-            identity[step_id] = {
-                "match_method": "exact_hash",
-                "match_confidence": 1.0,
-                "matched_on": {"stage": "structural_hash"},
-            }
+            class_id = scc_classes.get(step_id)
+            if class_id:
+                ids[step_id] = class_id
+                identity[step_id] = {
+                    "match_method": "equivalence_class",
+                    "match_confidence": 0.0,
+                    "matched_on": {"stage": "scc_ambiguity"},
+                }
+            else:
+                ids[step_id] = f"H:{colors.get(step_id) or structural_hash(hash_entity)}"
+                identity[step_id] = {
+                    "match_method": "exact_hash",
+                    "match_confidence": 1.0,
+                    "matched_on": {"stage": "structural_hash"},
+                }
     return ids, identity
 
 
