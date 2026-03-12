@@ -1,6 +1,7 @@
 import json
 
-from athar.diff_engine import diff_graphs, stream_diff_graphs, stream_diff_result
+from athar.diff_engine import diff_graphs, stream_diff_graphs
+from athar.diff_engine_streaming import stream_diff_result
 
 
 def _graph_with_entities(entities: dict[int, dict]) -> dict:
@@ -34,6 +35,7 @@ def test_stream_diff_result_ndjson_emits_header_items_end():
 
     assert records[0]["record_type"] == "header"
     assert records[-1]["record_type"] == "end"
+    assert records[-1]["op_counts"]["MODIFY"] == 1
     item_types = [record["record_type"] for record in records]
     assert "base_change" in item_types
 
@@ -45,6 +47,7 @@ def test_stream_diff_result_chunked_json_honors_chunk_size():
 
     assert records[0]["chunk_type"] == "header"
     assert records[-1]["chunk_type"] == "end"
+    assert records[-1]["op_counts"]["MODIFY"] == 1
     base_chunks = [record for record in records if record["chunk_type"] == "base_changes"]
     assert all(chunk["count"] <= 1 for chunk in base_chunks)
 

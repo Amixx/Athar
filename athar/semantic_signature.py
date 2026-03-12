@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import Counter
 from typing import Any
 
+from .graph_utils import edge_signature, sha256_json
+
 
 def semantic_signature(entity: dict) -> str:
     payload = semantic_payload(entity)
-    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    return sha256_json(payload)
 
 
 def semantic_payload(entity: dict) -> dict:
@@ -20,7 +20,7 @@ def semantic_payload(entity: dict) -> dict:
     return {
         "entity_type": entity.get("entity_type"),
         "attributes": shaped_attrs,
-        "edges": _edge_signature(entity.get("refs", [])),
+        "edges": edge_signature(entity.get("refs", [])),
     }
 
 
@@ -53,15 +53,3 @@ def _shape(value: Any) -> Any:
     if kind == "ref":
         return {"kind": "ref"}
     return {"kind": kind or "unknown"}
-
-
-def _edge_signature(refs: list[dict]) -> list[dict[str, Any]]:
-    counts: Counter[tuple[str, str | None]] = Counter()
-    for ref in refs:
-        counts[(ref.get("path", ""), ref.get("target_type"))] += 1
-    edges = [
-        {"path": path, "target_type": target_type, "count": count}
-        for (path, target_type), count in counts.items()
-    ]
-    edges.sort(key=lambda item: (item["path"], item["target_type"] or "", item["count"]))
-    return edges

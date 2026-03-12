@@ -123,4 +123,5 @@ Qualified relation types for `REPARENT`:
 
 - `ndjson`: `header`, `base_change`, `derived_marker`, `end` records.
 - `chunked_json`: `header`, chunked `base_changes`, chunked `derived_markers`, `end`.
+- `end` records/chunks include deterministic `op_counts` maps in both modes.
 - Stream mode suppresses ADD/REMOVE snapshots.
