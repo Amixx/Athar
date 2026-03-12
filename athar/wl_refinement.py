@@ -83,7 +83,9 @@ def wl_refine_colors(
                 color_bytes_cache=color_bytes_cache,
             )
             digest = hasher(blob)
-            next_color = digest if hasher_name == _WL_ROUND_HASH_SHA256 else _sha256_hexdigest(digest.encode("ascii"))
+            # Keep backend-native WL colors inside refinement rounds to avoid
+            # per-round sha256 wrapping overhead for fast hash backends.
+            next_color = digest
             next_colors[step_id] = next_color
             if next_color != colors[step_id]:
                 changed += 1
@@ -107,9 +109,14 @@ def wl_refine_colors(
             stop_reason = "partition_stable"
             break
 
+    # External IDs (H:/C:) stay sha256-derived for stable wire-level identity.
+    if hasher_name != _WL_ROUND_HASH_SHA256:
+        colors = _normalize_colors_to_sha256(colors)
+
     if diagnostics is not None:
         diagnostics.update({
             "backend": hasher_name,
+            "external_color_backend": _WL_ROUND_HASH_SHA256,
             "configured_rounds": rounds,
             "executed_rounds": len(round_stats),
             "stop_reason": stop_reason,
@@ -118,6 +125,18 @@ def wl_refine_colors(
             "total_ms": round(sum(item["elapsed_ms"] for item in round_stats), 3),
         })
     return colors
+
+
+def _normalize_colors_to_sha256(colors: dict[int, str]) -> dict[int, str]:
+    normalized: dict[int, str] = {}
+    cache: dict[str, str] = {}
+    for step_id, color in colors.items():
+        hashed = cache.get(color)
+        if hashed is None:
+            hashed = _sha256_hexdigest(color.encode("ascii"))
+            cache[color] = hashed
+        normalized[step_id] = hashed
+    return normalized
 
 
 def _wl_round_payload(
