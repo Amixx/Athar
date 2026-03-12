@@ -204,3 +204,41 @@ def test_benchmark_diff_engine_writes_progress_sidecar(monkeypatch, tmp_path):
     assert sidecar["total_cases"] == 1
     assert sidecar["current_case"] is None
     assert sidecar["report_path"] == str(out)
+
+
+def test_benchmark_diff_engine_reuses_parse_for_same_path_case(monkeypatch, tmp_path):
+    out = tmp_path / "bench.json"
+    calls: list[str] = []
+
+    def fake_parse_graph(path, profile):
+        calls.append(path)
+        return {"entities": {}, "metadata": {"schema": "IFC4"}}
+
+    monkeypatch.setattr(benchmark_diff_engine, "parse_graph", fake_parse_graph)
+    monkeypatch.setattr(
+        benchmark_diff_engine,
+        "diff_graphs",
+        lambda *_args, **_kwargs: {"base_changes": [], "derived_markers": [], "stats": {}},
+    )
+    monkeypatch.setattr(
+        benchmark_diff_engine,
+        "stream_diff_graphs",
+        lambda *_args, **_kwargs: iter(['{"kind":"end"}']),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "benchmark_diff_engine",
+            "--case",
+            "same:old.ifc:old.ifc",
+            "--warmup",
+            "0",
+            "--iterations",
+            "1",
+            "--out",
+            str(out),
+        ],
+    )
+
+    benchmark_diff_engine.main()
+    assert calls == ["old.ifc"]

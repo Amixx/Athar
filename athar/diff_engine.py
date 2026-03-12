@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import os
 import time
 from typing import Any
 
 from .diff_engine_changes import make_change, make_class_delta_change
 from .diff_engine_context import (
+    _dangling_ref_count,
     build_result,
     entities_equal,
     index_change,
@@ -18,10 +20,12 @@ from .diff_engine_context import (
     should_emit_class_delta,
 )
 from .diff_engine_markers import build_derived_markers, summarize_rooted_owners
+from .diff_engine_stats import root_guid_quality
 from .diff_engine_streaming import stream_diff_events
 from .graph_parser import parse_graph
-from .guid_policy import GUID_POLICY_FAIL_FAST, validate_guid_policy
-from .profile_policy import DEFAULT_PROFILE
+from .guid_policy import GUID_POLICY_FAIL_FAST, enforce_or_disambiguate_guid_policy, validate_guid_policy
+from .matcher_policy import resolve_matcher_policy
+from .profile_policy import DEFAULT_PROFILE, validate_profile
 from .types import DiffContext, GraphIR
 
 ProgressCallback = Callable[[dict[str, Any]], None]
@@ -42,18 +46,23 @@ def diff_files(
     progress_callback: ProgressCallback | None = None,
 ) -> dict:
     validate_guid_policy(guid_policy)
+    same_input = _paths_refer_to_same_file(old_path, new_path)
     parse_timings_ms: dict[str, float] | None = None
     if timings:
         parse_timings_ms = {}
         started = time.perf_counter()
         old_graph = parse_graph(old_path, profile=profile)
         parse_timings_ms["parse_old_graph"] = _elapsed_ms(started)
-        started = time.perf_counter()
-        new_graph = parse_graph(new_path, profile=profile)
-        parse_timings_ms["parse_new_graph"] = _elapsed_ms(started)
+        if same_input:
+            new_graph = old_graph
+            parse_timings_ms["parse_new_graph"] = 0.0
+        else:
+            started = time.perf_counter()
+            new_graph = parse_graph(new_path, profile=profile)
+            parse_timings_ms["parse_new_graph"] = _elapsed_ms(started)
     else:
         old_graph = parse_graph(old_path, profile=profile)
-        new_graph = parse_graph(new_path, profile=profile)
+        new_graph = old_graph if same_input else parse_graph(new_path, profile=profile)
     _validate_schema(old_graph, new_graph)
     return diff_graphs(
         old_graph,
@@ -79,6 +88,32 @@ def diff_graphs(
     progress_callback: ProgressCallback | None = None,
 ) -> dict:
     validate_guid_policy(guid_policy)
+    validate_profile(profile)
+    _validate_schema(old_graph, new_graph)
+    resolved_matcher_policy = resolve_matcher_policy(matcher_policy)
+    if old_graph is new_graph:
+        enforce_or_disambiguate_guid_policy(
+            old_graph.get("entities", {}),
+            policy=guid_policy,
+            side="old",
+        )
+        result = _same_graph_fastpath_result(
+            graph=old_graph,
+            profile=profile,
+            guid_policy=guid_policy,
+            matcher_policy=resolved_matcher_policy,
+        )
+        if timings:
+            timings_ms: dict[str, float] = {}
+            if parse_timings_ms:
+                timings_ms.update(parse_timings_ms)
+            timings_ms["prepare_context"] = 0.0
+            timings_ms["emit_base_changes"] = 0.0
+            timings_ms["emit_derived_markers"] = 0.0
+            timings_ms["total"] = 0.0
+            result.setdefault("stats", {})["timings_ms"] = timings_ms
+        _emit_progress(progress_callback, {"stage": "done", "status": "done", "overall_progress": 1.0, "base_change_count": 0, "derived_marker_count": 0, "elapsed_ms": 0.0})
+        return result
     total_started = time.perf_counter()
     _emit_progress(progress_callback, {
         "stage": "prepare_context",
@@ -198,18 +233,23 @@ def stream_diff_files(
 ):
     """Stream diff output directly from files without materializing full result."""
     validate_guid_policy(guid_policy)
+    same_input = _paths_refer_to_same_file(old_path, new_path)
     parse_timings_ms: dict[str, float] | None = None
     if timings:
         parse_timings_ms = {}
         started = time.perf_counter()
         old_graph = parse_graph(old_path, profile=profile)
         parse_timings_ms["parse_old_graph"] = _elapsed_ms(started)
-        started = time.perf_counter()
-        new_graph = parse_graph(new_path, profile=profile)
-        parse_timings_ms["parse_new_graph"] = _elapsed_ms(started)
+        if same_input:
+            new_graph = old_graph
+            parse_timings_ms["parse_new_graph"] = 0.0
+        else:
+            started = time.perf_counter()
+            new_graph = parse_graph(new_path, profile=profile)
+            parse_timings_ms["parse_new_graph"] = _elapsed_ms(started)
     else:
         old_graph = parse_graph(old_path, profile=profile)
-        new_graph = parse_graph(new_path, profile=profile)
+        new_graph = old_graph if same_input else parse_graph(new_path, profile=profile)
     _validate_schema(old_graph, new_graph)
     yield from stream_diff_graphs(
         old_graph,
@@ -238,6 +278,36 @@ def stream_diff_graphs(
 ):
     """Stream diff output directly from graph inputs."""
     validate_guid_policy(guid_policy)
+    validate_profile(profile)
+    _validate_schema(old_graph, new_graph)
+    resolved_matcher_policy = resolve_matcher_policy(matcher_policy)
+    if old_graph is new_graph:
+        enforce_or_disambiguate_guid_policy(
+            old_graph.get("entities", {}),
+            policy=guid_policy,
+            side="old",
+        )
+        result = _same_graph_fastpath_result(
+            graph=old_graph,
+            profile=profile,
+            guid_policy=guid_policy,
+            matcher_policy=resolved_matcher_policy,
+        )
+        if timings:
+            timings_ms: dict[str, float] = {}
+            if parse_timings_ms:
+                timings_ms.update(parse_timings_ms)
+            timings_ms["prepare_context"] = 0.0
+            timings_ms["emit_base_changes"] = 0.0
+            timings_ms["emit_derived_markers"] = 0.0
+            timings_ms["total"] = 0.0
+            result.setdefault("stats", {})["timings_ms"] = timings_ms
+        yield from stream_diff_events(
+            iter([{"event_type": "header", "header": _result_to_header(result)}]),
+            mode=mode,
+            chunk_size=chunk_size,
+        )
+        return
 
     started = time.perf_counter()
     context_timings_ms: dict[str, float] | None = {} if timings else None
@@ -291,8 +361,8 @@ def _iter_base_changes(
     })
     change_id = 0
     for idx, entity_id in enumerate(entity_ids, start=1):
-        old_items = sorted(old_by_id.get(entity_id, []), key=lambda item: item["step_id"])
-        new_items = sorted(new_by_id.get(entity_id, []), key=lambda item: item["step_id"])
+        old_items = old_by_id.get(entity_id, [])
+        new_items = new_by_id.get(entity_id, [])
         if entity_id.startswith("C:") and len(old_items) == len(new_items):
             continue
         if should_emit_class_delta(entity_id, old_items, new_items):
@@ -315,6 +385,12 @@ def _iter_base_changes(
             new_item = new_items[i]
             old_ent = old_item["entity"]
             new_ent = new_item["entity"]
+            if (
+                entity_id.startswith("H:")
+                and old_item.get("identity", {}).get("match_method") == "exact_hash"
+                and new_item.get("identity", {}).get("match_method") == "exact_hash"
+            ):
+                continue
             if entities_equal(
                 entity_id,
                 old_ent,
@@ -427,6 +503,75 @@ def _close_owner_projectors(context: DiffContext) -> None:
     new_owner_projector = context.get("new_owner_projector")
     if new_owner_projector is not None:
         new_owner_projector.close()
+
+
+def _paths_refer_to_same_file(old_path: str, new_path: str) -> bool:
+    try:
+        return os.path.samefile(old_path, new_path)
+    except OSError:
+        old_norm = os.path.normcase(os.path.abspath(old_path))
+        new_norm = os.path.normcase(os.path.abspath(new_path))
+        return old_norm == new_norm
+
+
+def _same_graph_fastpath_result(
+    *,
+    graph: GraphIR,
+    profile: str,
+    guid_policy: str,
+    matcher_policy: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    entity_count = len(graph.get("entities", {}))
+    stats: dict[str, Any] = {
+        "old_entities": entity_count,
+        "new_entities": entity_count,
+        "matched": entity_count,
+        "matched_by_method": {"exact_hash": entity_count} if entity_count > 0 else {},
+        "root_guid_quality": {
+            "old": root_guid_quality(graph),
+            "new": root_guid_quality(graph),
+        },
+        "ambiguous": 0,
+        "ambiguous_by_stage": {
+            "root_remap": 0,
+            "path_propagation": 0,
+            "secondary_match": 0,
+        },
+        "stage_match_counts": {
+            "root_remap": 0,
+            "path_propagation": 0,
+            "secondary_match": 0,
+        },
+        "old_dangling_refs": _dangling_ref_count(graph),
+        "new_dangling_refs": _dangling_ref_count(graph),
+    }
+    schema = graph.get("metadata", {}).get("schema")
+    return {
+        "version": "2",
+        "profile": profile,
+        "schema_policy": {
+            "mode": "same_schema_only",
+            "old_schema": schema,
+            "new_schema": schema,
+        },
+        "identity_policy": {
+            "guid_policy": guid_policy,
+            "matcher_policy": matcher_policy,
+        },
+        "stats": stats,
+        "base_changes": [],
+        "derived_markers": [],
+    }
+
+
+def _result_to_header(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "version": result["version"],
+        "profile": result["profile"],
+        "schema_policy": result["schema_policy"],
+        "identity_policy": result.get("identity_policy"),
+        "stats": result["stats"],
+    }
 
 
 def _elapsed_ms(started: float) -> float:

@@ -2,6 +2,10 @@
 
 This folder stores reproducible benchmark outputs for the low-level diff engine.
 
+Most recent concrete hotspot analysis:
+
+- `docs/perf/FINDINGS_ifchouse_same_input_2026-03-12.md`
+
 ## Harness
 
 Use:
