@@ -16,7 +16,6 @@ SECONDARY_ASSIGNMENT_AMBIGUITY_MARGIN = 0.08
 SECONDARY_ASSIGNMENT_MAX = 8
 SECONDARY_DEEPENING_DEPTH2_MAX = 6
 SECONDARY_DEEPENING_DEPTH3_MAX = 4
-_UNMATCHED_COST = 1.0 - SECONDARY_SCORE_THRESHOLD + 0.05
 _DISALLOWED_COST = 1_000_000.0
 
 
@@ -126,12 +125,17 @@ def iterative_assignment_block_match(
     new_steps: list[int],
     old_features: dict[int, dict[str, Any]],
     new_features: dict[int, dict[str, Any]],
+    *,
+    score_threshold: float = SECONDARY_SCORE_THRESHOLD,
+    score_margin: float = SECONDARY_ASSIGNMENT_AMBIGUITY_MARGIN,
+    depth2_max: int = SECONDARY_DEEPENING_DEPTH2_MAX,
+    depth3_max: int = SECONDARY_DEEPENING_DEPTH3_MAX,
 ) -> tuple[dict[int, int], dict[int, dict[str, Any]], int]:
     depths = [1]
     limit = min(len(old_steps), len(new_steps))
-    if limit <= SECONDARY_DEEPENING_DEPTH2_MAX:
+    if limit <= depth2_max:
         depths.append(2)
-    if limit <= SECONDARY_DEEPENING_DEPTH3_MAX:
+    if limit <= depth3_max:
         depths.append(3)
 
     last = ({}, {}, 0)
@@ -142,6 +146,8 @@ def iterative_assignment_block_match(
             old_features,
             new_features,
             depth=depth,
+            score_threshold=score_threshold,
+            score_margin=score_margin,
         )
         matches, diagnostics, ambiguous = last
         if ambiguous == 0 or depth == depths[-1]:
@@ -162,18 +168,38 @@ def assignment_block_match(
     new_features: dict[int, dict[str, Any]],
     *,
     depth: int,
+    score_threshold: float = SECONDARY_SCORE_THRESHOLD,
+    score_margin: float = SECONDARY_ASSIGNMENT_AMBIGUITY_MARGIN,
 ) -> tuple[dict[int, int], dict[int, dict[str, Any]], int]:
     old_steps = sorted(old_steps)
     new_steps = sorted(new_steps)
-    score_map = _score_map(old_steps, new_steps, old_features, new_features, depth=depth)
+    score_map = _score_map(
+        old_steps,
+        new_steps,
+        old_features,
+        new_features,
+        depth=depth,
+        score_threshold=score_threshold,
+    )
     if not score_map:
         return {}, {}, 0
 
-    matches = _min_cost_bipartite_assignment(old_steps, new_steps, score_map)
+    matches = _min_cost_bipartite_assignment(
+        old_steps,
+        new_steps,
+        score_map,
+        score_threshold=score_threshold,
+    )
     if not matches:
         return {}, {}, 0
 
-    if _is_assignment_ambiguous(old_steps, new_steps, matches, score_map):
+    if _is_assignment_ambiguous(
+        old_steps,
+        new_steps,
+        matches,
+        score_map,
+        score_margin=score_margin,
+    ):
         return {}, {}, min(len(old_steps), len(new_steps))
 
     diagnostics = {
@@ -341,12 +367,13 @@ def _score_map(
     new_features: dict[int, dict[str, Any]],
     *,
     depth: int,
+    score_threshold: float,
 ) -> dict[tuple[int, int], float]:
     scores: dict[tuple[int, int], float] = {}
     for old_step in old_steps:
         for new_step in new_steps:
             score = _similarity(old_features[old_step], new_features[new_step], depth=depth)
-            if score >= SECONDARY_SCORE_THRESHOLD:
+            if score >= score_threshold:
                 scores[(old_step, new_step)] = score
     return scores
 
@@ -355,6 +382,8 @@ def _min_cost_bipartite_assignment(
     old_steps: list[int],
     new_steps: list[int],
     score_map: dict[tuple[int, int], float],
+    *,
+    score_threshold: float,
 ) -> dict[int, int]:
     m = len(old_steps)
     n = len(new_steps)
@@ -367,11 +396,11 @@ def _min_cost_bipartite_assignment(
             if score is not None:
                 cost[i][j] = 1.0 - score
         for j in range(n, size):
-            cost[i][j] = _UNMATCHED_COST
+            cost[i][j] = _unmatched_cost(score_threshold)
 
     for i in range(m, size):
         for j in range(n):
-            cost[i][j] = _UNMATCHED_COST
+            cost[i][j] = _unmatched_cost(score_threshold)
         for j in range(n, size):
             cost[i][j] = 0.0
 
@@ -382,7 +411,7 @@ def _min_cost_bipartite_assignment(
             old_step = old_steps[i]
             new_step = new_steps[j]
             score = score_map.get((old_step, new_step))
-            if score is not None and score >= SECONDARY_SCORE_THRESHOLD:
+            if score is not None and score >= score_threshold:
                 matches[old_step] = new_step
     return matches
 
@@ -442,6 +471,8 @@ def _is_assignment_ambiguous(
     new_steps: list[int],
     matches: dict[int, int],
     score_map: dict[tuple[int, int], float],
+    *,
+    score_margin: float,
 ) -> bool:
     matched_pairs = {(o, n): score_map[(o, n)] for o, n in matches.items() if (o, n) in score_map}
     if not matched_pairs:
@@ -455,12 +486,16 @@ def _is_assignment_ambiguous(
             if alt_new == new_step:
                 continue
             alt_score = score_map.get((old_step, alt_new))
-            if alt_score is not None and (matched_score - alt_score) < SECONDARY_ASSIGNMENT_AMBIGUITY_MARGIN:
+            if alt_score is not None and (matched_score - alt_score) < score_margin:
                 return True
         for alt_old in old_steps:
             if alt_old == old_step:
                 continue
             alt_score = score_map.get((alt_old, new_step))
-            if alt_score is not None and (matched_score - alt_score) < SECONDARY_ASSIGNMENT_AMBIGUITY_MARGIN:
+            if alt_score is not None and (matched_score - alt_score) < score_margin:
                 return True
     return False
+
+
+def _unmatched_cost(score_threshold: float) -> float:
+    return 1.0 - score_threshold + 0.05

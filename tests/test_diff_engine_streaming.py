@@ -174,3 +174,97 @@ def test_stream_diff_graphs_chunked_end_includes_op_counts():
     end = records[-1]
     assert end["chunk_type"] == "end"
     assert end["op_counts"]["MODIFY"] == 1
+
+
+def test_stream_diff_graphs_ndjson_end_counts_match_payload():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "BBB",
+            "attributes": {"Name": {"kind": "string", "value": "Wall B"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        3: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A v2"}},
+            "refs": [],
+        },
+        4: {
+            "entity_type": "IfcWall",
+            "global_id": "CCC",
+            "attributes": {"Name": {"kind": "string", "value": "Wall C"}},
+            "refs": [],
+        },
+    })
+    records = [json.loads(line) for line in stream_diff_graphs(old_graph, new_graph, mode="ndjson")]
+    changes = [record["change"] for record in records if record.get("record_type") == "base_change"]
+    end = records[-1]
+    assert end["record_type"] == "end"
+    assert end["base_change_count"] == len(changes)
+    expected_op_counts: dict[str, int] = {}
+    for change in changes:
+        op = change["op"]
+        expected_op_counts[op] = expected_op_counts.get(op, 0) + 1
+    assert end["op_counts"] == expected_op_counts
+
+
+def test_stream_diff_graphs_header_matches_diff_graphs_with_custom_matcher_policy():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+        20: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {
+                "Coordinates": {
+                    "kind": "list",
+                    "items": [
+                        {"kind": "real", "value": "1"},
+                        {"kind": "real", "value": "2"},
+                        {"kind": "real", "value": "3"},
+                    ],
+                }
+            },
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+        21: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {
+                "Coordinates": {
+                    "kind": "list",
+                    "items": [
+                        {"kind": "real", "value": "1"},
+                        {"kind": "real", "value": "2"},
+                        {"kind": "real", "value": "4"},
+                    ],
+                }
+            },
+            "refs": [],
+        },
+    })
+    matcher_policy = {"secondary_match": {"score_threshold": 0.99}}
+    full = diff_graphs(old_graph, new_graph, matcher_policy=matcher_policy)
+    records = [json.loads(line) for line in stream_diff_graphs(old_graph, new_graph, mode="ndjson", matcher_policy=matcher_policy)]
+    header = records[0]
+    assert header["record_type"] == "header"
+    assert header["identity_policy"] == full["identity_policy"]

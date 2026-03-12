@@ -13,6 +13,7 @@ from .guid_policy import (
     validate_guid_policy,
 )
 from .matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
+from .matcher_policy import resolve_matcher_policy
 from .root_remap import plan_root_remap
 from .diff_engine_markers import RootedOwnerProjector
 from .diff_engine_stats import build_stats
@@ -25,12 +26,19 @@ def prepare_diff_context(
     *,
     profile: str,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
+    matcher_policy: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     validate_profile(profile)
     validate_guid_policy(guid_policy)
     _validate_schema(old_graph, new_graph)
 
-    remap = plan_root_remap(old_graph, new_graph)
+    resolved_matcher_policy = resolve_matcher_policy(matcher_policy)
+
+    remap = plan_root_remap(
+        old_graph,
+        new_graph,
+        **resolved_matcher_policy["root_remap"],
+    )
     old_ids, old_identity = _assign_ids(
         old_graph,
         profile=profile,
@@ -70,6 +78,7 @@ def prepare_diff_context(
         new_graph,
         pre_matched_old=set(matched_after_path),
         pre_matched_new=set(matched_after_path.values()),
+        **resolved_matcher_policy["secondary_match"],
     )
     _apply_step_matches(
         old_ids,
@@ -110,6 +119,7 @@ def prepare_diff_context(
         },
         "identity_policy": {
             "guid_policy": guid_policy,
+            "matcher_policy": resolved_matcher_policy,
         },
         "stats": build_stats(
             old_graph=old_graph,

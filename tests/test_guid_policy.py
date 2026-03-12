@@ -1,4 +1,5 @@
 import pytest
+import json
 
 from athar.diff_engine import diff_graphs, stream_diff_graphs
 from athar.guid_policy import (
@@ -47,4 +48,6 @@ def test_stream_diff_graphs_header_includes_identity_policy():
         2: {"entity_type": "IfcWall", "global_id": "AAA", "attributes": {}, "refs": []},
     })
     records = [line for line in stream_diff_graphs(old_graph, new_graph, guid_policy="disambiguate", mode="ndjson")]
-    assert "\"identity_policy\":{\"guid_policy\":\"disambiguate\"}" in records[0]
+    header = json.loads(records[0])
+    assert header["identity_policy"]["guid_policy"] == "disambiguate"
+    assert "matcher_policy" in header["identity_policy"]

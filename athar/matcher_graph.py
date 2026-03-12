@@ -7,6 +7,10 @@ from typing import Any
 
 from .matcher_graph_scoring import (
     SECONDARY_ASSIGNMENT_MAX,
+    SECONDARY_ASSIGNMENT_AMBIGUITY_MARGIN,
+    SECONDARY_DEEPENING_DEPTH2_MAX,
+    SECONDARY_DEEPENING_DEPTH3_MAX,
+    SECONDARY_SCORE_THRESHOLD,
     blocking_key,
     build_feature_vector,
     fallback_signature_block_match,
@@ -77,6 +81,11 @@ def secondary_match_unresolved(
     *,
     pre_matched_old: set[int] | None = None,
     pre_matched_new: set[int] | None = None,
+    score_threshold: float = SECONDARY_SCORE_THRESHOLD,
+    score_margin: float = SECONDARY_ASSIGNMENT_AMBIGUITY_MARGIN,
+    assignment_max: int = SECONDARY_ASSIGNMENT_MAX,
+    depth2_max: int = SECONDARY_DEEPENING_DEPTH2_MAX,
+    depth3_max: int = SECONDARY_DEEPENING_DEPTH3_MAX,
 ) -> dict[str, Any]:
     """Deterministic secondary matcher for unmatched non-root entities."""
     old_entities = old_graph.get("entities", {})
@@ -135,6 +144,11 @@ def secondary_match_unresolved(
             new_steps,
             old_features,
             new_features,
+            score_threshold=score_threshold,
+            score_margin=score_margin,
+            assignment_max=assignment_max,
+            depth2_max=depth2_max,
+            depth3_max=depth3_max,
         )
 
         for old_step, new_step in block_matches.items():
@@ -189,6 +203,12 @@ def _match_entity_type_block(
     new_steps: list[int],
     old_features: dict[int, dict[str, Any]],
     new_features: dict[int, dict[str, Any]],
+    *,
+    score_threshold: float,
+    score_margin: float,
+    assignment_max: int,
+    depth2_max: int,
+    depth3_max: int,
 ) -> tuple[dict[int, int], dict[int, dict[str, Any]], int, list[dict[str, Any]]]:
     old_by_block: defaultdict[tuple[str | None, int, int, int, int, int, int], list[int]] = defaultdict(list)
     new_by_block: defaultdict[tuple[str | None, int, int, int, int, int, int], list[int]] = defaultdict(list)
@@ -216,6 +236,11 @@ def _match_entity_type_block(
             block_new,
             old_features,
             new_features,
+            score_threshold=score_threshold,
+            score_margin=score_margin,
+            assignment_max=assignment_max,
+            depth2_max=depth2_max,
+            depth3_max=depth3_max,
         )
         matches.update(block_matches)
         diagnostics.update(_with_block_diagnostics(block_diagnostics, block_stage="coarse_block", block_key=key))
@@ -250,6 +275,11 @@ def _match_entity_type_block(
             sorted(residual_new),
             old_features,
             new_features,
+            score_threshold=score_threshold,
+            score_margin=score_margin,
+            assignment_max=assignment_max,
+            depth2_max=depth2_max,
+            depth3_max=depth3_max,
         )
         matches.update(residual_matches)
         diagnostics.update(_with_block_diagnostics(residual_diagnostics, block_stage="residual", block_key=None))
@@ -273,10 +303,25 @@ def _run_block_match(
     new_steps: list[int],
     old_features: dict[int, dict[str, Any]],
     new_features: dict[int, dict[str, Any]],
+    *,
+    score_threshold: float,
+    score_margin: float,
+    assignment_max: int,
+    depth2_max: int,
+    depth3_max: int,
 ) -> tuple[dict[int, int], dict[int, dict[str, Any]], int]:
-    if len(old_steps) > SECONDARY_ASSIGNMENT_MAX or len(new_steps) > SECONDARY_ASSIGNMENT_MAX:
+    if len(old_steps) > assignment_max or len(new_steps) > assignment_max:
         return fallback_signature_block_match(old_steps, new_steps, old_features, new_features)
-    return iterative_assignment_block_match(old_steps, new_steps, old_features, new_features)
+    return iterative_assignment_block_match(
+        old_steps,
+        new_steps,
+        old_features,
+        new_features,
+        score_threshold=score_threshold,
+        score_margin=score_margin,
+        depth2_max=depth2_max,
+        depth3_max=depth3_max,
+    )
 
 
 def _with_block_diagnostics(

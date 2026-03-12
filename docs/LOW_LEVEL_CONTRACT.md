@@ -64,6 +64,20 @@ WL refinement round hashing policy:
 - Small candidate blocks use deterministic min-cost bipartite assignment.
 - Ambiguous small blocks use iterative deepening (`depth 1 -> depth 2 -> depth 3`) before ambiguity rejection.
 
+Matcher-policy overrides are supported through API/CLI:
+
+- `root_remap`
+  - `guid_overlap_threshold` (0..1)
+  - `score_threshold` (0..1)
+  - `score_margin` (0..1)
+  - `assignment_max` (>=1)
+- `secondary_match`
+  - `score_threshold` (0..1)
+  - `score_margin` (0..1)
+  - `assignment_max` (>=1)
+  - `depth2_max` (>=1)
+  - `depth3_max` (>=1, must be `<= depth2_max`)
+
 ## Wire Schema (v2)
 
 Top-level object:
@@ -71,6 +85,7 @@ Top-level object:
 - `version` (`"2"`)
 - `profile`
 - `schema_policy`
+- `identity_policy` (`guid_policy` + resolved `matcher_policy`)
 - `stats`
 - `base_changes`
 - `derived_markers`
