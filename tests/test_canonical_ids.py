@@ -27,3 +27,14 @@ def test_structural_hash_detects_target_type_changes():
         "refs": [{"path": "/ObjectPlacement", "target": 10, "target_type": "IfcGridPlacement"}],
     }
     assert structural_hash(entity_a) != structural_hash(entity_b)
+
+
+def test_structural_hash_stays_sha256_wire_width():
+    entity = {
+        "entity_type": "IfcWall",
+        "attributes": {"Name": {"kind": "string", "value": "A"}},
+        "refs": [],
+    }
+    digest = structural_hash(entity)
+    assert len(digest) == 64
+    assert all(ch in "0123456789abcdef" for ch in digest)
