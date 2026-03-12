@@ -39,3 +39,29 @@ def test_graph_parser_supports_core_ifc_schemas(tmp_path, schema):
     graph = parse_graph(str(filepath))
     assert graph["metadata"]["schema"] == schema
     assert graph["entities"] == {}
+
+
+def test_graph_parser_preserves_non_length_measure_wrapper_types(tmp_path):
+    f = ifcopenshell.file(schema="IFC4")
+    wrappers = [
+        ("Area", f.createIfcAreaMeasure(12.5), "IfcAreaMeasure"),
+        ("Volume", f.createIfcVolumeMeasure(3.75), "IfcVolumeMeasure"),
+        ("Angle", f.createIfcPlaneAngleMeasure(1.2), "IfcPlaneAngleMeasure"),
+        ("Derived", f.createIfcThermalTransmittanceMeasure(0.42), "IfcThermalTransmittanceMeasure"),
+    ]
+    step_to_type: dict[int, str] = {}
+    for name, wrapped_value, wrapped_type in wrappers:
+        prop = f.createIfcPropertySingleValue(name, None, wrapped_value, None)
+        step_to_type[prop.id()] = wrapped_type
+
+    filepath = tmp_path / "measures.ifc"
+    f.write(str(filepath))
+
+    graph = parse_graph(str(filepath))
+    for step_id, wrapped_type in step_to_type.items():
+        rec = graph["entities"][step_id]
+        nominal = rec["attributes"]["NominalValue"]
+        assert nominal["kind"] == "select"
+        assert nominal["type"] == wrapped_type
+        assert nominal["value"]["kind"] == "simple"
+        assert nominal["value"]["type"] == wrapped_type

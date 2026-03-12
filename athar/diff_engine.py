@@ -202,6 +202,8 @@ def _iter_base_changes(context: DiffContext, *, include_snapshots: bool):
     profile = context["profile"]
     old_by_id = context["old_by_id"]
     new_by_id = context["new_by_id"]
+    old_ids = context["old_ids"]
+    new_ids = context["new_ids"]
     old_owner_projector = context["old_owner_projector"]
     new_owner_projector = context["new_owner_projector"]
 
@@ -231,7 +233,14 @@ def _iter_base_changes(context: DiffContext, *, include_snapshots: bool):
             new_item = new_items[i]
             old_ent = old_item["entity"]
             new_ent = new_item["entity"]
-            if entities_equal(entity_id, old_ent, new_ent, profile=profile):
+            if entities_equal(
+                entity_id,
+                old_ent,
+                new_ent,
+                profile=profile,
+                old_ids=old_ids,
+                new_ids=new_ids,
+            ):
                 continue
             change_id += 1
             yield make_change(

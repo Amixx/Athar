@@ -6,6 +6,8 @@ import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
+import time
 from typing import Any, Callable
 
 from athar.determinism import canonical_json
@@ -248,8 +250,15 @@ def main() -> None:
     scenarios = _scenarios()
     rows: list[dict[str, Any]] = []
     by_stage: dict[str, list[dict[str, Any]]] = {}
+    suite_started = time.perf_counter()
 
-    for scenario in scenarios:
+    for index, scenario in enumerate(scenarios, start=1):
+        print(
+            f"[matcher-quality] scenario {index}/{len(scenarios)} start {scenario.name} ({scenario.stage})",
+            file=sys.stderr,
+            flush=True,
+        )
+        started = time.perf_counter()
         predicted, aux = scenario.run()
         metrics = _metrics(scenario.expected_pairs, predicted)
         row = {
@@ -262,6 +271,12 @@ def main() -> None:
         }
         rows.append(row)
         by_stage.setdefault(scenario.stage, []).append(row)
+        print(
+            f"[matcher-quality] scenario {index}/{len(scenarios)} done {scenario.name}: "
+            f"exact={metrics['exact_match']} f1={metrics['f1']} elapsed={round(time.perf_counter() - started, 3)}s",
+            file=sys.stderr,
+            flush=True,
+        )
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -279,6 +294,11 @@ def main() -> None:
         print(f"Wrote matcher quality report to {out_path}")
     else:
         print(payload, end="")
+    print(
+        f"[matcher-quality] completed scenarios={len(scenarios)} elapsed={round(time.perf_counter() - suite_started, 3)}s",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

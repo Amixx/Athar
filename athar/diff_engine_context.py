@@ -208,11 +208,23 @@ def index_change(change_index: dict[str, list[str]], change: dict[str, Any]) -> 
         change_index.setdefault(entity_id, []).append(change_id)
 
 
-def entities_equal(entity_id: str, old_ent: EntityIR, new_ent: EntityIR, *, profile: str) -> bool:
+def entities_equal(
+    entity_id: str,
+    old_ent: EntityIR,
+    new_ent: EntityIR,
+    *,
+    profile: str,
+    old_ids: dict[int, str] | None = None,
+    new_ids: dict[int, str] | None = None,
+) -> bool:
     old_norm = entity_for_profile(old_ent, profile=profile)
     new_norm = entity_for_profile(new_ent, profile=profile)
     if entity_id.startswith("H:"):
         return structural_hash(old_norm) == structural_hash(new_norm)
+    if old_ids is not None:
+        old_norm = _normalize_entity_ref_targets(old_norm, old_ids)
+    if new_ids is not None:
+        new_norm = _normalize_entity_ref_targets(new_norm, new_ids)
     return (
         old_norm.get("entity_type") == new_norm.get("entity_type")
         and old_norm.get("attributes") == new_norm.get("attributes")
@@ -288,3 +300,38 @@ def _record_timing(target: dict[str, float] | None, key: str, started: float) ->
     if target is None:
         return
     target[key] = round((time.perf_counter() - started) * 1000.0, 3)
+
+
+def _normalize_entity_ref_targets(entity: EntityIR, ids_by_step: dict[int, str]) -> EntityIR:
+    refs = []
+    for ref in entity.get("refs", []):
+        target = ref.get("target")
+        refs.append({
+            **ref,
+            "target": _map_ref_target(target, ids_by_step),
+        })
+    attrs = _normalize_attr_refs(entity.get("attributes", {}), ids_by_step)
+    return {
+        **entity,
+        "attributes": attrs,
+        "refs": refs,
+    }
+
+
+def _normalize_attr_refs(value: Any, ids_by_step: dict[int, str]) -> Any:
+    if isinstance(value, dict):
+        if value.get("kind") == "ref":
+            return {
+                **value,
+                "id": _map_ref_target(value.get("id"), ids_by_step),
+            }
+        return {k: _normalize_attr_refs(v, ids_by_step) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_normalize_attr_refs(item, ids_by_step) for item in value]
+    return value
+
+
+def _map_ref_target(target: Any, ids_by_step: dict[int, str]) -> Any:
+    if isinstance(target, int):
+        return ids_by_step.get(target, f"STEP:{target}")
+    return target
