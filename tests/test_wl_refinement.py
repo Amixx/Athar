@@ -2,7 +2,7 @@ import importlib.util
 
 import pytest
 
-from athar.canonical_ids import wl_refine_colors, wl_refine_with_scc_fallback
+from athar.wl_refinement import wl_refine_colors, wl_refine_with_scc_fallback
 
 
 def _make_graph(offset: int = 0, edge_path: str = "/Ref") -> dict:

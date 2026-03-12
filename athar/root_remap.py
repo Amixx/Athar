@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections import Counter, defaultdict
 from typing import Any
 
-from .canonical_ids import wl_refine_colors
+from .wl_refinement import wl_refine_colors
+from .graph_utils import (
+    collect_attribute_paths,
+    collect_literal_tokens,
+    degree_similarity,
+    edge_signature,
+    jaccard,
+    sha256_json,
+    strip_ref_ids,
+)
 
 GUID_OVERLAP_THRESHOLD = 0.30
 ROOT_REMAP_SCORE_THRESHOLD = 0.72
@@ -96,9 +103,9 @@ def root_signature(entity: dict) -> str:
     payload = {
         "entity_type": entity.get("entity_type"),
         "attributes": _root_attributes(entity.get("attributes", {})),
-        "edges": _edge_signature(entity.get("refs", [])),
+        "edges": edge_signature(entity.get("refs", []), skip_paths=_VOLATILE_ROOT_REF_PATHS),
     }
-    return _sha256_json(payload)
+    return sha256_json(payload)
 
 
 def _collect_unique_roots(graph: dict) -> dict[str, dict]:
@@ -131,33 +138,8 @@ def _root_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
     for name, value in attributes.items():
         if name in _VOLATILE_ROOT_ATTRS:
             continue
-        cleaned[name] = _strip_ref_ids(value)
+        cleaned[name] = strip_ref_ids(value)
     return cleaned
-
-
-def _strip_ref_ids(value: Any) -> Any:
-    if isinstance(value, dict):
-        if value.get("kind") == "ref":
-            return {"kind": "ref"}
-        return {k: _strip_ref_ids(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_strip_ref_ids(v) for v in value]
-    return value
-
-
-def _edge_signature(refs: list[dict]) -> list[dict[str, Any]]:
-    counts: Counter[tuple[str, str | None]] = Counter()
-    for ref in refs:
-        path = ref.get("path", "")
-        if path in _VOLATILE_ROOT_REF_PATHS:
-            continue
-        counts[(path, ref.get("target_type"))] += 1
-    edges = [
-        {"path": path, "target_type": target_type, "count": count}
-        for (path, target_type), count in counts.items()
-    ]
-    edges.sort(key=lambda item: (item["path"], item["target_type"] or "", item["count"]))
-    return edges
 
 
 def _disambiguate_ambiguous_bucket(
@@ -256,42 +238,13 @@ def _root_feature(entity: dict, colors: dict[int, str]) -> dict[str, Any]:
     refs = [ref for ref in entity.get("refs", []) if ref.get("path", "") not in _VOLATILE_ROOT_REF_PATHS]
     return {
         "entity_type": entity.get("entity_type"),
-        "attribute_paths": _collect_attribute_paths(attrs, base_path=""),
-        "literal_tokens": _collect_literal_tokens(attrs),
+        "attribute_paths": collect_attribute_paths(attrs, base_path=""),
+        "literal_tokens": collect_literal_tokens(attrs),
         "edge_labels": {(ref.get("path", ""), ref.get("target_type")) for ref in refs},
         "neighbor_tokens": _neighbor_token_set(entity, colors),
         "neighbor_signature": _neighbor_signature(entity, colors),
         "degree": len(refs),
     }
-
-
-def _collect_attribute_paths(value: Any, *, base_path: str) -> set[str]:
-    paths: set[str] = set()
-    if isinstance(value, dict):
-        for key, child in value.items():
-            child_path = f"{base_path}/{key}"
-            paths.add(child_path)
-            paths.update(_collect_attribute_paths(child, base_path=child_path))
-    elif isinstance(value, list):
-        for idx, child in enumerate(value):
-            child_path = f"{base_path}/{idx}"
-            paths.add(child_path)
-            paths.update(_collect_attribute_paths(child, base_path=child_path))
-    return paths
-
-
-def _collect_literal_tokens(value: Any) -> set[str]:
-    tokens: set[str] = set()
-    if isinstance(value, dict):
-        kind = value.get("kind")
-        if kind in {"bool", "int", "real", "string"}:
-            tokens.add(f"{kind}:{value.get('value')}")
-        for child in value.values():
-            tokens.update(_collect_literal_tokens(child))
-    elif isinstance(value, list):
-        for child in value:
-            tokens.update(_collect_literal_tokens(child))
-    return tokens
 
 
 def _score_map(
@@ -313,12 +266,12 @@ def _score_map(
 
 def _similarity(old_f: dict[str, Any], new_f: dict[str, Any]) -> float:
     type_score = 1.0 if old_f["entity_type"] == new_f["entity_type"] else 0.0
-    attr_paths = _jaccard(old_f["attribute_paths"], new_f["attribute_paths"])
-    literals = _jaccard(old_f["literal_tokens"], new_f["literal_tokens"])
-    edges = _jaccard(old_f["edge_labels"], new_f["edge_labels"])
-    neighbor_overlap = _jaccard(old_f["neighbor_tokens"], new_f["neighbor_tokens"])
+    attr_paths = jaccard(old_f["attribute_paths"], new_f["attribute_paths"])
+    literals = jaccard(old_f["literal_tokens"], new_f["literal_tokens"])
+    edges = jaccard(old_f["edge_labels"], new_f["edge_labels"])
+    neighbor_overlap = jaccard(old_f["neighbor_tokens"], new_f["neighbor_tokens"])
     neighbor_eq = 1.0 if old_f["neighbor_signature"] == new_f["neighbor_signature"] else 0.0
-    degree = _degree_similarity(old_f["degree"], new_f["degree"])
+    degree = degree_similarity(old_f["degree"], new_f["degree"])
     return (
         0.15 * type_score
         + 0.15 * attr_paths
@@ -328,20 +281,6 @@ def _similarity(old_f: dict[str, Any], new_f: dict[str, Any]) -> float:
         + 0.10 * neighbor_eq
         + 0.05 * degree
     )
-
-
-def _jaccard(left: set[Any], right: set[Any]) -> float:
-    if not left and not right:
-        return 1.0
-    union = left | right
-    if not union:
-        return 1.0
-    return len(left & right) / len(union)
-
-
-def _degree_similarity(old_degree: int, new_degree: int) -> float:
-    max_degree = max(1, old_degree, new_degree)
-    return 1.0 - (abs(old_degree - new_degree) / max_degree)
 
 
 def _enumerate_assignments(
@@ -432,7 +371,7 @@ def _neighbor_signature(entity: dict, colors: dict[int, str]) -> str:
         for (path, target_type, target_color), count in counts.items()
     ]
     payload.sort(key=lambda item: (item["path"], item["target_type"] or "", item["target_color"], item["count"]))
-    return _sha256_json(payload)
+    return sha256_json(payload)
 
 
 def _neighbor_token_set(entity: dict, colors: dict[int, str]) -> set[tuple[str, str | None, str]]:
@@ -445,8 +384,3 @@ def _neighbor_token_set(entity: dict, colors: dict[int, str]) -> set[tuple[str, 
         target_color = colors.get(target, "MISSING") if isinstance(target, int) else "MISSING"
         tokens.add((path, ref.get("target_type"), target_color))
     return tokens
-
-
-def _sha256_json(payload: Any) -> str:
-    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()

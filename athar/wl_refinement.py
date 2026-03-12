@@ -1,9 +1,4 @@
-"""Structural identity helpers for the graph diff engine.
-
-This provides a deterministic, GUID-free structural hash (H) seed that
-ignores STEP IDs and inverse attributes. It is a correctness-first
-baseline before WL refinement is introduced.
-"""
+"""WL refinement and SCC-aware ambiguity fallback for graph identity."""
 
 from __future__ import annotations
 
@@ -13,6 +8,9 @@ import importlib.util
 import json
 from collections import Counter
 from typing import Any, Callable
+
+from .graph_utils import build_adjacency, build_reverse_adjacency
+from .structural_hash import structural_hash
 
 _DEFAULT_WL_ROUNDS = 8
 _WL_ROUND_HASH_AUTO = "auto"
@@ -30,31 +28,6 @@ _WL_ROUND_HASH_CHOICES = frozenset({
 _SCC_AMBIGUOUS_PARTITION_MAX = 128
 _SCC_FALLBACK_REFINEMENT_ROUNDS = 4
 
-def structural_payload(entity: dict) -> dict:
-    """Build a canonical payload for structural hashing."""
-    attrs = _strip_ref_ids(entity.get("attributes", {}))
-    edges = _edge_signature(entity.get("refs", []))
-    return {
-        "entity_type": entity.get("entity_type"),
-        "attributes": attrs,
-        "edges": edges,
-    }
-
-
-def structural_hash(entity: dict) -> str:
-    """Compute a deterministic SHA-256 hash for an entity payload."""
-    payload = structural_payload(entity)
-    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
-
-
-def compute_structural_hashes(graph: dict) -> dict[int, str]:
-    """Compute structural hashes for every entity in the graph IR."""
-    return {
-        step_id: structural_hash(entity)
-        for step_id, entity in graph.get("entities", {}).items()
-    }
-
 
 def wl_refine_colors(
     graph: dict,
@@ -68,7 +41,7 @@ def wl_refine_colors(
         return {}
 
     hasher_name, hasher = _resolve_wl_round_hasher(round_hash)
-    adjacency = _build_adjacency(entities)
+    adjacency = build_adjacency(entities)
     colors = {step_id: structural_hash(entity) for step_id, entity in entities.items()}
 
     rounds = _DEFAULT_WL_ROUNDS if max_rounds is None else max_rounds
@@ -76,7 +49,7 @@ def wl_refine_colors(
     for _ in range(rounds):
         next_colors: dict[int, str] = {}
         changed = 0
-        for step_id, entity in entities.items():
+        for step_id, _entity in entities.items():
             neighbor_sig = _neighbor_signature(adjacency.get(step_id, []), colors)
             payload = {
                 "self": colors[step_id],
@@ -118,8 +91,8 @@ def wl_refine_with_scc_fallback(
         max_rounds=max_rounds,
         round_hash=round_hash,
     )
-    adjacency = _build_adjacency(entities)
-    reverse_adjacency = _build_reverse_adjacency(entities, adjacency)
+    adjacency = build_adjacency(entities)
+    reverse_adjacency = build_reverse_adjacency(entities, adjacency)
     class_ids: dict[int, str] = {}
 
     sccs = _tarjan_scc(sorted(entities), adjacency)
@@ -197,52 +170,6 @@ def _sha256_hexdigest(data: bytes) -> str:
 
 def _blake2b64_hexdigest(data: bytes) -> str:
     return hashlib.blake2b(data, digest_size=8).hexdigest()
-
-
-def _strip_ref_ids(value: Any) -> Any:
-    if isinstance(value, dict):
-        if value.get("kind") == "ref":
-            return {"kind": "ref"}
-        return {k: _strip_ref_ids(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_strip_ref_ids(v) for v in value]
-    return value
-
-
-def _edge_signature(refs: list[dict]) -> list[dict[str, Any]]:
-    counts: Counter[tuple[str, str | None]] = Counter()
-    for ref in refs:
-        counts[(ref.get("path", ""), ref.get("target_type"))] += 1
-    edges = [
-        {"path": path, "target_type": target_type, "count": count}
-        for (path, target_type), count in counts.items()
-    ]
-    edges.sort(key=lambda item: (item["path"], item["target_type"] or "", item["count"]))
-    return edges
-
-
-def _build_adjacency(entities: dict[int, dict]) -> dict[int, list[tuple[str, str | None, int]]]:
-    adjacency: dict[int, list[tuple[str, str | None, int]]] = {}
-    for step_id, entity in entities.items():
-        for ref in entity.get("refs", []):
-            adjacency.setdefault(step_id, []).append(
-                (ref.get("path", ""), ref.get("target_type"), ref.get("target"))
-            )
-    return adjacency
-
-
-def _build_reverse_adjacency(
-    entities: dict[int, dict],
-    adjacency: dict[int, list[tuple[str, str | None, int]]],
-) -> dict[int, list[tuple[str, str | None, int]]]:
-    reverse: dict[int, list[tuple[str, str | None, int]]] = {step_id: [] for step_id in entities}
-    for source_step, edges in adjacency.items():
-        source_type = entities.get(source_step, {}).get("entity_type")
-        for path, _target_type, target_step in edges:
-            if target_step not in entities:
-                continue
-            reverse.setdefault(target_step, []).append((path, source_type, source_step))
-    return reverse
 
 
 def _neighbor_signature(

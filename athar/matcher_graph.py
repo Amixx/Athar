@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Any
 
+from .graph_utils import build_adjacency, build_reverse_adjacency
 from .matcher_graph_scoring import (
     SECONDARY_ASSIGNMENT_MAX,
     SECONDARY_ASSIGNMENT_AMBIGUITY_MARGIN,
@@ -97,10 +98,10 @@ def secondary_match_unresolved(
     new_blocks: defaultdict[str | None, list[int]] = defaultdict(list)
     old_features: dict[int, dict[str, Any]] = {}
     new_features: dict[int, dict[str, Any]] = {}
-    old_adjacency = _build_adjacency(old_entities)
-    new_adjacency = _build_adjacency(new_entities)
-    old_reverse = _build_reverse_adjacency(old_entities, old_adjacency)
-    new_reverse = _build_reverse_adjacency(new_entities, new_adjacency)
+    old_adjacency = build_adjacency(old_entities)
+    new_adjacency = build_adjacency(new_entities)
+    old_reverse = build_reverse_adjacency(old_entities, old_adjacency)
+    new_reverse = build_reverse_adjacency(new_entities, new_adjacency)
 
     for step_id, entity in old_entities.items():
         if step_id in used_old or _is_root(entity):
@@ -351,28 +352,4 @@ def _with_block_diagnostics(
     return out
 
 
-def _build_adjacency(entities: dict[int, dict]) -> dict[int, list[tuple[str, str | None, int]]]:
-    adjacency: dict[int, list[tuple[str, str | None, int]]] = {}
-    for step_id, entity in entities.items():
-        edges: list[tuple[str, str | None, int]] = []
-        for ref in entity.get("refs", []):
-            target = ref.get("target")
-            if target in entities:
-                edges.append((ref.get("path", ""), ref.get("target_type"), target))
-        edges.sort(key=lambda item: (item[0], item[1] or "", item[2]))
-        adjacency[step_id] = edges
-    return adjacency
 
-
-def _build_reverse_adjacency(
-    entities: dict[int, dict],
-    adjacency: dict[int, list[tuple[str, str | None, int]]],
-) -> dict[int, list[tuple[str, str | None, int]]]:
-    reverse: dict[int, list[tuple[str, str | None, int]]] = {step_id: [] for step_id in entities}
-    for source_step, edges in adjacency.items():
-        source_type = entities.get(source_step, {}).get("entity_type")
-        for path, _target_type, target_step in edges:
-            reverse.setdefault(target_step, []).append((path, source_type, source_step))
-    for step_id in reverse:
-        reverse[step_id].sort(key=lambda item: (item[0], item[1] or "", item[2]))
-    return reverse

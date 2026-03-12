@@ -9,16 +9,18 @@ from .diff_engine_context import (
     build_result,
     entities_equal,
     index_change,
+    _validate_schema,
     prepare_diff_context,
     resolve_identity,
     result_header,
     should_emit_class_delta,
 )
 from .diff_engine_markers import build_derived_markers, summarize_rooted_owners
-from .diff_engine_streaming import json_line, stream_diff_result
+from .diff_engine_streaming import stream_diff_events
 from .graph_parser import parse_graph
 from .guid_policy import GUID_POLICY_FAIL_FAST, validate_guid_policy
 from .profile_policy import DEFAULT_PROFILE
+from .types import DiffContext, GraphIR
 
 
 def diff_files(
@@ -32,7 +34,7 @@ def diff_files(
     validate_guid_policy(guid_policy)
     old_graph = parse_graph(old_path, profile=profile)
     new_graph = parse_graph(new_path, profile=profile)
-    _validate_same_schema(old_graph, new_graph)
+    _validate_schema(old_graph, new_graph)
     return diff_graphs(
         old_graph,
         new_graph,
@@ -43,8 +45,8 @@ def diff_files(
 
 
 def diff_graphs(
-    old_graph: dict,
-    new_graph: dict,
+    old_graph: GraphIR,
+    new_graph: GraphIR,
     *,
     profile: str = DEFAULT_PROFILE,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
@@ -89,7 +91,7 @@ def stream_diff_files(
     validate_guid_policy(guid_policy)
     old_graph = parse_graph(old_path, profile=profile)
     new_graph = parse_graph(new_path, profile=profile)
-    _validate_same_schema(old_graph, new_graph)
+    _validate_schema(old_graph, new_graph)
     yield from stream_diff_graphs(
         old_graph,
         new_graph,
@@ -102,8 +104,8 @@ def stream_diff_files(
 
 
 def stream_diff_graphs(
-    old_graph: dict,
-    new_graph: dict,
+    old_graph: GraphIR,
+    new_graph: GraphIR,
     *,
     profile: str = DEFAULT_PROFILE,
     guid_policy: str = GUID_POLICY_FAIL_FAST,
@@ -112,8 +114,6 @@ def stream_diff_graphs(
     chunk_size: int = 1000,
 ):
     """Stream diff output directly from graph inputs."""
-    if chunk_size <= 0:
-        raise ValueError("chunk_size must be > 0")
     validate_guid_policy(guid_policy)
 
     context = prepare_diff_context(
@@ -123,102 +123,11 @@ def stream_diff_graphs(
         guid_policy=guid_policy,
         matcher_policy=matcher_policy,
     )
-    header = result_header(context)
-    change_index: dict[str, list[str]] = {}
-
-    if mode == "ndjson":
-        yield json_line({"record_type": "header", **header})
-        base_count = 0
-        op_counts: dict[str, int] = {}
-        for base_count, change in enumerate(_iter_base_changes(context, include_snapshots=False), start=1):
-            index_change(change_index, change)
-            op = change.get("op")
-            if isinstance(op, str):
-                op_counts[op] = op_counts.get(op, 0) + 1
-            yield json_line({"record_type": "base_change", "index": base_count - 1, "change": change})
-        derived_markers = build_derived_markers(
-            old_graph=context["old_graph"],
-            new_graph=context["new_graph"],
-            old_ids=context["old_ids"],
-            new_ids=context["new_ids"],
-            change_index=change_index,
-        )
-        for idx, marker in enumerate(derived_markers):
-            yield json_line({"record_type": "derived_marker", "index": idx, "marker": marker})
-        yield json_line({
-            "record_type": "end",
-            "base_change_count": base_count,
-            "derived_marker_count": len(derived_markers),
-            "op_counts": {k: op_counts[k] for k in sorted(op_counts)},
-        })
-        return
-
-    if mode == "chunked_json":
-        yield json_line({"chunk_type": "header", **header})
-        buffer: list[dict[str, Any]] = []
-        offset = 0
-        base_count = 0
-        op_counts: dict[str, int] = {}
-        for change in _iter_base_changes(context, include_snapshots=False):
-            index_change(change_index, change)
-            buffer.append(change)
-            base_count += 1
-            op = change.get("op")
-            if isinstance(op, str):
-                op_counts[op] = op_counts.get(op, 0) + 1
-            if len(buffer) >= chunk_size:
-                yield json_line({
-                    "chunk_type": "base_changes",
-                    "offset": offset,
-                    "count": len(buffer),
-                    "items": buffer,
-                })
-                offset += len(buffer)
-                buffer = []
-        if buffer:
-            yield json_line({
-                "chunk_type": "base_changes",
-                "offset": offset,
-                "count": len(buffer),
-                "items": buffer,
-            })
-
-        derived_markers = build_derived_markers(
-            old_graph=context["old_graph"],
-            new_graph=context["new_graph"],
-            old_ids=context["old_ids"],
-            new_ids=context["new_ids"],
-            change_index=change_index,
-        )
-        marker_offset = 0
-        for idx in range(0, len(derived_markers), chunk_size):
-            items = derived_markers[idx: idx + chunk_size]
-            yield json_line({
-                "chunk_type": "derived_markers",
-                "offset": marker_offset,
-                "count": len(items),
-                "items": items,
-            })
-            marker_offset += len(items)
-        yield json_line({
-            "chunk_type": "end",
-            "base_change_count": base_count,
-            "derived_marker_count": len(derived_markers),
-            "op_counts": {k: op_counts[k] for k in sorted(op_counts)},
-        })
-        return
-
-    raise ValueError(f"Unknown stream mode: {mode}")
+    events = _iter_stream_events(context)
+    yield from stream_diff_events(events, mode=mode, chunk_size=chunk_size)
 
 
-def _validate_same_schema(old_graph: dict, new_graph: dict) -> None:
-    old_schema = old_graph.get("metadata", {}).get("schema")
-    new_schema = new_graph.get("metadata", {}).get("schema")
-    if old_schema != new_schema:
-        raise ValueError(f"Schema mismatch: {old_schema} vs {new_schema}")
-
-
-def _iter_base_changes(context: dict[str, Any], *, include_snapshots: bool):
+def _iter_base_changes(context: DiffContext, *, include_snapshots: bool):
     profile = context["profile"]
     old_by_id = context["old_by_id"]
     new_by_id = context["new_by_id"]
@@ -305,3 +214,21 @@ def _iter_base_changes(context: dict[str, Any], *, include_snapshots: bool):
                 profile=profile,
                 include_snapshots=include_snapshots,
             )
+
+
+def _iter_stream_events(context: DiffContext):
+    yield {"event_type": "header", "header": result_header(context)}
+    change_index: dict[str, list[str]] = {}
+    for change in _iter_base_changes(context, include_snapshots=False):
+        index_change(change_index, change)
+        yield {"event_type": "base_change", "change": change}
+
+    derived_markers = build_derived_markers(
+        old_graph=context["old_graph"],
+        new_graph=context["new_graph"],
+        old_ids=context["old_ids"],
+        new_ids=context["new_ids"],
+        change_index=change_index,
+    )
+    for marker in derived_markers:
+        yield {"event_type": "derived_marker", "marker": marker}
