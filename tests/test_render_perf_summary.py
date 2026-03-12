@@ -94,3 +94,23 @@ def test_render_baseline_includes_parse_timings_when_present():
     text = "\n".join(render_perf_summary._render_baseline(report))
     assert "### Parse Timings" in text
     assert "| `ifchouse` | 12.00 ms | 13.50 ms | 25.50 ms |" in text
+
+
+def test_render_suite_manifest_section():
+    report = {
+        "state": "running",
+        "completed_steps": 2,
+        "total_steps": 5,
+        "current_step": {"index": 3, "name": "wl_benchmark"},
+        "steps": [
+            {"name": "baseline", "exit_code": 0, "timed_out": False, "elapsed_s": 12.345},
+            {"name": "wl_benchmark", "exit_code": 124, "timed_out": True, "elapsed_s": 3600.0},
+        ],
+    }
+
+    text = "\n".join(render_perf_summary._render_suite_manifest(report))
+    assert "## Perf Suite Run" in text
+    assert "- state: `running`" in text
+    assert "- current step: `3/5` `wl_benchmark`" in text
+    assert "| `baseline` | `0` | `False` | `12.345s` | no |" in text
+    assert "| `wl_benchmark` | `124` | `True` | `3600.000s` | no |" in text

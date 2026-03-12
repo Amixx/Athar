@@ -131,6 +131,7 @@ python -m scripts.explore.render_perf_summary --baseline docs/perf/batch11_basel
 
 If the baseline report was produced with `--engine-timings`, the summary also includes a `Diff Stage Timings (diff_graphs)` section.
 The summary includes a `Parse Timings` section when baseline artifacts include `parse_ms`.
+If provided with a suite manifest (`--suite-manifest`), the summary includes a `Perf Suite Run` section with step status and elapsed times.
 
 Run the full perf suite in one command (sequential, overnight-friendly):
 
@@ -148,6 +149,12 @@ Include `diff_graphs` stage timing breakdown in the suite baseline step:
 
 ```bash
 python -m scripts.explore.run_perf_suite --tag YYYY-MM-DD --baseline-engine-timings
+```
+
+Add suite-level heartbeat logs while a step is running:
+
+```bash
+python -m scripts.explore.run_perf_suite --tag YYYY-MM-DD --heartbeat-s 30
 ```
 
 Resume an interrupted suite run (skips steps that already completed successfully and still have artifacts):

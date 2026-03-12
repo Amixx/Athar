@@ -23,6 +23,7 @@ def _run_step(
     artifact: Path | None,
     fail_fast: bool,
     timeout_s: int,
+    heartbeat_s: int,
     step_index: int,
     total_steps: int,
 ) -> dict[str, Any]:
@@ -30,16 +31,32 @@ def _run_step(
     started = time.perf_counter()
     timed_out = False
     exit_code = 0
-    try:
-        completed = subprocess.run(
-            cmd,
-            check=False,
-            timeout=timeout_s if timeout_s > 0 else None,
-        )
-        exit_code = completed.returncode
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        exit_code = 124
+    process = subprocess.Popen(cmd)
+    next_heartbeat = started + float(heartbeat_s) if heartbeat_s > 0 else None
+    while True:
+        polled = process.poll()
+        if polled is not None:
+            exit_code = polled
+            break
+        now = time.perf_counter()
+        elapsed = now - started
+        if timeout_s > 0 and elapsed >= timeout_s:
+            timed_out = True
+            exit_code = 124
+            print(
+                f"[suite] timeout step {step_index}/{total_steps} {name} after {round(elapsed, 3)}s; terminating",
+                flush=True,
+            )
+            process.kill()
+            process.wait()
+            break
+        if next_heartbeat is not None and now >= next_heartbeat:
+            print(
+                f"[suite] heartbeat step {step_index}/{total_steps} {name} elapsed={round(elapsed, 1)}s",
+                flush=True,
+            )
+            next_heartbeat = now + float(heartbeat_s)
+        time.sleep(1.0)
     elapsed_s = round(time.perf_counter() - started, 3)
     record: dict[str, Any] = {
         "name": name,
@@ -97,6 +114,8 @@ def _write_manifest(
     started_at: str,
     steps: list[dict[str, Any]],
     total_steps: int,
+    state: str,
+    current_step: dict[str, Any] | None,
 ) -> None:
     manifest = {
         "started_at": started_at,
@@ -105,8 +124,11 @@ def _write_manifest(
         "out_dir": str(out_dir),
         "completed_steps": len(steps),
         "total_steps": total_steps,
+        "state": state,
         "steps": steps,
     }
+    if current_step is not None:
+        manifest["current_step"] = current_step
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
@@ -168,6 +190,12 @@ def main() -> None:
         default=0,
         help="Optional timeout in seconds per step (0 disables timeout).",
     )
+    parser.add_argument(
+        "--heartbeat-s",
+        type=int,
+        default=30,
+        help="Optional suite-level heartbeat interval in seconds while a step is running (0 disables).",
+    )
     parser.add_argument("--fail-fast", action="store_true")
     args = parser.parse_args()
 
@@ -187,6 +215,8 @@ def main() -> None:
         raise ValueError("--determinism-rounds must be >= 1")
     if args.step_timeout_s < 0:
         raise ValueError("--step-timeout-s must be >= 0")
+    if args.heartbeat_s < 0:
+        raise ValueError("--heartbeat-s must be >= 0")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -309,6 +339,7 @@ def main() -> None:
         _append_optional_path(summary_cmd, "--owner-projection", owner_benchmark_path)
         _append_optional_path(summary_cmd, "--matcher-quality", matcher_quality_path)
         _append_optional_path(summary_cmd, "--determinism", determinism_path)
+        summary_cmd.extend(["--suite-manifest", str(manifest_path)])
 
         step_specs.append(("summary", summary_cmd, summary_path))
 
@@ -326,21 +357,18 @@ def main() -> None:
         started_at=started_at,
         steps=steps,
         total_steps=total_steps,
+        state="running",
+        current_step=None,
     )
 
-    for idx, (name, cmd, artifact) in enumerate(step_specs, start=1):
-        previous = previous_steps.get(name)
-        if previous is not None and _step_completed_successfully(previous, artifact):
-            record = dict(previous)
-            record["name"] = name
-            record["command"] = cmd
-            record["resumed_skip"] = True
-            record["resumed_at"] = datetime.now(timezone.utc).isoformat()
-            if artifact is not None:
-                record["artifact"] = str(artifact)
-                record["artifact_exists"] = artifact.exists()
-            print(f"[suite] skip step {idx}/{total_steps} {name}: already completed successfully")
-            steps.append(record)
+    current_step: dict[str, Any] | None = None
+    try:
+        for idx, (name, cmd, artifact) in enumerate(step_specs, start=1):
+            current_step = {
+                "index": idx,
+                "name": name,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
             _write_manifest(
                 manifest_path=manifest_path,
                 tag=tag,
@@ -348,18 +376,56 @@ def main() -> None:
                 started_at=started_at,
                 steps=steps,
                 total_steps=total_steps,
+                state="running",
+                current_step=current_step,
             )
-            continue
+            previous = previous_steps.get(name)
+            if previous is not None and _step_completed_successfully(previous, artifact):
+                record = dict(previous)
+                record["name"] = name
+                record["command"] = cmd
+                record["resumed_skip"] = True
+                record["resumed_at"] = datetime.now(timezone.utc).isoformat()
+                if artifact is not None:
+                    record["artifact"] = str(artifact)
+                    record["artifact_exists"] = artifact.exists()
+                print(f"[suite] skip step {idx}/{total_steps} {name}: already completed successfully")
+                steps.append(record)
+                current_step = None
+                _write_manifest(
+                    manifest_path=manifest_path,
+                    tag=tag,
+                    out_dir=out_dir,
+                    started_at=started_at,
+                    steps=steps,
+                    total_steps=total_steps,
+                    state="running",
+                    current_step=current_step,
+                )
+                continue
 
-        steps.append(_run_step(
-            name=name,
-            cmd=cmd,
-            artifact=artifact,
-            fail_fast=args.fail_fast,
-            timeout_s=args.step_timeout_s,
-            step_index=idx,
-            total_steps=total_steps,
-        ))
+            steps.append(_run_step(
+                name=name,
+                cmd=cmd,
+                artifact=artifact,
+                fail_fast=args.fail_fast,
+                timeout_s=args.step_timeout_s,
+                heartbeat_s=args.heartbeat_s,
+                step_index=idx,
+                total_steps=total_steps,
+            ))
+            current_step = None
+            _write_manifest(
+                manifest_path=manifest_path,
+                tag=tag,
+                out_dir=out_dir,
+                started_at=started_at,
+                steps=steps,
+                total_steps=total_steps,
+                state="running",
+                current_step=current_step,
+            )
+    except Exception:
         _write_manifest(
             manifest_path=manifest_path,
             tag=tag,
@@ -367,8 +433,21 @@ def main() -> None:
             started_at=started_at,
             steps=steps,
             total_steps=total_steps,
+            state="failed",
+            current_step=current_step,
         )
+        raise
 
+    _write_manifest(
+        manifest_path=manifest_path,
+        tag=tag,
+        out_dir=out_dir,
+        started_at=started_at,
+        steps=steps,
+        total_steps=total_steps,
+        state="completed",
+        current_step=None,
+    )
     print(f"Wrote perf suite manifest to {manifest_path}")
 
 
