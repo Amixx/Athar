@@ -57,6 +57,13 @@ WL refinement round hashing policy:
   - invalid rooted GUIDs are assigned deterministic `G!:` IDs (`G!:INVALID#<ordinal>`).
   - change identity is tagged with `match_method="guid_disambiguated"` and `matched_on.stage="guid_disambiguation"`.
 
+## Secondary Matcher
+
+- Unresolved non-root matching uses entity-family candidate blocking (compatible ancestry such as `IfcWallStandardCase` vs `IfcWall`).
+- Blocking/scoring includes ancestry and neighborhood digests.
+- Small candidate blocks use deterministic min-cost bipartite assignment.
+- Ambiguous small blocks use iterative deepening (`depth 1 -> depth 2 -> depth 3`) before ambiguity rejection.
+
 ## Wire Schema (v2)
 
 Top-level object:

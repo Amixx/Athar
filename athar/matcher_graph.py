@@ -7,10 +7,11 @@ from typing import Any
 
 from .matcher_graph_scoring import (
     SECONDARY_ASSIGNMENT_MAX,
-    assignment_block_match,
     blocking_key,
     build_feature_vector,
     fallback_signature_block_match,
+    iterative_assignment_block_match,
+    entity_type_family,
 )
 
 
@@ -87,18 +88,36 @@ def secondary_match_unresolved(
     new_blocks: defaultdict[str | None, list[int]] = defaultdict(list)
     old_features: dict[int, dict[str, Any]] = {}
     new_features: dict[int, dict[str, Any]] = {}
+    old_adjacency = _build_adjacency(old_entities)
+    new_adjacency = _build_adjacency(new_entities)
+    old_reverse = _build_reverse_adjacency(old_entities, old_adjacency)
+    new_reverse = _build_reverse_adjacency(new_entities, new_adjacency)
 
     for step_id, entity in old_entities.items():
         if step_id in used_old or _is_root(entity):
             continue
-        old_blocks[entity.get("entity_type")].append(step_id)
-        old_features[step_id] = build_feature_vector(entity)
+        family = entity_type_family(entity.get("entity_type"))
+        old_blocks[family].append(step_id)
+        old_features[step_id] = build_feature_vector(
+            entity,
+            step_id=step_id,
+            entities=old_entities,
+            adjacency=old_adjacency,
+            reverse_adjacency=old_reverse,
+        )
 
     for step_id, entity in new_entities.items():
         if step_id in used_new or _is_root(entity):
             continue
-        new_blocks[entity.get("entity_type")].append(step_id)
-        new_features[step_id] = build_feature_vector(entity)
+        family = entity_type_family(entity.get("entity_type"))
+        new_blocks[family].append(step_id)
+        new_features[step_id] = build_feature_vector(
+            entity,
+            step_id=step_id,
+            entities=new_entities,
+            adjacency=new_adjacency,
+            reverse_adjacency=new_reverse,
+        )
 
     matches: dict[int, int] = {}
     diagnostics: dict[int, dict[str, Any]] = {}
@@ -165,18 +184,18 @@ def _is_root(entity: dict | None) -> bool:
 
 
 def _match_entity_type_block(
-    entity_type: str | None,
+    entity_family: str | None,
     old_steps: list[int],
     new_steps: list[int],
     old_features: dict[int, dict[str, Any]],
     new_features: dict[int, dict[str, Any]],
 ) -> tuple[dict[int, int], dict[int, dict[str, Any]], int, list[dict[str, Any]]]:
-    old_by_block: defaultdict[tuple[str | None, int, int, int, int, int], list[int]] = defaultdict(list)
-    new_by_block: defaultdict[tuple[str | None, int, int, int, int, int], list[int]] = defaultdict(list)
+    old_by_block: defaultdict[tuple[str | None, int, int, int, int, int, int], list[int]] = defaultdict(list)
+    new_by_block: defaultdict[tuple[str | None, int, int, int, int, int, int], list[int]] = defaultdict(list)
     for step in old_steps:
-        old_by_block[blocking_key(entity_type, old_features[step])].append(step)
+        old_by_block[blocking_key(entity_family, old_features[step])].append(step)
     for step in new_steps:
-        new_by_block[blocking_key(entity_type, new_features[step])].append(step)
+        new_by_block[blocking_key(entity_family, new_features[step])].append(step)
 
     matches: dict[int, int] = {}
     diagnostics: dict[int, dict[str, Any]] = {}
@@ -205,7 +224,7 @@ def _match_entity_type_block(
         unresolved_new = [step for step in block_new if step not in block_matches.values()]
         if block_ambiguous and unresolved_old and unresolved_new:
             ambiguous_partitions.append({
-                "entity_type": entity_type,
+                "entity_type": entity_family,
                 "stage": "coarse_block",
                 "reason": "ambiguous_assignment",
                 "old_steps": sorted(unresolved_old),
@@ -216,7 +235,8 @@ def _match_entity_type_block(
                     "edge_bucket": key[2],
                     "attribute_bucket": key[3],
                     "literal_bucket": key[4],
-                    "neighborhood_bucket": key[5],
+                    "ancestry_bucket": key[5],
+                    "neighborhood_bucket": key[6],
                 },
             })
         matched_old.update(block_matches)
@@ -238,7 +258,7 @@ def _match_entity_type_block(
         unresolved_new = [step for step in residual_new if step not in residual_matches.values()]
         if residual_ambiguous and unresolved_old and unresolved_new:
             ambiguous_partitions.append({
-                "entity_type": entity_type,
+                "entity_type": entity_family,
                 "stage": "residual",
                 "reason": "ambiguous_assignment",
                 "old_steps": sorted(unresolved_old),
@@ -256,14 +276,14 @@ def _run_block_match(
 ) -> tuple[dict[int, int], dict[int, dict[str, Any]], int]:
     if len(old_steps) > SECONDARY_ASSIGNMENT_MAX or len(new_steps) > SECONDARY_ASSIGNMENT_MAX:
         return fallback_signature_block_match(old_steps, new_steps, old_features, new_features)
-    return assignment_block_match(old_steps, new_steps, old_features, new_features)
+    return iterative_assignment_block_match(old_steps, new_steps, old_features, new_features)
 
 
 def _with_block_diagnostics(
     diagnostics: dict[int, dict[str, Any]],
     *,
     block_stage: str,
-    block_key: tuple[str | None, int, int, int, int, int] | None,
+    block_key: tuple[str | None, int, int, int, int, int, int] | None,
 ) -> dict[int, dict[str, Any]]:
     out: dict[int, dict[str, Any]] = {}
     for step_id, diag in diagnostics.items():
@@ -276,10 +296,38 @@ def _with_block_diagnostics(
                 "edge_bucket": block_key[2],
                 "attribute_bucket": block_key[3],
                 "literal_bucket": block_key[4],
-                "neighborhood_bucket": block_key[5],
+                "ancestry_bucket": block_key[5],
+                "neighborhood_bucket": block_key[6],
             }
         out[step_id] = {
             **diag,
             "matched_on": matched_on,
         }
     return out
+
+
+def _build_adjacency(entities: dict[int, dict]) -> dict[int, list[tuple[str, str | None, int]]]:
+    adjacency: dict[int, list[tuple[str, str | None, int]]] = {}
+    for step_id, entity in entities.items():
+        edges: list[tuple[str, str | None, int]] = []
+        for ref in entity.get("refs", []):
+            target = ref.get("target")
+            if target in entities:
+                edges.append((ref.get("path", ""), ref.get("target_type"), target))
+        edges.sort(key=lambda item: (item[0], item[1] or "", item[2]))
+        adjacency[step_id] = edges
+    return adjacency
+
+
+def _build_reverse_adjacency(
+    entities: dict[int, dict],
+    adjacency: dict[int, list[tuple[str, str | None, int]]],
+) -> dict[int, list[tuple[str, str | None, int]]]:
+    reverse: dict[int, list[tuple[str, str | None, int]]] = {step_id: [] for step_id in entities}
+    for source_step, edges in adjacency.items():
+        source_type = entities.get(source_step, {}).get("entity_type")
+        for path, _target_type, target_step in edges:
+            reverse.setdefault(target_step, []).append((path, source_type, source_step))
+    for step_id in reverse:
+        reverse[step_id].sort(key=lambda item: (item[0], item[1] or "", item[2]))
+    return reverse

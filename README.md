@@ -79,6 +79,8 @@ Low-overlap rooted GUID churn now has Phase 2.5 scaffolding in `athar/root_remap
 
 `athar/canonical_ids.py` now supports pluggable fast hash backends for WL refinement rounds (`auto`, `xxh3_64`, `blake3`, `blake2b_64`, `sha256`), while external/wire identity IDs remain `sha256`.
 
+Secondary matching now uses stronger blocking and solver logic: entity-family blocking (e.g. `IfcWallStandardCase`/`IfcWall` compatibility), ancestry-aware feature buckets, deterministic min-cost bipartite assignment, and iterative deepening (`depth 1 -> 2 -> 3`) for small ambiguous blocks.
+
 Duplicate/invalid rooted `GlobalId` handling is now explicit and configurable: `fail_fast` (default, raises diagnostics) or `disambiguate` (assigns deterministic `G!:` IDs and marks identity as `guid_disambiguated`).
 
 `athar_layers/` remains in-repo for now as a presentation/integration package, but the engine work is centered in `athar/` and is intended to stand on its own.

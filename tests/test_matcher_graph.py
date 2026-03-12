@@ -211,3 +211,85 @@ def test_secondary_match_unresolved_uses_scored_assignment_for_swapped_pairs():
     assert result["ambiguous"] == 0
     assert result["diagnostics"][20]["matched_on"]["stage"] == "scored_assignment"
     assert result["diagnostics"][21]["matched_on"]["stage"] == "scored_assignment"
+
+
+def test_secondary_match_unresolved_supports_compatible_type_family_matching():
+    old_graph = _graph({
+        20: {
+            "entity_type": "IfcWallStandardCase",
+            "attributes": {"Tag": {"kind": "string", "value": "A"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph({
+        220: {
+            "entity_type": "IfcWall",
+            "attributes": {"Tag": {"kind": "string", "value": "A"}},
+            "refs": [],
+        },
+    })
+
+    result = secondary_match_unresolved(old_graph, new_graph)
+    assert result["old_to_new"] == {20: 220}
+    assert result["diagnostics"][20]["matched_on"]["stage"] == "scored_assignment"
+
+
+def test_secondary_match_unresolved_uses_iterative_deepening_for_ambiguous_block():
+    old_graph = _graph({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "ROOT_WALL",
+            "attributes": {},
+            "refs": [{"path": "/Assignments", "target": 30, "target_type": "IfcRelAssignsToGroup"}],
+        },
+        2: {
+            "entity_type": "IfcDoor",
+            "global_id": "ROOT_DOOR",
+            "attributes": {},
+            "refs": [{"path": "/Assignments", "target": 31, "target_type": "IfcRelAssignsToGroup"}],
+        },
+        30: {
+            "entity_type": "IfcRelAssignsToGroup",
+            "attributes": {},
+            "refs": [{"path": "/RelatedObjects/0", "target": 20, "target_type": "IfcProxy"}],
+        },
+        31: {
+            "entity_type": "IfcRelAssignsToGroup",
+            "attributes": {},
+            "refs": [{"path": "/RelatedObjects/0", "target": 21, "target_type": "IfcProxy"}],
+        },
+        20: {"entity_type": "IfcProxy", "attributes": {"Name": {"kind": "string", "value": "X"}}, "refs": []},
+        21: {"entity_type": "IfcProxy", "attributes": {"Name": {"kind": "string", "value": "X"}}, "refs": []},
+    })
+    new_graph = _graph({
+        11: {
+            "entity_type": "IfcWall",
+            "global_id": "ROOT_WALL",
+            "attributes": {},
+            "refs": [{"path": "/Assignments", "target": 131, "target_type": "IfcRelAssignsToGroup"}],
+        },
+        12: {
+            "entity_type": "IfcDoor",
+            "global_id": "ROOT_DOOR",
+            "attributes": {},
+            "refs": [{"path": "/Assignments", "target": 130, "target_type": "IfcRelAssignsToGroup"}],
+        },
+        130: {
+            "entity_type": "IfcRelAssignsToGroup",
+            "attributes": {},
+            "refs": [{"path": "/RelatedObjects/0", "target": 220, "target_type": "IfcProxy"}],
+        },
+        131: {
+            "entity_type": "IfcRelAssignsToGroup",
+            "attributes": {},
+            "refs": [{"path": "/RelatedObjects/0", "target": 221, "target_type": "IfcProxy"}],
+        },
+        220: {"entity_type": "IfcProxy", "attributes": {"Name": {"kind": "string", "value": "X"}}, "refs": []},
+        221: {"entity_type": "IfcProxy", "attributes": {"Name": {"kind": "string", "value": "X"}}, "refs": []},
+    })
+
+    result = secondary_match_unresolved(old_graph, new_graph, pre_matched_old={1, 2}, pre_matched_new={11, 12})
+    assert result["old_to_new"][20] == 221
+    assert result["old_to_new"][21] == 220
+    assert result["diagnostics"][20]["matched_on"]["depth"] >= 2
+    assert result["diagnostics"][21]["matched_on"]["depth"] >= 2
