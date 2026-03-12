@@ -65,6 +65,51 @@ def _append_optional_path(cmd: list[str], flag: str, path: Path) -> None:
         cmd.extend([flag, str(path)])
 
 
+def _load_previous_steps(manifest_path: Path) -> dict[str, dict[str, Any]]:
+    if not manifest_path.exists():
+        return {}
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    previous: dict[str, dict[str, Any]] = {}
+    for step in manifest.get("steps", []):
+        if isinstance(step, dict):
+            name = step.get("name")
+            if isinstance(name, str):
+                previous[name] = step
+    return previous
+
+
+def _step_completed_successfully(previous: dict[str, Any], artifact: Path | None) -> bool:
+    if previous.get("exit_code") != 0 or previous.get("timed_out"):
+        return False
+    if artifact is not None and not artifact.exists():
+        return False
+    return True
+
+
+def _write_manifest(
+    *,
+    manifest_path: Path,
+    tag: str,
+    out_dir: Path,
+    started_at: str,
+    steps: list[dict[str, Any]],
+    total_steps: int,
+) -> None:
+    manifest = {
+        "started_at": started_at,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "tag": tag,
+        "out_dir": str(out_dir),
+        "completed_steps": len(steps),
+        "total_steps": total_steps,
+        "steps": steps,
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run perf harnesses and render a summary.")
     parser.add_argument("--out-dir", default="docs/perf", help="Output directory for reports.")
@@ -107,6 +152,11 @@ def main() -> None:
     parser.add_argument("--skip-matcher-quality", action="store_true")
     parser.add_argument("--skip-determinism", action="store_true")
     parser.add_argument("--skip-summary", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from an existing perf suite manifest and skip successful completed steps.",
+    )
     parser.add_argument(
         "--step-timeout-s",
         type=int,
@@ -256,8 +306,44 @@ def main() -> None:
         step_specs.append(("summary", summary_cmd, summary_path))
 
     steps: list[dict[str, Any]] = []
+    started_at = datetime.now(timezone.utc).isoformat()
     total_steps = len(step_specs)
+    previous_steps = _load_previous_steps(manifest_path) if args.resume else {}
+    if args.resume and previous_steps:
+        print(f"[suite] resume enabled: loaded {len(previous_steps)} prior step records from {manifest_path}")
+
+    _write_manifest(
+        manifest_path=manifest_path,
+        tag=tag,
+        out_dir=out_dir,
+        started_at=started_at,
+        steps=steps,
+        total_steps=total_steps,
+    )
+
     for idx, (name, cmd, artifact) in enumerate(step_specs, start=1):
+        previous = previous_steps.get(name)
+        if previous is not None and _step_completed_successfully(previous, artifact):
+            record = dict(previous)
+            record["name"] = name
+            record["command"] = cmd
+            record["resumed_skip"] = True
+            record["resumed_at"] = datetime.now(timezone.utc).isoformat()
+            if artifact is not None:
+                record["artifact"] = str(artifact)
+                record["artifact_exists"] = artifact.exists()
+            print(f"[suite] skip step {idx}/{total_steps} {name}: already completed successfully")
+            steps.append(record)
+            _write_manifest(
+                manifest_path=manifest_path,
+                tag=tag,
+                out_dir=out_dir,
+                started_at=started_at,
+                steps=steps,
+                total_steps=total_steps,
+            )
+            continue
+
         steps.append(_run_step(
             name=name,
             cmd=cmd,
@@ -267,14 +353,15 @@ def main() -> None:
             step_index=idx,
             total_steps=total_steps,
         ))
+        _write_manifest(
+            manifest_path=manifest_path,
+            tag=tag,
+            out_dir=out_dir,
+            started_at=started_at,
+            steps=steps,
+            total_steps=total_steps,
+        )
 
-    manifest = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "tag": tag,
-        "out_dir": str(out_dir),
-        "steps": steps,
-    }
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"Wrote perf suite manifest to {manifest_path}")
 
 
