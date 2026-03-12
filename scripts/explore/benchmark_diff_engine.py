@@ -8,6 +8,7 @@ Default cases benchmark same-file comparisons for:
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -465,21 +466,42 @@ def _run_case(
         file=sys.stderr,
         flush=True,
     )
+    diff_signature = diff_stats.get("output_signature", {})
+    base_count = int(diff_signature.get("base_change_count", 0))
+    marker_count = int(diff_signature.get("derived_marker_count", 0))
+
     print(f"[bench] case={case.name} metric=stream_ndjson", file=sys.stderr, flush=True)
-    ndjson_stats = _benchmark_repeated(
-        lambda: _stream_signature(
+    ndjson_progress_state: dict[str, Any] = {
+        "stage": "stream_emit",
+        "status": "start",
+    }
+    expected_ndjson_records = _expected_stream_record_count(
+        mode="ndjson",
+        base_change_count=base_count,
+        derived_marker_count=marker_count,
+        chunk_size=chunk_size,
+    )
+
+    def _stream_ndjson_call() -> dict[str, Any]:
+        return _stream_signature(
             old_graph,
             new_graph,
             profile=profile,
             guid_policy=guid_policy,
             mode="ndjson",
             chunk_size=chunk_size,
-        ),
+            progress_state=ndjson_progress_state,
+            expected_records=expected_ndjson_records,
+        )
+
+    ndjson_stats = _benchmark_repeated(
+        _stream_ndjson_call,
         warmup=warmup,
         iterations=iterations,
         label=f"case={case.name} metric=stream_ndjson",
         heartbeat_s=heartbeat_s,
         expected_ms=max(float(diff_stats["summary"]["time_ms"]["mean"]) * 1.2, 1000.0),
+        progress_probe=lambda: ndjson_progress_state,
         progress_update=(
             lambda payload: _emit_progress_update(progress_update, {
                 "status": "running",
@@ -495,20 +517,37 @@ def _run_case(
         flush=True,
     )
     print(f"[bench] case={case.name} metric=stream_chunked_json", file=sys.stderr, flush=True)
-    chunked_stats = _benchmark_repeated(
-        lambda: _stream_signature(
+    chunked_progress_state: dict[str, Any] = {
+        "stage": "stream_emit",
+        "status": "start",
+    }
+    expected_chunked_records = _expected_stream_record_count(
+        mode="chunked_json",
+        base_change_count=base_count,
+        derived_marker_count=marker_count,
+        chunk_size=chunk_size,
+    )
+
+    def _stream_chunked_call() -> dict[str, Any]:
+        return _stream_signature(
             old_graph,
             new_graph,
             profile=profile,
             guid_policy=guid_policy,
             mode="chunked_json",
             chunk_size=chunk_size,
-        ),
+            progress_state=chunked_progress_state,
+            expected_records=expected_chunked_records,
+        )
+
+    chunked_stats = _benchmark_repeated(
+        _stream_chunked_call,
         warmup=warmup,
         iterations=iterations,
         label=f"case={case.name} metric=stream_chunked_json",
         heartbeat_s=heartbeat_s,
         expected_ms=max(float(ndjson_stats["summary"]["time_ms"]["mean"]) * 1.1, 1000.0),
+        progress_probe=lambda: chunked_progress_state,
         progress_update=(
             lambda payload: _emit_progress_update(progress_update, {
                 "status": "running",
@@ -572,9 +611,18 @@ def _stream_signature(
     guid_policy: str,
     mode: str,
     chunk_size: int,
+    progress_state: dict[str, Any] | None = None,
+    expected_records: int | None = None,
 ) -> dict[str, Any]:
+    if progress_state is not None:
+        progress_state.clear()
+        progress_state.update({
+            "stage": "stream_emit",
+            "status": "start",
+        })
     line_count = 0
     byte_count = 0
+    heartbeat_interval = 500
     for line in stream_diff_graphs(
         old_graph,
         new_graph,
@@ -585,7 +633,47 @@ def _stream_signature(
     ):
         line_count += 1
         byte_count += len(line.encode("utf-8"))
+        if progress_state is not None and (
+            line_count == 1
+            or line_count % heartbeat_interval == 0
+            or (expected_records is not None and line_count >= expected_records)
+        ):
+            progress_state.update({
+                "stage": "stream_emit",
+                "status": "running",
+                "completed": line_count,
+                "total": expected_records,
+                "bytes": byte_count,
+            })
+    if progress_state is not None:
+        progress_state.update({
+            "stage": "stream_emit",
+            "status": "done",
+            "completed": line_count,
+            "total": expected_records if expected_records is not None else line_count,
+            "bytes": byte_count,
+        })
     return {"line_count": line_count, "bytes": byte_count}
+
+
+def _expected_stream_record_count(
+    *,
+    mode: str,
+    base_change_count: int,
+    derived_marker_count: int,
+    chunk_size: int,
+) -> int | None:
+    if base_change_count < 0 or derived_marker_count < 0:
+        return None
+    if mode == "ndjson":
+        return 2 + base_change_count + derived_marker_count
+    if mode == "chunked_json":
+        return (
+            2
+            + int(math.ceil(base_change_count / chunk_size))
+            + int(math.ceil(derived_marker_count / chunk_size))
+        )
+    return None
 
 
 def main() -> None:

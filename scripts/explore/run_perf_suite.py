@@ -132,6 +132,8 @@ def _format_heartbeat_snapshot(snapshot: dict[str, Any] | None) -> str:
         name = current_case.get("name")
         metric = current_case.get("metric")
         phase = current_case.get("phase")
+        completed = current_case.get("completed")
+        total = current_case.get("total")
         probe_payload = current_case.get("probe")
         progress_fraction = current_case.get("progress_fraction")
         eta_text = current_case.get("eta_text")
@@ -141,6 +143,8 @@ def _format_heartbeat_snapshot(snapshot: dict[str, Any] | None) -> str:
             parts.append(f"metric={metric}")
         if isinstance(phase, str):
             parts.append(f"phase={phase}")
+        if isinstance(completed, int) and isinstance(total, int) and total > 0:
+            parts.append(f"items={completed}/{total}")
         if isinstance(probe_payload, dict):
             stage = probe_payload.get("stage")
             status = probe_payload.get("status")
@@ -168,6 +172,8 @@ def _summarize_probe_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]
         for key in (
             "index",
             "total",
+            "completed",
+            "bytes",
             "name",
             "phase",
             "metric",

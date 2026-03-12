@@ -132,6 +132,9 @@ def test_render_suite_manifest_includes_current_probe_snapshot():
                         "name": "ifchouse",
                         "metric": "diff_graphs",
                         "stage": "emit_base_changes",
+                        "completed": 123,
+                        "total": 456,
+                        "bytes": 9999,
                         "progress_fraction": 0.61,
                         "eta_text": "4m 20s",
                     },
@@ -147,5 +150,7 @@ def test_render_suite_manifest_includes_current_probe_snapshot():
     assert "- baseline probe case: `ifchouse`" in text
     assert "- baseline probe metric: `diff_graphs`" in text
     assert "- baseline probe stage: `emit_base_changes`" in text
+    assert "- baseline probe items: `123/456`" in text
+    assert "- baseline probe bytes: `9999`" in text
     assert "- baseline probe progress: `61.0%`" in text
     assert "- baseline probe eta: `4m 20s`" in text

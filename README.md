@@ -97,6 +97,7 @@ python -m scripts.explore.benchmark_diff_engine --case ifchouse:data/BasicHouse.
 
 Heartbeat lines include coarse `progress~...` and `eta~...` estimates (stage-aware where available), with ETA shown in human duration format (`h m s` when needed).
 For `diff_graphs`, stage-aware progress includes context pipeline steps, base-change scan progress, and derived-marker completion.
+For stream metrics, heartbeat also reports emitted-record progress (`items=...`) and ETA when expected record counts are known.
 
 Write live progress snapshots to a sidecar JSON:
 
@@ -109,6 +110,8 @@ Watch that sidecar in another terminal:
 ```bash
 python -m scripts.explore.watch_progress --file /tmp/ifchouse-progress.json --interval-s 2
 ```
+
+Watcher output includes stream item counters and emitted bytes when available.
 
 Baseline reports also include parser timings per case under `parse_ms` (`old_graph`, `new_graph`, `total`).
 
