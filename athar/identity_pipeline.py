@@ -10,6 +10,12 @@ from .guid_policy import enforce_or_disambiguate_guid_policy
 from .profile_policy import entity_for_profile
 from .types import GraphIR, IdentityInfo
 
+_DEFAULT_EXACT_HASH_IDENTITY: IdentityInfo = {
+    "match_method": "exact_hash",
+    "match_confidence": 1.0,
+    "matched_on": None,
+}
+
 
 def _precompute_identity_state(graph: GraphIR, *, profile: str) -> dict[str, Any]:
     entities = graph.get("entities", {})
@@ -22,7 +28,11 @@ def _precompute_identity_state(graph: GraphIR, *, profile: str) -> dict[str, Any
         for step_id, entity in id_entities.items()
     }
     wl_diagnostics: dict[str, Any] = {}
-    colors, scc_classes = wl_refine_with_scc_fallback(id_graph, diagnostics=wl_diagnostics)
+    colors, scc_classes = wl_refine_with_scc_fallback(
+        id_graph,
+        initial_colors=profile_hashes,
+        diagnostics=wl_diagnostics,
+    )
     return {
         "entities": entities,
         "guid_counts": guid_counts,
@@ -245,14 +255,13 @@ def _index_by_identity(
     compare_entities = compare_entities or {}
     for step_id, entity in entities.items():
         profile_entity = profile_entities.get(step_id, entity)
+        identity_item = identity.get(step_id)
+        if identity_item is None:
+            identity_item = _DEFAULT_EXACT_HASH_IDENTITY
         item = {
             "step_id": step_id,
             "entity": entity,
-            "identity": identity.get(step_id, {
-                "match_method": "exact_hash",
-                "match_confidence": 1.0,
-                "matched_on": None,
-            }),
+            "identity": identity_item,
         }
         if profile_entity is not entity:
             item["profile_entity"] = profile_entity

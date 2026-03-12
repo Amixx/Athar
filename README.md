@@ -10,7 +10,7 @@ Semantic diff for IFC files. Compares BIM models at the entity/property level â€
 pip install -e .
 ```
 
-Requires Python 3.10+ and [ifcopenshell](https://ifcopenshell.org/).
+Requires Python 3.10+, [ifcopenshell](https://ifcopenshell.org/), and `xxhash`.
 
 ## Usage
 
@@ -48,7 +48,7 @@ python -m athar old.ifc new.ifc --guid-policy disambiguate
 # Set geometry representation policy (default: strict_syntax)
 python -m athar old.ifc new.ifc --geometry-policy invariant_probe
 
-# Spill rooted-owner indexing to disk above threshold (estimated owner pairs)
+# Enable eager rooted-owner indexing; spill to disk above threshold (estimated owner pairs)
 python -m athar old.ifc new.ifc --owner-index-disk-threshold 500000
 
 # Stream output as NDJSON records
@@ -100,6 +100,12 @@ Run only one metric (recommended during active tuning loops):
 
 ```bash
 python -m scripts.explore.benchmark_diff_engine --case ifchouse:data/BasicHouse.ifc:data/BasicHouse.ifc --metric diff_graphs --warmup 0 --iterations 1 --engine-timings --heartbeat-s 15 --out /tmp/ifchouse-diff-only.json
+```
+
+Profile `prepare_context` in isolation (parse once, context stage only):
+
+```bash
+python -m scripts.explore.profile_prepare_context --old tests/fixtures/house_v1.ifc --new tests/fixtures/house_v2.ifc --warmup 0 --iterations 1 --heartbeat-s 15 --cprofile --out /tmp/house-v1-v2-prepare-context.json
 ```
 
 Show liveness during long metric iterations:
@@ -236,7 +242,7 @@ Phase 5 cutover shim `athar/differ.py` now routes legacy `athar.differ.diff()` c
 
 `athar/diff_engine.py` also short-circuits same-graph inputs (including same-path parses reused as one graph object) to immediate empty diff/stream output after schema/profile/GUID/matcher-policy validation.
 
-Rooted-owner projection now supports disk-backed fallback for large closure cardinalities: set `ATHAR_OWNER_INDEX_DISK_THRESHOLD` (estimated owner pairs) to spill owner indexing to a temporary SQLite index instead of keeping full closure sets in memory.
+Rooted-owner projection is demand-driven by default (reverse reachability per changed step with caching). Set `ATHAR_OWNER_INDEX_DISK_THRESHOLD` to opt into eager full owner-index mode; when estimated owner pairs exceed that threshold, indexing spills to a temporary SQLite store instead of keeping full closure sets in memory.
 
 Secondary matching now uses stronger blocking and solver logic: entity-family blocking (e.g. `IfcWallStandardCase`/`IfcWall` compatibility), ancestry-aware feature buckets, deterministic min-cost bipartite assignment, and iterative deepening (`depth 1 -> 2 -> 3`) for small ambiguous blocks.
 

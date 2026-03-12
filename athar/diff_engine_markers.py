@@ -94,21 +94,40 @@ class RootedOwnerProjector:
     def __init__(self, graph: dict, ids: dict[int, str]) -> None:
         self._graph = graph
         self._ids = ids
+        self._eager_index_enabled = owner_index_disk_threshold() > 0
         self._owners_index: dict[int, set[str]] | _DiskBackedOwnerIndex | None = None
+        self._entities = graph.get("entities", {})
+        self._root_owner_ids = {
+            step_id: entity_id
+            for step_id, entity_id in ids.items()
+            if isinstance(entity_id, str) and entity_id.startswith("G:")
+        }
+        self._reverse_sources = _build_reverse_sources(self._entities)
+        self._owners_cache: dict[int, set[str]] = {
+            step_id: {owner_id}
+            for step_id, owner_id in self._root_owner_ids.items()
+        }
 
     def owners_for_step(self, step_id: int) -> set[str]:
-        owners = self._materialize()
-        if isinstance(owners, _DiskBackedOwnerIndex):
-            return owners.owners_for_step(step_id)
-        return owners.get(step_id, set())
+        if self._eager_index_enabled:
+            owners = self._materialize()
+            if isinstance(owners, _DiskBackedOwnerIndex):
+                return owners.owners_for_step(step_id)
+            return owners.get(step_id, set())
+        return self._owners_for_step_on_demand(step_id)
 
     def owners_for_steps(self, step_ids: list[int]) -> set[str]:
-        owners = self._materialize()
-        if isinstance(owners, _DiskBackedOwnerIndex):
-            return owners.owners_for_steps(step_ids)
+        if self._eager_index_enabled:
+            owners = self._materialize()
+            if isinstance(owners, _DiskBackedOwnerIndex):
+                return owners.owners_for_steps(step_ids)
+            merged: set[str] = set()
+            for step_id in step_ids:
+                merged.update(owners.get(step_id, set()))
+            return merged
         merged: set[str] = set()
-        for step_id in step_ids:
-            merged.update(owners.get(step_id, set()))
+        for step_id in sorted(set(step_ids)):
+            merged.update(self._owners_for_step_on_demand(step_id))
         return merged
 
     def close(self) -> None:
@@ -127,6 +146,47 @@ class RootedOwnerProjector:
             else:
                 self._owners_index = compute_rooted_owner_index(self._graph, self._ids)
         return self._owners_index
+
+    def _owners_for_step_on_demand(self, step_id: int) -> set[str]:
+        cached = self._owners_cache.get(step_id)
+        if cached is not None:
+            return set(cached)
+        if step_id not in self._entities:
+            return set()
+
+        owner_ids: set[str] = set()
+        seen: set[int] = set()
+        stack = [step_id]
+        while stack:
+            node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+
+            root_owner_id = self._root_owner_ids.get(node)
+            if root_owner_id is not None:
+                owner_ids.add(root_owner_id)
+
+            node_cached = self._owners_cache.get(node)
+            if node_cached is not None:
+                owner_ids.update(node_cached)
+                continue
+
+            for source in self._reverse_sources.get(node, ()):
+                if source not in seen:
+                    stack.append(source)
+        self._owners_cache[step_id] = set(owner_ids)
+        return owner_ids
+
+
+def _build_reverse_sources(entities: dict[int, dict]) -> dict[int, list[int]]:
+    reverse: dict[int, list[int]] = {step_id: [] for step_id in entities}
+    for source_step, entity in entities.items():
+        for ref in entity.get("refs", []):
+            target = ref.get("target")
+            if target in entities:
+                reverse.setdefault(target, []).append(source_step)
+    return reverse
 
 
 def build_derived_markers(

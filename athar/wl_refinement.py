@@ -43,6 +43,7 @@ def wl_refine_colors(
     *,
     max_rounds: int | None = None,
     round_hash: str = _WL_ROUND_HASH_AUTO,
+    initial_colors: dict[int, str] | None = None,
     diagnostics: dict[str, Any] | None = None,
 ) -> dict[int, str]:
     """Weisfeiler-Lehman color refinement over the explicit forward graph."""
@@ -52,7 +53,12 @@ def wl_refine_colors(
 
     hasher_name, hasher = _resolve_wl_round_hasher(round_hash)
     adjacency = build_adjacency(entities)
-    colors = {step_id: structural_hash(entity) for step_id, entity in entities.items()}
+    if initial_colors is None:
+        colors = {step_id: structural_hash(entity) for step_id, entity in entities.items()}
+    else:
+        # Reuse precomputed structural hashes where available to avoid duplicate
+        # per-entity hashing across identity precompute + WL initialization.
+        colors = {step_id: initial_colors.get(step_id) or structural_hash(entity) for step_id, entity in entities.items()}
     path_bytes_cache: dict[str, bytes] = {}
     type_bytes_cache: dict[str, bytes] = {}
     color_bytes_cache: dict[str, bytes] = {}
@@ -195,6 +201,7 @@ def wl_refine_with_scc_fallback(
     *,
     max_rounds: int | None = None,
     round_hash: str = _WL_ROUND_HASH_AUTO,
+    initial_colors: dict[int, str] | None = None,
     max_partition_size: int = _SCC_AMBIGUOUS_PARTITION_MAX,
     refinement_rounds: int = _SCC_FALLBACK_REFINEMENT_ROUNDS,
     diagnostics: dict[str, Any] | None = None,
@@ -214,6 +221,7 @@ def wl_refine_with_scc_fallback(
         graph,
         max_rounds=max_rounds,
         round_hash=round_hash,
+        initial_colors=initial_colors,
         diagnostics=wl_diagnostics,
     )
     adjacency = build_adjacency(entities)
