@@ -38,7 +38,72 @@ def _render_baseline(report: dict[str, Any]) -> list[str]:
             mem_mean = _fmt_mb(summary.get("peak_mem_bytes", {}).get("mean"))
             stable = "yes" if metric.get("stable_output_signature") else "no"
             lines.append(f"| `{name}` | `{metric_name}` | {time_mean} | {mem_mean} | {stable} |")
+    lines.extend(_render_baseline_parse_times(report))
+    lines.extend(_render_baseline_engine_timings(report))
     lines.append("")
+    return lines
+
+
+def _render_baseline_parse_times(report: dict[str, Any]) -> list[str]:
+    rows: list[tuple[str, Any, Any, Any]] = []
+    for case in report.get("results", []):
+        case_name = case.get("case", {}).get("name", "unknown")
+        parse_ms = case.get("parse_ms", {})
+        if not isinstance(parse_ms, dict):
+            continue
+        rows.append((
+            case_name,
+            parse_ms.get("old_graph"),
+            parse_ms.get("new_graph"),
+            parse_ms.get("total"),
+        ))
+
+    if not rows:
+        return []
+
+    rows.sort(key=lambda item: item[0])
+    lines = [
+        "",
+        "### Parse Timings",
+        "",
+        "| Case | Parse Old | Parse New | Parse Total |",
+        "|---|---:|---:|---:|",
+    ]
+    for case_name, old_ms, new_ms, total_ms in rows:
+        lines.append(
+            f"| `{case_name}` | {_fmt_ms(old_ms)} | {_fmt_ms(new_ms)} | {_fmt_ms(total_ms)} |"
+        )
+    return lines
+
+
+def _render_baseline_engine_timings(report: dict[str, Any]) -> list[str]:
+    rows: list[tuple[str, str, float]] = []
+    for case in report.get("results", []):
+        case_name = case.get("case", {}).get("name", "unknown")
+        metric = case.get("metrics", {}).get("diff_graphs", {})
+        summary = metric.get("engine_timings_ms", {}).get("summary", {})
+        if not isinstance(summary, dict):
+            continue
+        for stage, stats in summary.items():
+            if not isinstance(stats, dict):
+                continue
+            mean = stats.get("mean")
+            if isinstance(mean, (int, float)):
+                rows.append((case_name, str(stage), float(mean)))
+
+    if not rows:
+        return []
+
+    rows.sort(key=lambda item: (-item[2], item[0], item[1]))
+    lines = [
+        "",
+        "### Diff Stage Timings (`diff_graphs`)",
+        "",
+        "| Case | Stage | Mean Time |",
+        "|---|---:|---:|",
+    ]
+    for case_name, stage, mean_ms in rows:
+        lines.append(f"| `{case_name}` | `{stage}` | {mean_ms:.2f} ms |")
     return lines
 
 

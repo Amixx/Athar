@@ -103,6 +103,17 @@ def _benchmark_repeated(
     }
 
 
+def _summarize_named_float_samples(samples: list[dict[str, float]]) -> dict[str, Any]:
+    by_name: dict[str, list[float]] = {}
+    for sample in samples:
+        for key, value in sample.items():
+            by_name.setdefault(key, []).append(float(value))
+    return {
+        "samples": {key: [round(v, 3) for v in values] for key, values in sorted(by_name.items())},
+        "summary": {key: _summarize_float_samples(values) for key, values in sorted(by_name.items())},
+    }
+
+
 def _summarize_float_samples(values: list[float]) -> dict[str, float]:
     if not values:
         return {"min": 0.0, "max": 0.0, "mean": 0.0, "median": 0.0, "p95": 0.0}
@@ -146,6 +157,7 @@ def _run_case(
     warmup: int,
     iterations: int,
     chunk_size: int,
+    engine_timings: bool,
 ) -> dict[str, Any]:
     print(
         f"[bench] case {case_index}/{total_cases} name={case.name} parsing old graph {case.old_path}",
@@ -154,8 +166,9 @@ def _run_case(
     )
     parse_started = time.perf_counter()
     old_graph = parse_graph(str(case.old_path), profile=profile)
+    old_parse_ms = (time.perf_counter() - parse_started) * 1000.0
     print(
-        f"[bench] case={case.name} parsed old graph in {(time.perf_counter() - parse_started) * 1000.0:.1f} ms",
+        f"[bench] case={case.name} parsed old graph in {old_parse_ms:.1f} ms",
         file=sys.stderr,
         flush=True,
     )
@@ -166,19 +179,46 @@ def _run_case(
     )
     parse_started = time.perf_counter()
     new_graph = parse_graph(str(case.new_path), profile=profile)
+    new_parse_ms = (time.perf_counter() - parse_started) * 1000.0
     print(
-        f"[bench] case={case.name} parsed new graph in {(time.perf_counter() - parse_started) * 1000.0:.1f} ms",
+        f"[bench] case={case.name} parsed new graph in {new_parse_ms:.1f} ms",
         file=sys.stderr,
         flush=True,
     )
 
     print(f"[bench] case={case.name} metric=diff_graphs", file=sys.stderr, flush=True)
+    diff_timing_samples: list[dict[str, float]] = []
+
+    def _diff_call() -> dict[str, Any]:
+        result = diff_graphs(
+            old_graph,
+            new_graph,
+            profile=profile,
+            guid_policy=guid_policy,
+            timings=engine_timings,
+        )
+        if engine_timings:
+            timings_ms = result.get("stats", {}).get("timings_ms")
+            if isinstance(timings_ms, dict):
+                normalized: dict[str, float] = {}
+                for key, value in timings_ms.items():
+                    if isinstance(value, (int, float)):
+                        normalized[key] = float(value)
+                if normalized:
+                    diff_timing_samples.append(normalized)
+        return {
+            "base_change_count": len(result.get("base_changes", [])),
+            "derived_marker_count": len(result.get("derived_markers", [])),
+        }
+
     diff_stats = _benchmark_repeated(
-        lambda: _diff_signature(old_graph, new_graph, profile=profile, guid_policy=guid_policy),
+        _diff_call,
         warmup=warmup,
         iterations=iterations,
         label=f"case={case.name} metric=diff_graphs",
     )
+    if engine_timings and diff_timing_samples:
+        diff_stats["engine_timings_ms"] = _summarize_named_float_samples(diff_timing_samples)
     print(
         f"[bench] case={case.name} metric=diff_graphs mean_ms={diff_stats['summary']['time_ms']['mean']}",
         file=sys.stderr,
@@ -229,24 +269,16 @@ def _run_case(
             "old_path": str(case.old_path),
             "new_path": str(case.new_path),
         },
+        "parse_ms": {
+            "old_graph": round(old_parse_ms, 3),
+            "new_graph": round(new_parse_ms, 3),
+            "total": round(old_parse_ms + new_parse_ms, 3),
+        },
         "metrics": {
             "diff_graphs": diff_stats,
             "stream_diff_graphs_ndjson": ndjson_stats,
             "stream_diff_graphs_chunked_json": chunked_stats,
         },
-    }
-
-
-def _diff_signature(old_graph: dict, new_graph: dict, *, profile: str, guid_policy: str) -> dict[str, Any]:
-    result = diff_graphs(
-        old_graph,
-        new_graph,
-        profile=profile,
-        guid_policy=guid_policy,
-    )
-    return {
-        "base_change_count": len(result.get("base_changes", [])),
-        "derived_marker_count": len(result.get("derived_markers", [])),
     }
 
 
@@ -302,6 +334,11 @@ def main() -> None:
         default=None,
         help="Optional output path for JSON report.",
     )
+    parser.add_argument(
+        "--engine-timings",
+        action="store_true",
+        help="Collect per-stage diff engine timings (`stats.timings_ms`) in diff_graphs benchmark output.",
+    )
     args = parser.parse_args()
 
     if args.warmup < 0:
@@ -323,6 +360,7 @@ def main() -> None:
             "chunk_size": args.chunk_size,
             "profile": args.profile,
             "guid_policy": args.guid_policy,
+            "engine_timings": args.engine_timings,
         },
         "results": [],
     }
@@ -337,6 +375,7 @@ def main() -> None:
             warmup=args.warmup,
             iterations=args.iterations,
             chunk_size=args.chunk_size,
+            engine_timings=args.engine_timings,
         ))
 
     payload = canonical_json(report) + "\n"
