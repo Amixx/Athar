@@ -28,6 +28,7 @@ Unsupported profile values are rejected with `ValueError("Unknown profile: ...")
 ## Identity Tiers
 
 - `G:<GlobalId>` for valid, unique rooted entities.
+- `G!:...` for deterministic disambiguated rooted IDs when `guid_policy=disambiguate`.
 - `H:<sha256>` for non-root structural identity.
 - `C:<sha256>` for unresolved indistinguishable/ambiguous equivalence classes.
 
@@ -40,11 +41,21 @@ WL refinement round hashing policy:
 
 `identity.match_method` currently includes:
 - `exact_guid`
+- `guid_disambiguated`
 - `root_remap`
 - `path_propagation`
 - `secondary_match`
 - `equivalence_class`
 - `exact_hash`
+
+## GUID Policy
+
+- `fail_fast` (default)
+  - duplicate or invalid `GlobalId` raises a `ValueError` with diagnostics.
+- `disambiguate`
+  - duplicate rooted GUIDs are assigned deterministic `G!:` IDs (`G!:<guid>#<ordinal>`).
+  - invalid rooted GUIDs are assigned deterministic `G!:` IDs (`G!:INVALID#<ordinal>`).
+  - change identity is tagged with `match_method="guid_disambiguated"` and `matched_on.stage="guid_disambiguation"`.
 
 ## Wire Schema (v2)
 
