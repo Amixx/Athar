@@ -17,6 +17,10 @@ def _precompute_identity_state(graph: GraphIR, *, profile: str) -> dict[str, Any
     unique_guid_steps = _unique_guid_step_index(entities, guid_counts=guid_counts)
     id_graph = _graph_for_profile(graph, profile=profile)
     id_entities = id_graph.get("entities", {})
+    profile_hashes = {
+        step_id: structural_hash(entity)
+        for step_id, entity in id_entities.items()
+    }
     wl_diagnostics: dict[str, Any] = {}
     colors, scc_classes = wl_refine_with_scc_fallback(id_graph, diagnostics=wl_diagnostics)
     return {
@@ -24,6 +28,7 @@ def _precompute_identity_state(graph: GraphIR, *, profile: str) -> dict[str, Any
         "guid_counts": guid_counts,
         "unique_guid_steps": unique_guid_steps,
         "id_entities": id_entities,
+        "profile_hashes": profile_hashes,
         "colors": colors,
         "scc_classes": scc_classes,
         "wl_diagnostics": wl_diagnostics,
@@ -59,6 +64,8 @@ def _assign_ids(
     )
     guid_index = identity_state.get("guid_counts") or _guid_index(entities)
     disambiguated = guid_policy_out["disambiguated"]
+    root_remap = root_remap or {}
+    root_remap_diagnostics = root_remap_diagnostics or {}
     ids: dict[int, str] = {}
     identity: dict[int, IdentityInfo] = {}
     for step_id, entity in entities.items():
@@ -78,8 +85,8 @@ def _assign_ids(
             continue
         gid = entity.get("global_id")
         if gid and guid_index.get(gid, 0) == 1:
-            mapped_gid = (root_remap or {}).get(gid, gid)
-            remap_diag = (root_remap_diagnostics or {}).get(gid, {})
+            mapped_gid = root_remap.get(gid, gid)
+            remap_diag = root_remap_diagnostics.get(gid, {})
             ids[step_id] = f"G:{mapped_gid}"
             identity[step_id] = {
                 "match_method": "root_remap" if mapped_gid != gid else "exact_guid",
@@ -107,11 +114,6 @@ def _assign_ids(
                 }
             else:
                 ids[step_id] = f"H:{colors.get(step_id) or structural_hash(hash_entity)}"
-                identity[step_id] = {
-                    "match_method": "exact_hash",
-                    "match_confidence": 1.0,
-                    "matched_on": {"stage": "structural_hash"},
-                }
     return ids, identity
 
 
@@ -235,13 +237,13 @@ def _index_by_identity(
     *,
     profile_entities: dict[int, dict] | None = None,
     compare_entities: dict[int, dict] | None = None,
+    profile_hashes: dict[int, str] | None = None,
 ) -> dict[str, list[dict]]:
     by_id: dict[str, list[dict]] = {}
     entities = graph.get("entities", {})
     profile_entities = profile_entities or entities
     compare_entities = compare_entities or {}
-    for step_id in sorted(entities):
-        entity = entities[step_id]
+    for step_id, entity in entities.items():
         profile_entity = profile_entities.get(step_id, entity)
         item = {
             "step_id": step_id,
@@ -256,5 +258,7 @@ def _index_by_identity(
             item["profile_entity"] = profile_entity
         if step_id in compare_entities:
             item["compare_entity"] = compare_entities[step_id]
+        if profile_hashes is not None and step_id in profile_hashes:
+            item["profile_hash"] = profile_hashes[step_id]
         by_id.setdefault(ids[step_id], []).append(item)
     return by_id

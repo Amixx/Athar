@@ -1,3 +1,4 @@
+import athar.matcher_graph as matcher_graph_mod
 from athar.matcher_graph import propagate_matches_by_typed_path, secondary_match_unresolved
 
 
@@ -445,3 +446,69 @@ def test_secondary_match_unresolved_can_gate_large_unresolved_sets():
     assert result["diagnostics"] == {}
     assert result["ambiguous"] == 2
     assert result["ambiguous_partitions"] == []
+
+
+def test_secondary_match_unresolved_can_gate_large_unresolved_pair_product():
+    old_graph = _graph({
+        1: {"entity_type": "IfcProxy", "attributes": {}, "refs": []},
+        2: {"entity_type": "IfcProxy", "attributes": {}, "refs": []},
+    })
+    new_graph = _graph({
+        11: {"entity_type": "IfcProxy", "attributes": {}, "refs": []},
+        12: {"entity_type": "IfcProxy", "attributes": {}, "refs": []},
+    })
+
+    result = secondary_match_unresolved(
+        old_graph,
+        new_graph,
+        unresolved_pair_limit=3,
+    )
+    assert result["old_to_new"] == {}
+    assert result["diagnostics"] == {}
+    assert result["ambiguous"] == 2
+    assert result["ambiguous_partitions"] == []
+
+
+def test_secondary_match_large_family_can_use_signature_fallback(monkeypatch):
+    monkeypatch.setattr(matcher_graph_mod, "_SECONDARY_LARGE_FAMILY_FALLBACK_MIN", 2)
+
+    old_graph = _graph({
+        1: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "1"}]}},
+            "refs": [],
+        },
+        2: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "2"}]}},
+            "refs": [],
+        },
+        3: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "3"}]}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph({
+        10: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "1"}]}},
+            "refs": [],
+        },
+        11: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "2"}]}},
+            "refs": [],
+        },
+        12: {
+            "entity_type": "IfcCartesianPoint",
+            "attributes": {"Coordinates": {"kind": "list", "items": [{"kind": "real", "value": "4"}]}},
+            "refs": [],
+        },
+    })
+
+    result = secondary_match_unresolved(old_graph, new_graph)
+    assert result["old_to_new"] == {}
+    assert result["ambiguous"] == 3
+    assert len(result["ambiguous_partitions"]) == 1
+    assert result["ambiguous_partitions"][0]["stage"] == "large_family_fallback"

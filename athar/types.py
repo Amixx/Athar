@@ -36,6 +36,7 @@ class ContextEntityItem(TypedDict, total=False):
     identity: IdentityInfo
     profile_entity: EntityIR
     compare_entity: EntityIR
+    profile_hash: str
 
 
 class DiffContext(TypedDict, total=False):

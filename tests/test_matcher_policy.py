@@ -34,6 +34,11 @@ def test_resolve_matcher_policy_rejects_invalid_unresolved_limit():
         resolve_matcher_policy({"secondary_match": {"unresolved_limit": 0}})
 
 
+def test_resolve_matcher_policy_rejects_invalid_unresolved_pair_limit():
+    with pytest.raises(ValueError, match="unresolved_pair_limit must be >= 1"):
+        resolve_matcher_policy({"secondary_match": {"unresolved_pair_limit": 0}})
+
+
 def test_diff_graphs_secondary_threshold_override_changes_matching():
     old_graph = _graph({
         1: {

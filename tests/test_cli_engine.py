@@ -125,6 +125,8 @@ def test_cli_passes_matcher_policy_overrides(monkeypatch, capsys):
             "0.14",
             "--secondary-depth2-max",
             "7",
+            "--secondary-unresolved-pair-limit",
+            "1234",
         ],
     )
 
@@ -138,7 +140,7 @@ def test_cli_passes_matcher_policy_overrides(monkeypatch, capsys):
         "fail_fast",
         {
             "root_remap": {"score_threshold": 0.61, "assignment_max": 5},
-            "secondary_match": {"score_margin": 0.14, "depth2_max": 7},
+            "secondary_match": {"score_margin": 0.14, "depth2_max": 7, "unresolved_pair_limit": 1234},
         },
         False,
     )
