@@ -31,6 +31,8 @@ Additional harnesses:
 Operational notes:
 
 - Long-running harnesses print progress to stderr (case/graph/backend and per-iteration steps).
+- `stress_determinism` prints per-round progress (`--progress-every`) and completion timing to stderr.
+- `evaluate_matcher_quality` prints per-scenario start/done progress and total completion timing to stderr.
 - `check_wl_backend_consistency` outputs compact partition fingerprints (`sha256` + size stats) to avoid oversized JSON artifacts.
 - `run_perf_suite` supports bounded execution via `--step-timeout-s` and scoped WL inputs via `--wl-graph` / `--wl-consistency-graph`.
 

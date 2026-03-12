@@ -6,6 +6,8 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
+import sys
+import time
 
 from athar.determinism import canonical_json
 from athar.diff_engine import diff_graphs, stream_diff_graphs
@@ -103,18 +105,27 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Stress deterministic output stability.")
     parser.add_argument("--rounds", type=int, default=25, help="Number of repeated runs.")
     parser.add_argument("--out", default=None, help="Optional output JSON path.")
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=1,
+        help="Report progress every N rounds (0 disables intermediate logs).",
+    )
     args = parser.parse_args()
 
     if args.rounds < 1:
         raise ValueError("--rounds must be >= 1")
+    if args.progress_every < 0:
+        raise ValueError("--progress-every must be >= 0")
 
     old_graph, new_graph = _fixture_graphs()
 
     diff_hashes: list[str] = []
     ndjson_hashes: list[str] = []
     chunked_hashes: list[str] = []
+    suite_started = time.perf_counter()
 
-    for _ in range(args.rounds):
+    for round_no in range(1, args.rounds + 1):
         result = diff_graphs(old_graph, new_graph, profile="semantic_stable")
         diff_hashes.append(_sha256_text(canonical_json(result)))
 
@@ -131,6 +142,16 @@ def main() -> None:
             )
         )
         chunked_hashes.append(_sha256_text(chunked))
+
+        if args.progress_every and (
+            round_no == 1 or round_no == args.rounds or round_no % args.progress_every == 0
+        ):
+            elapsed_s = round(time.perf_counter() - suite_started, 3)
+            print(
+                f"[determinism] round {round_no}/{args.rounds} elapsed={elapsed_s}s",
+                file=sys.stderr,
+                flush=True,
+            )
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -157,6 +178,11 @@ def main() -> None:
         print(f"Wrote determinism stress report to {out_path}")
     else:
         print(payload, end="")
+    print(
+        f"[determinism] completed rounds={args.rounds} elapsed={round(time.perf_counter() - suite_started, 3)}s",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

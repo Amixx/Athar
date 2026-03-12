@@ -1,11 +1,14 @@
 from athar.canonical_values import (
     CanonicalizationError,
     canonical_bag,
+    canonical_list,
     canonical_scalar,
     canonical_select,
     canonical_set,
     canonical_simple,
     canonical_string,
+    PROFILE_RAW_EXACT,
+    PROFILE_SEMANTIC_STABLE,
 )
 
 
@@ -68,3 +71,41 @@ def test_nested_aggregate_ordering_is_deterministic():
         [3, 1],
     ])
     assert canonical_string(a) == canonical_string(b)
+
+
+def test_list_preserves_input_order():
+    a = canonical_list([3, 1, 2])
+    b = canonical_list([1, 2, 3])
+    assert canonical_string(a) != canonical_string(b)
+
+
+def test_semantic_profile_applies_quantizer_for_reals():
+    value = canonical_scalar(
+        1.23456,
+        profile=PROFILE_SEMANTIC_STABLE,
+        quantize=lambda v: round(v, 2),
+    )
+    assert value["kind"] == "real"
+    assert value["value"] == "1.23"
+
+
+def test_raw_exact_profile_ignores_quantizer_for_reals():
+    value = canonical_scalar(
+        1.23456,
+        profile=PROFILE_RAW_EXACT,
+        quantize=lambda _v: 99.0,
+    )
+    assert value["kind"] == "real"
+    assert value["value"] == "1.2345600000000001"
+
+
+def test_measure_wrapper_types_are_preserved():
+    wrappers = [
+        ("IfcAreaMeasure", 12.5),
+        ("IfcVolumeMeasure", 3.75),
+        ("IfcPlaneAngleMeasure", 1.57079632679),
+    ]
+    for wrapper_type, value in wrappers:
+        wrapped = canonical_simple(wrapper_type, value)
+        assert wrapped["kind"] == "simple"
+        assert wrapped["type"] == wrapper_type

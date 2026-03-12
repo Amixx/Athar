@@ -1,3 +1,4 @@
+from athar.determinism import canonical_json
 import athar.diff_engine_markers as diff_engine_markers
 import athar.diff_engine as diff_engine_mod
 from athar.diff_engine import diff_files, diff_graphs, stream_diff_graphs
@@ -90,14 +91,9 @@ def test_diff_engine_uses_root_remap_on_low_guid_overlap():
     })
 
     diff = diff_graphs(old_graph, new_graph)
-    assert len(diff["base_changes"]) == 1
-    change = diff["base_changes"][0]
-    assert change["op"] == "MODIFY"
-    assert change["old_entity_id"] == "G:ZZZ"
-    assert change["new_entity_id"] == "G:ZZZ"
-    assert change["identity"]["match_method"] == "root_remap"
-    assert change["identity"]["matched_on"]["stage"] == "root_remap"
-    assert change["identity"]["matched_on"]["remap_stage"] in {"signature_unique", "neighbor_signature"}
+    assert diff["base_changes"] == []
+    assert diff["stats"]["matched_by_method"].get("root_remap") == 1
+    assert diff["stats"]["stage_match_counts"]["root_remap"] == 1
 
 
 def test_diff_engine_applies_typed_path_propagation_for_non_root():
@@ -581,7 +577,7 @@ def test_diff_engine_semantic_stable_ignores_owner_history_churn():
         },
         11: {
             "entity_type": "IfcOwnerHistory",
-            "attributes": {"ChangeAction": {"kind": "string", "value": "MODIFIED"}},
+            "attributes": {"ChangeAction": {"kind": "string", "value": "ADDED"}},
             "refs": [],
         },
     })
@@ -618,14 +614,21 @@ def test_diff_engine_raw_exact_keeps_owner_history_churn():
         },
         11: {
             "entity_type": "IfcOwnerHistory",
-            "attributes": {"ChangeAction": {"kind": "string", "value": "MODIFIED"}},
+            "attributes": {"ChangeAction": {"kind": "string", "value": "ADDED"}},
             "refs": [],
         },
     })
     diff = diff_graphs(old_graph, new_graph, profile="raw_exact")
     assert len(diff["base_changes"]) == 1
-    assert diff["base_changes"][0]["op"] == "MODIFY"
-    assert diff["base_changes"][0]["identity"]["match_method"] == "exact_guid"
+    change = diff["base_changes"][0]
+    assert change["op"] == "MODIFY"
+    assert change["identity"]["match_method"] == "path_propagation"
+    assert change["field_ops"] == [{
+        "path": "/attributes/ChangeAction/value",
+        "op": "replace",
+        "old": "MODIFIED",
+        "new": "ADDED",
+    }]
 
 
 def test_diff_engine_semantic_stable_ignores_owner_history_entity_value_churn():
@@ -906,6 +909,83 @@ def test_diff_engine_relationship_change_category_for_rel_entities():
     assert add["op"] == "ADD"
     assert "RELATIONSHIP" in add["change_categories"]
     assert "ENTITY" in add["change_categories"]
+
+
+def test_diff_engine_handles_cycle_heavy_graph_without_recursion_failure():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [{"path": "/Representation", "target": 10, "target_type": "IfcShapeRepresentation"}],
+        },
+        10: {
+            "entity_type": "IfcShapeRepresentation",
+            "attributes": {},
+            "refs": [{"path": "/Items/0", "target": 11, "target_type": "IfcProxy"}],
+        },
+        11: {
+            "entity_type": "IfcProxy",
+            "attributes": {},
+            "refs": [{"path": "/BackRef", "target": 10, "target_type": "IfcShapeRepresentation"}],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [{"path": "/Representation", "target": 20, "target_type": "IfcShapeRepresentation"}],
+        },
+        20: {
+            "entity_type": "IfcShapeRepresentation",
+            "attributes": {},
+            "refs": [{"path": "/Items/0", "target": 21, "target_type": "IfcProxy"}],
+        },
+        21: {
+            "entity_type": "IfcProxy",
+            "attributes": {},
+            "refs": [{"path": "/BackRef", "target": 20, "target_type": "IfcShapeRepresentation"}],
+        },
+    })
+
+    first = diff_graphs(old_graph, new_graph)
+    second = diff_graphs(old_graph, new_graph)
+    assert canonical_json(first) == canonical_json(second)
+    assert first["base_changes"] == []
+    assert first["derived_markers"] == []
+
+
+def test_diff_engine_treats_pure_step_renumbered_ref_targets_as_equal():
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"ObjectPlacement": {"kind": "ref", "id": 10}},
+            "refs": [{"path": "/ObjectPlacement", "target": 10, "target_type": "IfcLocalPlacement"}],
+        },
+        10: {
+            "entity_type": "IfcLocalPlacement",
+            "attributes": {"RelativePlacement": {"kind": "null"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"ObjectPlacement": {"kind": "ref", "id": 110}},
+            "refs": [{"path": "/ObjectPlacement", "target": 110, "target_type": "IfcLocalPlacement"}],
+        },
+        110: {
+            "entity_type": "IfcLocalPlacement",
+            "attributes": {"RelativePlacement": {"kind": "null"}},
+            "refs": [],
+        },
+    })
+
+    diff = diff_graphs(old_graph, new_graph)
+    assert diff["base_changes"] == []
 
 
 def test_diff_graphs_timings_are_opt_in():
