@@ -57,6 +57,13 @@ See the [sample report](docs/SAMPLE_REPORT.md) for what the output looks like.
 python -m pytest tests/
 ```
 
+Determinism fixtures for low-level output are stored in `tests/fixtures/determinism/`.
+Regenerate them after intentional contract changes with:
+
+```bash
+PYTHONPATH=. python scripts/explore/generate_determinism_fixtures.py
+```
+
 ## Documentation
 
 See [docs/LOW_LEVEL_CONTRACT.md](docs/LOW_LEVEL_CONTRACT.md) for the locked low-level wire/profile contract, and [docs/DETAILS.md](docs/DETAILS.md) for broader comparison logic, folder mode, file metadata, helper scripts, and test data.

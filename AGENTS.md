@@ -71,6 +71,7 @@ python -m athar old.ifc new.ifc                       # raw JSON diff
 - `scripts/inspect_ifc_identity.py` — Show project name/GlobalId and header timestamp.
 - `scripts/inspect_guid_overlap.py` — Show entity GUID overlap matrix between files.
 - `scripts/explore/canonical_reference_impl.py` — Executable reference for canonical value normalization (value grammar, ordering, and profiles).
+- `scripts/explore/generate_determinism_fixtures.py` — Regenerate frozen golden outputs for deterministic low-level diff/stream payloads and environment fingerprint fixture.
 - `scripts/explore/` — Exploratory/investigative scripts.
 
 ## Testing

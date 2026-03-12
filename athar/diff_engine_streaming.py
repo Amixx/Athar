@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
+
+from .determinism import canonical_json
 
 
 def stream_diff_result(
@@ -25,7 +26,7 @@ def stream_diff_result(
 
 
 def json_line(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return canonical_json(payload)
 
 
 def _stream_ndjson(result: dict[str, Any]):
