@@ -85,6 +85,7 @@ def prepare_diff_context(
     _record_timing(timing_collector, "root_remap", stage_started)
     _step_done("root_remap")
     stage_started = time.perf_counter()
+    old_assign_diagnostics: dict[str, Any] = {}
     old_ids, old_identity = _assign_ids(
         old_graph,
         profile=profile,
@@ -93,18 +94,23 @@ def prepare_diff_context(
         root_remap_diagnostics=remap.get("diagnostics", {}),
         side="old",
         precomputed=_identity_precompute(old_graph),
+        diagnostics=old_assign_diagnostics,
     )
     _record_timing(timing_collector, "assign_old_ids", stage_started)
+    _record_identity_diagnostics(timing_collector, "assign_old_ids", old_assign_diagnostics)
     _step_done("assign_old_ids")
     stage_started = time.perf_counter()
+    new_assign_diagnostics: dict[str, Any] = {}
     new_ids, new_identity = _assign_ids(
         new_graph,
         profile=profile,
         guid_policy=guid_policy,
         side="new",
         precomputed=_identity_precompute(new_graph),
+        diagnostics=new_assign_diagnostics,
     )
     _record_timing(timing_collector, "assign_new_ids", stage_started)
+    _record_identity_diagnostics(timing_collector, "assign_new_ids", new_assign_diagnostics)
     _step_done("assign_new_ids")
     stage_started = time.perf_counter()
     root_pairs = _match_root_steps(old_graph, new_graph, remap["old_to_new"])
@@ -358,6 +364,24 @@ def _record_timing(target: dict[str, float] | None, key: str, started: float) ->
     if target is None:
         return
     target[key] = round((time.perf_counter() - started) * 1000.0, 3)
+
+
+def _record_identity_diagnostics(
+    target: dict[str, float] | None,
+    stage_key: str,
+    diagnostics: dict[str, Any],
+) -> None:
+    if target is None:
+        return
+    wl = diagnostics.get("wl")
+    if not isinstance(wl, dict):
+        return
+    total_ms = wl.get("total_ms")
+    rounds = wl.get("executed_rounds")
+    if isinstance(total_ms, (int, float)):
+        target[f"{stage_key}.wl_total_ms"] = round(float(total_ms), 3)
+    if isinstance(rounds, int):
+        target[f"{stage_key}.wl_rounds"] = float(rounds)
 
 
 def _emit_progress(callback: ProgressCallback | None, payload: dict[str, Any]) -> None:

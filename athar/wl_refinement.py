@@ -6,6 +6,8 @@ import hashlib
 import importlib
 import importlib.util
 import json
+import os
+import time
 from collections import Counter
 from typing import Any, Callable
 
@@ -27,6 +29,13 @@ _WL_ROUND_HASH_CHOICES = frozenset({
 })
 _SCC_AMBIGUOUS_PARTITION_MAX = 128
 _SCC_FALLBACK_REFINEMENT_ROUNDS = 4
+_WL_PARTITION_STAGNANT_ROUNDS = 2
+_WL_MAX_ROUNDS_ENV = "ATHAR_WL_MAX_ROUNDS"
+_WL_ADAPTIVE_ROUND_CAPS = (
+    (1_000_000, 3),
+    (500_000, 4),
+    (250_000, 5),
+)
 
 
 def wl_refine_colors(
@@ -34,6 +43,7 @@ def wl_refine_colors(
     *,
     max_rounds: int | None = None,
     round_hash: str = _WL_ROUND_HASH_AUTO,
+    diagnostics: dict[str, Any] | None = None,
 ) -> dict[int, str]:
     """Weisfeiler-Lehman color refinement over the explicit forward graph."""
     entities = graph.get("entities", {})
@@ -47,9 +57,14 @@ def wl_refine_colors(
     type_bytes_cache: dict[str, bytes] = {}
     color_bytes_cache: dict[str, bytes] = {}
 
-    rounds = _DEFAULT_WL_ROUNDS if max_rounds is None else max_rounds
+    rounds = _resolve_wl_rounds(max_rounds=max_rounds, entity_count=len(entities))
+    previous_class_count = len(set(colors.values()))
+    stagnant_rounds = 0
+    round_stats: list[dict[str, Any]] = []
+    stop_reason = "max_rounds"
 
-    for _ in range(rounds):
+    for round_idx in range(1, rounds + 1):
+        round_started = time.perf_counter()
         next_colors: dict[int, str] = {}
         changed = 0
         for step_id, _entity in entities.items():
@@ -66,10 +81,36 @@ def wl_refine_colors(
             next_colors[step_id] = next_color
             if next_color != colors[step_id]:
                 changed += 1
+        class_count = len(set(next_colors.values()))
+        if class_count == previous_class_count:
+            stagnant_rounds += 1
+        else:
+            stagnant_rounds = 0
+        round_stats.append({
+            "round": round_idx,
+            "changed": changed,
+            "class_count": class_count,
+            "elapsed_ms": round((time.perf_counter() - round_started) * 1000.0, 3),
+        })
         colors = next_colors
+        previous_class_count = class_count
         if changed == 0:
+            stop_reason = "no_color_change"
+            break
+        if stagnant_rounds >= _WL_PARTITION_STAGNANT_ROUNDS:
+            stop_reason = "partition_stable"
             break
 
+    if diagnostics is not None:
+        diagnostics.update({
+            "backend": hasher_name,
+            "configured_rounds": rounds,
+            "executed_rounds": len(round_stats),
+            "stop_reason": stop_reason,
+            "entity_count": len(entities),
+            "rounds": round_stats,
+            "total_ms": round(sum(item["elapsed_ms"] for item in round_stats), 3),
+        })
     return colors
 
 
@@ -156,6 +197,7 @@ def wl_refine_with_scc_fallback(
     round_hash: str = _WL_ROUND_HASH_AUTO,
     max_partition_size: int = _SCC_AMBIGUOUS_PARTITION_MAX,
     refinement_rounds: int = _SCC_FALLBACK_REFINEMENT_ROUNDS,
+    diagnostics: dict[str, Any] | None = None,
 ) -> tuple[dict[int, str], dict[int, str]]:
     """Run WL refinement and emit deterministic C: IDs for unresolved SCC ambiguity."""
     if max_partition_size <= 0:
@@ -167,10 +209,12 @@ def wl_refine_with_scc_fallback(
     if not entities:
         return {}, {}
 
+    wl_diagnostics: dict[str, Any] = {}
     colors = wl_refine_colors(
         graph,
         max_rounds=max_rounds,
         round_hash=round_hash,
+        diagnostics=wl_diagnostics,
     )
     adjacency = build_adjacency(entities)
     reverse_adjacency = build_reverse_adjacency(entities, adjacency)
@@ -203,7 +247,34 @@ def wl_refine_with_scc_fallback(
                 for step_id in group:
                     class_ids[step_id] = class_id
 
+    if diagnostics is not None:
+        diagnostics.update({
+            "wl": wl_diagnostics,
+            "scc_count": len(sccs),
+            "ambiguous_class_count": len(set(class_ids.values())),
+            "ambiguous_entity_count": len(class_ids),
+        })
     return colors, class_ids
+
+
+def _resolve_wl_rounds(*, max_rounds: int | None, entity_count: int) -> int:
+    if max_rounds is not None:
+        if max_rounds < 0:
+            raise ValueError("max_rounds must be >= 0")
+        return max_rounds
+    env_value = os.getenv(_WL_MAX_ROUNDS_ENV)
+    if env_value is not None and env_value.strip() != "":
+        try:
+            parsed = int(env_value)
+        except ValueError as exc:
+            raise ValueError(f"{_WL_MAX_ROUNDS_ENV} must be an integer >= 0") from exc
+        if parsed < 0:
+            raise ValueError(f"{_WL_MAX_ROUNDS_ENV} must be >= 0")
+        return parsed
+    for threshold, cap in _WL_ADAPTIVE_ROUND_CAPS:
+        if entity_count >= threshold:
+            return cap
+    return _DEFAULT_WL_ROUNDS
 
 
 def _resolve_wl_round_hasher(name: str) -> tuple[str, Callable[[bytes], str]]:

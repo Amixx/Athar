@@ -73,6 +73,24 @@ def test_wl_refinement_auto_round_hash_is_stable():
     assert first == second
 
 
+def test_wl_refinement_reports_round_diagnostics():
+    diagnostics: dict = {}
+    colors = wl_refine_colors(_make_graph(edge_path="/Ref"), diagnostics=diagnostics)
+    assert colors
+    assert diagnostics["executed_rounds"] >= 1
+    assert diagnostics["configured_rounds"] >= diagnostics["executed_rounds"]
+    assert diagnostics["stop_reason"] in {"max_rounds", "no_color_change", "partition_stable"}
+    assert isinstance(diagnostics["rounds"], list)
+    assert diagnostics["total_ms"] >= 0.0
+
+
+def test_wl_refinement_respects_env_round_cap(monkeypatch):
+    monkeypatch.setenv("ATHAR_WL_MAX_ROUNDS", "1")
+    diagnostics: dict = {}
+    wl_refine_colors(_make_graph(edge_path="/Ref"), diagnostics=diagnostics)
+    assert diagnostics["configured_rounds"] == 1
+
+
 def test_wl_scc_fallback_marks_symmetric_cycle_as_ambiguous_class():
     _colors, classes = wl_refine_with_scc_fallback(_symmetric_cycle(3))
     assert set(classes) == {1, 2, 3}

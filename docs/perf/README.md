@@ -14,6 +14,12 @@ Use:
 python -m scripts.explore.benchmark_diff_engine --warmup 1 --iterations 2 --out docs/perf/batch11_baseline_YYYY-MM-DD.json
 ```
 
+During dev loops, run only one metric to avoid triple full-engine runs:
+
+```bash
+python -m scripts.explore.benchmark_diff_engine --metric diff_graphs --warmup 0 --iterations 1 --engine-timings --heartbeat-s 15 --out /tmp/diff-only.json
+```
+
 Optional bottleneck breakdown for `diff_graphs` stage timings:
 
 ```bash

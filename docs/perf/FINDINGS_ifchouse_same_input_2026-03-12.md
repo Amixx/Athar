@@ -26,7 +26,10 @@ Actions that followed immediately:
 - Avoid per-bucket sorting in base-change and matched-by-method paths by sorting once during identity indexing.
 - Fast-skip deep equality checks for paired `H:` + `exact_hash` entities.
 - Rewrite WL round payload construction to avoid per-node JSON/dict allocations in the hot loop.
+- Add WL adaptive round caps for very large graphs and partition-stability early stop.
+- Add `benchmark_diff_engine --metric ...` for single-metric runs during tuning loops.
+- Add secondary matcher unresolved-set gating (`secondary_match.unresolved_limit`) to avoid pathological matching cost on very large unmatched populations.
 
 Future perf work queue (ordered):
 
-- Add partition-stability convergence stop in WL (not only digest-change heuristic).
+- Add active-set WL recomputation (only nodes impacted by previous-round color changes) instead of full-node rounds.

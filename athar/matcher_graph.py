@@ -87,12 +87,34 @@ def secondary_match_unresolved(
     assignment_max: int = SECONDARY_ASSIGNMENT_MAX,
     depth2_max: int = SECONDARY_DEEPENING_DEPTH2_MAX,
     depth3_max: int = SECONDARY_DEEPENING_DEPTH3_MAX,
+    unresolved_limit: int | None = None,
 ) -> dict[str, Any]:
     """Deterministic secondary matcher for unmatched non-root entities."""
     old_entities = old_graph.get("entities", {})
     new_entities = new_graph.get("entities", {})
     used_old = set(pre_matched_old or set())
     used_new = set(pre_matched_new or set())
+
+    unresolved_old = [
+        step_id for step_id, entity in old_entities.items()
+        if step_id not in used_old and not _is_root(entity)
+    ]
+    unresolved_new = [
+        step_id for step_id, entity in new_entities.items()
+        if step_id not in used_new and not _is_root(entity)
+    ]
+    if (
+        isinstance(unresolved_limit, int)
+        and unresolved_limit > 0
+        and (len(unresolved_old) > unresolved_limit or len(unresolved_new) > unresolved_limit)
+    ):
+        return {
+            "method": "secondary_match",
+            "old_to_new": {},
+            "diagnostics": {},
+            "ambiguous": min(len(unresolved_old), len(unresolved_new)),
+            "ambiguous_partitions": [],
+        }
 
     old_blocks: defaultdict[str | None, list[int]] = defaultdict(list)
     new_blocks: defaultdict[str | None, list[int]] = defaultdict(list)
@@ -350,6 +372,5 @@ def _with_block_diagnostics(
             "matched_on": matched_on,
         }
     return out
-
 
 

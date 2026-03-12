@@ -26,6 +26,11 @@ from athar.graph_parser import parse_graph
 from athar.guid_policy import GUID_POLICY_CHOICES, GUID_POLICY_FAIL_FAST
 from athar.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
 
+_METRIC_DIFF = "diff_graphs"
+_METRIC_STREAM_NDJSON = "stream_ndjson"
+_METRIC_STREAM_CHUNKED = "stream_chunked_json"
+_METRIC_CHOICES = (_METRIC_DIFF, _METRIC_STREAM_NDJSON, _METRIC_STREAM_CHUNKED)
+
 
 @dataclass(frozen=True)
 class Case:
@@ -274,7 +279,7 @@ def _progress_eta_from_probe(elapsed_ms: float, probe: dict[str, Any]) -> tuple[
     counts = _counts_from_probe(probe)
     if counts is not None:
         completed, total = counts
-        if completed <= 0:
+        if completed <= 1:
             return None
         progress = min(max(completed / total, 0.0), 1.0)
         if progress >= 1.0:
@@ -341,6 +346,7 @@ def _run_case(
     chunk_size: int,
     engine_timings: bool,
     heartbeat_s: int,
+    metrics: set[str],
     progress_update: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     _emit_progress_update(progress_update, {
@@ -397,21 +403,12 @@ def _run_case(
         },
     })
 
-    print(f"[bench] case={case.name} metric=diff_graphs", file=sys.stderr, flush=True)
-    diff_timing_samples: list[dict[str, float]] = []
-    diff_progress_state: dict[str, Any] = {
-        "stage": "prepare_context",
-        "status": "start",
-        "overall_progress": 0.0,
-    }
+    diff_stats: dict[str, Any] | None = None
+    base_count = 0
+    marker_count = 0
     parse_total_ms = old_parse_ms + new_parse_ms
-    # Coarse prior: full diff usually dominates parse by a large constant factor.
-    diff_expected_ms = max(parse_total_ms * 8.0, 120000.0)
-    print(
-        f"[bench] case={case.name} metric=diff_graphs eta_model=heuristic expected_ms={diff_expected_ms:.1f}",
-        file=sys.stderr,
-        flush=True,
-    )
+    diff_timing_samples: list[dict[str, float]] = []
+    diff_progress_state: dict[str, Any] = {"stage": "prepare_context", "status": "start", "overall_progress": 0.0}
 
     def _diff_call() -> dict[str, Any]:
         diff_progress_state.clear()
@@ -451,35 +448,44 @@ def _run_case(
             "derived_marker_count": len(result.get("derived_markers", [])),
         }
 
-    diff_stats = _benchmark_repeated(
-        _diff_call,
-        warmup=warmup,
-        iterations=iterations,
-        label=f"case={case.name} metric=diff_graphs",
-        heartbeat_s=heartbeat_s,
-        expected_ms=diff_expected_ms,
-        progress_probe=lambda: diff_progress_state,
-        progress_update=(
-            lambda payload: _emit_progress_update(progress_update, {
-                "status": "running",
-                "phase": "metrics",
-                "metric": "diff_graphs",
-                **payload,
-            })
-        ),
-    )
-    if engine_timings and diff_timing_samples:
-        diff_stats["engine_timings_ms"] = _summarize_named_float_samples(diff_timing_samples)
-    print(
-        f"[bench] case={case.name} metric=diff_graphs mean_ms={diff_stats['summary']['time_ms']['mean']}",
-        file=sys.stderr,
-        flush=True,
-    )
-    diff_signature = diff_stats.get("output_signature", {})
-    base_count = int(diff_signature.get("base_change_count", 0))
-    marker_count = int(diff_signature.get("derived_marker_count", 0))
+    if _METRIC_DIFF in metrics:
+        print(f"[bench] case={case.name} metric=diff_graphs", file=sys.stderr, flush=True)
+        # Coarse prior: full diff usually dominates parse by a large constant factor.
+        diff_expected_ms = max(parse_total_ms * 8.0, 120000.0)
+        print(
+            f"[bench] case={case.name} metric=diff_graphs eta_model=heuristic expected_ms={diff_expected_ms:.1f}",
+            file=sys.stderr,
+            flush=True,
+        )
+        diff_stats = _benchmark_repeated(
+            _diff_call,
+            warmup=warmup,
+            iterations=iterations,
+            label=f"case={case.name} metric=diff_graphs",
+            heartbeat_s=heartbeat_s,
+            expected_ms=diff_expected_ms,
+            progress_probe=lambda: diff_progress_state,
+            progress_update=(
+                lambda payload: _emit_progress_update(progress_update, {
+                    "status": "running",
+                    "phase": "metrics",
+                    "metric": _METRIC_DIFF,
+                    **payload,
+                })
+            ),
+        )
+        if engine_timings and diff_timing_samples:
+            diff_stats["engine_timings_ms"] = _summarize_named_float_samples(diff_timing_samples)
+        print(
+            f"[bench] case={case.name} metric=diff_graphs mean_ms={diff_stats['summary']['time_ms']['mean']}",
+            file=sys.stderr,
+            flush=True,
+        )
+        diff_signature = diff_stats.get("output_signature", {})
+        base_count = int(diff_signature.get("base_change_count", 0))
+        marker_count = int(diff_signature.get("derived_marker_count", 0))
 
-    print(f"[bench] case={case.name} metric=stream_ndjson", file=sys.stderr, flush=True)
+    ndjson_stats: dict[str, Any] | None = None
     ndjson_progress_state: dict[str, Any] = {
         "stage": "stream_emit",
         "status": "start",
@@ -503,29 +509,33 @@ def _run_case(
             expected_records=expected_ndjson_records,
         )
 
-    ndjson_stats = _benchmark_repeated(
-        _stream_ndjson_call,
-        warmup=warmup,
-        iterations=iterations,
-        label=f"case={case.name} metric=stream_ndjson",
-        heartbeat_s=heartbeat_s,
-        expected_ms=max(float(diff_stats["summary"]["time_ms"]["mean"]) * 1.2, 1000.0),
-        progress_probe=lambda: ndjson_progress_state,
-        progress_update=(
-            lambda payload: _emit_progress_update(progress_update, {
-                "status": "running",
-                "phase": "metrics",
-                "metric": "stream_ndjson",
-                **payload,
-            })
-        ),
-    )
-    print(
-        f"[bench] case={case.name} metric=stream_ndjson mean_ms={ndjson_stats['summary']['time_ms']['mean']}",
-        file=sys.stderr,
-        flush=True,
-    )
-    print(f"[bench] case={case.name} metric=stream_chunked_json", file=sys.stderr, flush=True)
+    if _METRIC_STREAM_NDJSON in metrics:
+        print(f"[bench] case={case.name} metric=stream_ndjson", file=sys.stderr, flush=True)
+        ndjson_expected_ms = max(float(diff_stats["summary"]["time_ms"]["mean"]) * 1.2, 1000.0) if diff_stats is not None else max(parse_total_ms * 8.0, 120000.0)
+        ndjson_stats = _benchmark_repeated(
+            _stream_ndjson_call,
+            warmup=warmup,
+            iterations=iterations,
+            label=f"case={case.name} metric=stream_ndjson",
+            heartbeat_s=heartbeat_s,
+            expected_ms=ndjson_expected_ms,
+            progress_probe=lambda: ndjson_progress_state,
+            progress_update=(
+                lambda payload: _emit_progress_update(progress_update, {
+                    "status": "running",
+                    "phase": "metrics",
+                    "metric": _METRIC_STREAM_NDJSON,
+                    **payload,
+                })
+            ),
+        )
+        print(
+            f"[bench] case={case.name} metric=stream_ndjson mean_ms={ndjson_stats['summary']['time_ms']['mean']}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    chunked_stats: dict[str, Any] | None = None
     chunked_progress_state: dict[str, Any] = {
         "stage": "stream_emit",
         "status": "start",
@@ -549,29 +559,44 @@ def _run_case(
             expected_records=expected_chunked_records,
         )
 
-    chunked_stats = _benchmark_repeated(
-        _stream_chunked_call,
-        warmup=warmup,
-        iterations=iterations,
-        label=f"case={case.name} metric=stream_chunked_json",
-        heartbeat_s=heartbeat_s,
-        expected_ms=max(float(ndjson_stats["summary"]["time_ms"]["mean"]) * 1.1, 1000.0),
-        progress_probe=lambda: chunked_progress_state,
-        progress_update=(
-            lambda payload: _emit_progress_update(progress_update, {
-                "status": "running",
-                "phase": "metrics",
-                "metric": "stream_chunked_json",
-                **payload,
-            })
-        ),
-    )
-    print(
-        f"[bench] case={case.name} metric=stream_chunked_json mean_ms={chunked_stats['summary']['time_ms']['mean']}",
-        file=sys.stderr,
-        flush=True,
-    )
+    if _METRIC_STREAM_CHUNKED in metrics:
+        print(f"[bench] case={case.name} metric=stream_chunked_json", file=sys.stderr, flush=True)
+        if ndjson_stats is not None:
+            chunked_expected_ms = max(float(ndjson_stats["summary"]["time_ms"]["mean"]) * 1.1, 1000.0)
+        elif diff_stats is not None:
+            chunked_expected_ms = max(float(diff_stats["summary"]["time_ms"]["mean"]) * 1.2, 1000.0)
+        else:
+            chunked_expected_ms = max(parse_total_ms * 8.0, 120000.0)
+        chunked_stats = _benchmark_repeated(
+            _stream_chunked_call,
+            warmup=warmup,
+            iterations=iterations,
+            label=f"case={case.name} metric=stream_chunked_json",
+            heartbeat_s=heartbeat_s,
+            expected_ms=chunked_expected_ms,
+            progress_probe=lambda: chunked_progress_state,
+            progress_update=(
+                lambda payload: _emit_progress_update(progress_update, {
+                    "status": "running",
+                    "phase": "metrics",
+                    "metric": _METRIC_STREAM_CHUNKED,
+                    **payload,
+                })
+            ),
+        )
+        print(
+            f"[bench] case={case.name} metric=stream_chunked_json mean_ms={chunked_stats['summary']['time_ms']['mean']}",
+            file=sys.stderr,
+            flush=True,
+        )
 
+    metric_out: dict[str, Any] = {}
+    if diff_stats is not None:
+        metric_out["diff_graphs"] = diff_stats
+    if ndjson_stats is not None:
+        metric_out["stream_diff_graphs_ndjson"] = ndjson_stats
+    if chunked_stats is not None:
+        metric_out["stream_diff_graphs_chunked_json"] = chunked_stats
     out = {
         "case": {
             "name": case.name,
@@ -583,21 +608,16 @@ def _run_case(
             "new_graph": round(new_parse_ms, 3),
             "total": round(old_parse_ms + new_parse_ms, 3),
         },
-        "metrics": {
-            "diff_graphs": diff_stats,
-            "stream_diff_graphs_ndjson": ndjson_stats,
-            "stream_diff_graphs_chunked_json": chunked_stats,
-        },
+        "metrics": metric_out,
     }
-    _emit_progress_update(progress_update, {
-        "status": "running",
-        "phase": "done",
-        "metrics_summary": {
-            "diff_graphs_mean_ms": diff_stats["summary"]["time_ms"]["mean"],
-            "stream_ndjson_mean_ms": ndjson_stats["summary"]["time_ms"]["mean"],
-            "stream_chunked_json_mean_ms": chunked_stats["summary"]["time_ms"]["mean"],
-        },
-    })
+    summary_payload: dict[str, Any] = {}
+    if diff_stats is not None:
+        summary_payload["diff_graphs_mean_ms"] = diff_stats["summary"]["time_ms"]["mean"]
+    if ndjson_stats is not None:
+        summary_payload["stream_ndjson_mean_ms"] = ndjson_stats["summary"]["time_ms"]["mean"]
+    if chunked_stats is not None:
+        summary_payload["stream_chunked_json_mean_ms"] = chunked_stats["summary"]["time_ms"]["mean"]
+    _emit_progress_update(progress_update, {"status": "running", "phase": "done", "metrics_summary": summary_payload})
     return out
 
 
@@ -703,6 +723,16 @@ def main() -> None:
     )
     parser.add_argument("--chunk-size", type=int, default=1000, help="Chunk size for chunked_json stream mode.")
     parser.add_argument(
+        "--metric",
+        action="append",
+        choices=_METRIC_CHOICES,
+        default=[],
+        help=(
+            "Benchmark metric(s) to run (repeatable). "
+            "Defaults to all: diff_graphs, stream_ndjson, stream_chunked_json."
+        ),
+    )
+    parser.add_argument(
         "--profile",
         choices=SUPPORTED_PROFILES,
         default=DEFAULT_PROFILE,
@@ -742,6 +772,7 @@ def main() -> None:
 
     repo_root = Path(__file__).resolve().parents[2]
     cases = [_parse_case_arg(raw) for raw in args.case] if args.case else _default_cases(repo_root)
+    selected_metrics = set(args.metric) if args.metric else set(_METRIC_CHOICES)
     progress_path = Path(args.progress_file) if args.progress_file else None
     progress_lock = threading.Lock()
     started_at = datetime.now(timezone.utc).isoformat()
@@ -760,6 +791,7 @@ def main() -> None:
             "profile": args.profile,
             "guid_policy": args.guid_policy,
             "engine_timings": args.engine_timings,
+            "metrics": sorted(selected_metrics),
         },
     }
 
@@ -781,6 +813,7 @@ def main() -> None:
             "profile": args.profile,
             "guid_policy": args.guid_policy,
             "engine_timings": args.engine_timings,
+            "metrics": sorted(selected_metrics),
         },
         "results": [],
     }
@@ -822,6 +855,7 @@ def main() -> None:
                 chunk_size=args.chunk_size,
                 engine_timings=args.engine_timings,
                 heartbeat_s=args.heartbeat_s,
+                metrics=selected_metrics,
                 progress_update=_case_progress,
             )
             report["results"].append(case_result)

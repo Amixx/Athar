@@ -1018,6 +1018,10 @@ def test_diff_graphs_timings_are_opt_in():
     assert "emit_base_changes" in timings
     assert "emit_derived_markers" in timings
     assert "total" in timings
+    assert "context.assign_old_ids.wl_total_ms" in timings
+    assert "context.assign_new_ids.wl_total_ms" in timings
+    assert "context.assign_old_ids.wl_rounds" in timings
+    assert "context.assign_new_ids.wl_rounds" in timings
 
 
 def test_diff_graphs_progress_callback_reports_stage_progress():

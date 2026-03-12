@@ -424,3 +424,24 @@ def test_secondary_match_unresolved_depth_limit_can_disable_deepening_resolution
     )
     assert result["old_to_new"] == {}
     assert result["ambiguous"] == 4
+
+
+def test_secondary_match_unresolved_can_gate_large_unresolved_sets():
+    old_graph = _graph({
+        1: {"entity_type": "IfcProxy", "attributes": {}, "refs": []},
+        2: {"entity_type": "IfcProxy", "attributes": {}, "refs": []},
+    })
+    new_graph = _graph({
+        11: {"entity_type": "IfcProxy", "attributes": {}, "refs": []},
+        12: {"entity_type": "IfcProxy", "attributes": {}, "refs": []},
+    })
+
+    result = secondary_match_unresolved(
+        old_graph,
+        new_graph,
+        unresolved_limit=1,
+    )
+    assert result["old_to_new"] == {}
+    assert result["diagnostics"] == {}
+    assert result["ambiguous"] == 2
+    assert result["ambiguous_partitions"] == []

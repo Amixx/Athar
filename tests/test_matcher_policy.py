@@ -29,6 +29,11 @@ def test_diff_graphs_rejects_invalid_matcher_policy():
         diff_graphs(graph, graph, matcher_policy={"secondary_match": {"depth2_max": 2, "depth3_max": 3}})
 
 
+def test_resolve_matcher_policy_rejects_invalid_unresolved_limit():
+    with pytest.raises(ValueError, match="unresolved_limit must be >= 1"):
+        resolve_matcher_policy({"secondary_match": {"unresolved_limit": 0}})
+
+
 def test_diff_graphs_secondary_threshold_override_changes_matching():
     old_graph = _graph({
         1: {

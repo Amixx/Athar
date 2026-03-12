@@ -31,6 +31,7 @@ SECONDARY_MATCH_POLICY_DEFAULTS = {
     "assignment_max": SECONDARY_ASSIGNMENT_MAX,
     "depth2_max": SECONDARY_DEEPENING_DEPTH2_MAX,
     "depth3_max": SECONDARY_DEEPENING_DEPTH3_MAX,
+    "unresolved_limit": 200000,
 }
 
 DEFAULT_MATCHER_POLICY = {
@@ -105,6 +106,7 @@ def validate_matcher_policy(policy: dict[str, dict[str, Any]]) -> None:
     _validate_positive_int(policy["secondary_match"]["assignment_max"], "matcher_policy.secondary_match.assignment_max")
     _validate_positive_int(policy["secondary_match"]["depth2_max"], "matcher_policy.secondary_match.depth2_max")
     _validate_positive_int(policy["secondary_match"]["depth3_max"], "matcher_policy.secondary_match.depth3_max")
+    _validate_positive_int(policy["secondary_match"]["unresolved_limit"], "matcher_policy.secondary_match.unresolved_limit")
     if policy["secondary_match"]["depth3_max"] > policy["secondary_match"]["depth2_max"]:
         raise ValueError("matcher_policy.secondary_match.depth3_max must be <= depth2_max")
 
