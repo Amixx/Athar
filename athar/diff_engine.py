@@ -421,6 +421,8 @@ def _iter_base_changes(
                 profile=profile,
                 old_ids=old_ids,
                 new_ids=new_ids,
+                old_compare_entity=old_item.get("compare_entity"),
+                new_compare_entity=new_item.get("compare_entity"),
             ):
                 continue
             change_id += 1
@@ -438,6 +440,8 @@ def _iter_base_changes(
                 ),
                 profile=profile,
                 include_snapshots=include_snapshots,
+                old_profile_entity=old_item.get("profile_entity"),
+                new_profile_entity=new_item.get("profile_entity"),
             )
             if (
                 geometry_policy == GEOMETRY_POLICY_INVARIANT_PROBE
@@ -469,6 +473,7 @@ def _iter_base_changes(
                 ),
                 profile=profile,
                 include_snapshots=include_snapshots,
+                old_profile_entity=old_item.get("profile_entity"),
             )
 
         for new_item in new_items[paired:]:
@@ -487,6 +492,7 @@ def _iter_base_changes(
                 ),
                 profile=profile,
                 include_snapshots=include_snapshots,
+                new_profile_entity=new_item.get("profile_entity"),
             )
         if idx == 1 or idx % _BASE_CHANGES_PROGRESS_INTERVAL == 0 or idx == total:
             stage_progress = idx / total if total > 0 else 1.0
