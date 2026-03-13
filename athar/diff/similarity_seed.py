@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from .._native.required import native_entity_fingerprint
 from ..graph.profile_policy import entity_for_profile
-from .text_fingerprint import entity_text_fingerprint
 from .types import GraphIR
 
 _TEXT_BUCKET_REFINEMENT_MAX = 16
@@ -88,7 +88,7 @@ def collect_text_fingerprint_side(
 
     for step_id, entity in entities.items():
         profile_entity = entity_for_profile(entity, profile=profile)
-        fingerprint = entity_text_fingerprint(profile_entity)
+        fingerprint = native_entity_fingerprint(profile_entity)
         all_fingerprints[step_id] = fingerprint
         profile_entities[step_id] = profile_entity
         if step_id not in excluded and not entity.get("global_id"):

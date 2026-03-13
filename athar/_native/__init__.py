@@ -1,1 +1,1 @@
-"""Optional native extension package for Athar accelerators."""
+"""Native extension package for Athar accelerators."""

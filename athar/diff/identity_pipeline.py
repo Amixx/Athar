@@ -4,12 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..graph.graph_utils import (
-    NATIVE_ADJACENCY_MAPS_AVAILABLE,
-    build_adjacency,
-    build_adjacency_maps,
-    build_reverse_adjacency,
-)
+from .._native.required import native_build_adjacency_maps
 from ..graph.structural_hash import structural_hash
 from .wl_refinement import wl_refine_with_scc_fallback
 from .guid_policy import enforce_or_disambiguate_guid_policy
@@ -33,7 +28,7 @@ def _precompute_identity_state(
     entities = graph.get("entities", {})
     guid_counts, guid_quality = _guid_quality(entities)
     unique_guid_steps = _unique_guid_step_index(entities, guid_counts=guid_counts)
-    graph_adjacency, graph_reverse_adjacency = build_adjacency_maps(entities)
+    graph_adjacency, graph_reverse_adjacency = native_build_adjacency_maps(entities)
     if precomputed_profile_entities is not None:
         id_entities = precomputed_profile_entities
     else:
@@ -42,28 +37,8 @@ def _precompute_identity_state(
     if id_entities is entities:
         id_adjacency = graph_adjacency
         id_reverse_adjacency = graph_reverse_adjacency
-    elif NATIVE_ADJACENCY_MAPS_AVAILABLE:
-        id_adjacency, id_reverse_adjacency = build_adjacency_maps(id_entities)
     else:
-        # Derive profile adjacency from full-graph adjacency.
-        # entity_for_profile returns the same object when no filtering was needed,
-        # so we can reuse edges for the majority of entities (those without
-        # OwnerHistory).  Only rebuild edges for entities whose refs changed.
-        id_adjacency: dict[int, list[tuple[str, str | None, int]]] = {}
-        for step_id in id_entities:
-            profile_ent = id_entities[step_id]
-            orig_ent = entities[step_id]
-            if profile_ent is orig_ent or profile_ent.get("refs") is orig_ent.get("refs"):
-                id_adjacency[step_id] = graph_adjacency.get(step_id, [])
-            else:
-                edges: list[tuple[str, str | None, int]] = []
-                for ref in profile_ent.get("refs", []):
-                    target = ref.get("target")
-                    if target in id_entities:
-                        edges.append((ref.get("path", ""), ref.get("target_type"), target))
-                edges.sort(key=lambda item: (item[0], item[1] or "", item[2]))
-                id_adjacency[step_id] = edges
-        id_reverse_adjacency = build_reverse_adjacency(id_entities, id_adjacency)
+        id_adjacency, id_reverse_adjacency = native_build_adjacency_maps(id_entities)
     seeded_colors = seeded_colors or {}
     if seeded_colors and len(seeded_colors) >= len(id_entities):
         profile_hashes = {step_id: seeded_colors[step_id] for step_id in id_entities}
