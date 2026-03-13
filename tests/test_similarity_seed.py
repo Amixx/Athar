@@ -4,8 +4,11 @@ from athar.diff.context import prepare_diff_context
 from athar.diff.similarity_seed import text_fingerprint_pairs, unique_guid_pairs
 
 
-def _graph_with_entities(entities: dict[int, dict]) -> dict:
-    return {"metadata": {"schema": "IFC4"}, "entities": entities}
+def _graph_with_entities(entities: dict[int, dict], *, entity_count: int | None = None) -> dict:
+    metadata = {"schema": "IFC4"}
+    if entity_count is not None:
+        metadata["entity_count"] = entity_count
+    return {"metadata": metadata, "entities": entities}
 
 
 def test_unique_guid_pairs_matches_only_unique_overlap():
@@ -301,7 +304,8 @@ def test_prepare_context_uses_parallel_seeded_side_results_when_enabled(monkeypa
             ),
         )
 
-    monkeypatch.setattr(diff_engine_context_mod, "_parallel_enabled", lambda: True)
+    monkeypatch.setattr(diff_engine_context_mod, "_parallel_requested", lambda: True)
+    monkeypatch.setattr(diff_engine_context_mod, "_parallel_runtime_available", lambda: True)
     monkeypatch.setattr(diff_engine_context_mod, "_prepare_seeded_sides_parallel", fake_parallel)
 
     context = prepare_diff_context(old_graph, new_graph, profile="semantic_stable")
@@ -326,7 +330,8 @@ def test_prepare_context_falls_back_to_sequential_seed_collection(monkeypatch):
         calls["count"] += 1
         return real_text_fingerprint_pairs(*args, **kwargs)
 
-    monkeypatch.setattr(diff_engine_context_mod, "_parallel_enabled", lambda: True)
+    monkeypatch.setattr(diff_engine_context_mod, "_parallel_requested", lambda: True)
+    monkeypatch.setattr(diff_engine_context_mod, "_parallel_runtime_available", lambda: True)
     monkeypatch.setattr(diff_engine_context_mod, "_prepare_seeded_sides_parallel", lambda *args, **kwargs: None)
     monkeypatch.setattr(diff_engine_context_mod, "text_fingerprint_pairs", wrapped_text_fingerprint_pairs)
 
@@ -335,3 +340,53 @@ def test_prepare_context_falls_back_to_sequential_seed_collection(monkeypatch):
     context["new_owner_projector"].close()
 
     assert calls["count"] == 1
+
+
+def test_prepare_context_auto_uses_parallel_seeded_side_results_for_large_graphs(monkeypatch):
+    old_graph = _graph_with_entities({
+        1: {"entity_type": "IfcBeam", "attributes": {"Name": {"kind": "string", "value": "Keep"}}, "refs": []},
+    }, entity_count=40000)
+    new_graph = _graph_with_entities({
+        10: {"entity_type": "IfcBeam", "attributes": {"Name": {"kind": "string", "value": "Keep"}}, "refs": []},
+    }, entity_count=40000)
+    calls = {"count": 0}
+
+    def fake_parallel(*_args, **kwargs):
+        calls["count"] += 1
+        return (
+            diff_engine_context_mod._prepare_seeded_side_state(
+                old_graph,
+                profile=kwargs["profile"],
+                exclude_steps=kwargs["exclude_old"],
+            ),
+            diff_engine_context_mod._prepare_seeded_side_state(
+                new_graph,
+                profile=kwargs["profile"],
+                exclude_steps=kwargs["exclude_new"],
+            ),
+        )
+
+    monkeypatch.setattr(diff_engine_context_mod, "_parallel_requested", lambda: None)
+    monkeypatch.setattr(diff_engine_context_mod, "_parallel_runtime_available", lambda: True)
+    monkeypatch.setattr(diff_engine_context_mod, "_prepare_seeded_sides_parallel", fake_parallel)
+
+    context = prepare_diff_context(old_graph, new_graph, profile="semantic_stable")
+    context["old_owner_projector"].close()
+    context["new_owner_projector"].close()
+
+    assert calls["count"] == 1
+
+
+def test_should_parallelize_seeded_sides_skips_small_graphs_by_default(monkeypatch):
+    old_graph = _graph_with_entities({}, entity_count=1000)
+    new_graph = _graph_with_entities({}, entity_count=1000)
+
+    monkeypatch.setattr(diff_engine_context_mod, "_parallel_requested", lambda: None)
+    monkeypatch.setattr(diff_engine_context_mod, "_parallel_runtime_available", lambda: True)
+
+    assert diff_engine_context_mod._should_parallelize_seeded_sides(
+        old_graph,
+        new_graph,
+        cached_identity_old=None,
+        cached_identity_new=None,
+    ) is False

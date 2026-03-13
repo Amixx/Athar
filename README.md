@@ -33,6 +33,7 @@ make perf-native-check
 
 `athar/_native/pyproject.toml` is configured as a mixed Python/Rust project (`python-source = "../.."`), so `maturin develop --manifest-path athar/_native/Cargo.toml` installs the extension at `athar._native._core` inside the repo package rather than as a top-level `_core` module.
 `make perf-native-check` always refreshes that extension in release mode first, then runs the default `diff_graphs` benchmark case set twice: once with `ATHAR_PARALLEL=0` and once with `ATHAR_PARALLEL=1`.
+Outside explicit benchmark forcing, `ATHAR_PARALLEL` now behaves as `auto` by default: Athar keeps the current sequential path for small or cached diffs, but enables the existing side-parallel text-fingerprint + identity-precompute path on large uncached graph pairs when fork-based multiprocessing is available. Set `ATHAR_PARALLEL=0` to force serial or `ATHAR_PARALLEL=1` to force parallel.
 When `benchmark_diff_engine.py` is run without `--out`, it now writes a timestamped JSON artifact under `docs/perf/`; `ATHAR_BENCHMARK_NAME` controls the filename prefix.
 
 ## Usage
