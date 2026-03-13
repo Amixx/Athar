@@ -413,22 +413,27 @@ def prepare_diff_context(
     _step_done("build_compare_entities")
 
     stage_started = time.perf_counter()
+    old_index_summary: dict[str, Any] = {}
     old_by_id = _index_by_identity(
         old_graph,
         old_ids,
         old_identity,
         profile_entities=old_profile_entities,
         profile_hashes=old_state.get("profile_hashes"),
+        summary=old_index_summary,
+        record_methods=True,
     )
     _record_timing(timing_collector, "index_old_by_identity", stage_started)
     _step_done("index_old_by_identity")
     stage_started = time.perf_counter()
+    new_index_summary: dict[str, Any] = {}
     new_by_id = _index_by_identity(
         new_graph,
         new_ids,
         new_identity,
         profile_entities=new_profile_entities,
         profile_hashes=new_state.get("profile_hashes"),
+        summary=new_index_summary,
     )
     _record_timing(timing_collector, "index_new_by_identity", stage_started)
     _step_done("index_new_by_identity")
@@ -452,6 +457,8 @@ def prepare_diff_context(
         new_graph=new_graph,
         old_by_id=old_by_id,
         new_by_id=new_by_id,
+        old_index_summary=old_index_summary,
+        new_index_summary=new_index_summary,
         remap_ambiguous=remap["ambiguous"],
         path_ambiguous=path_propagation["ambiguous"],
         secondary_ambiguous=secondary["ambiguous"],

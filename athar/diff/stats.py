@@ -12,6 +12,8 @@ def build_stats(
     new_graph: dict,
     old_by_id: dict[str, list[dict]],
     new_by_id: dict[str, list[dict]],
+    old_index_summary: dict[str, Any] | None = None,
+    new_index_summary: dict[str, Any] | None = None,
     remap_ambiguous: int,
     path_ambiguous: int,
     secondary_ambiguous: int,
@@ -24,7 +26,12 @@ def build_stats(
     new_guid_quality: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     ambiguous_total = remap_ambiguous + path_ambiguous + secondary_ambiguous
-    matched_total, matched_methods = _matched_summary(old_by_id, new_by_id)
+    matched_total, matched_methods = _matched_summary(
+        old_by_id,
+        new_by_id,
+        old_index_summary=old_index_summary,
+        new_index_summary=new_index_summary,
+    )
     return {
         "old_entities": len(old_graph.get("entities", {})),
         "new_entities": len(new_graph.get("entities", {})),
@@ -53,7 +60,21 @@ def build_stats(
 def _matched_summary(
     old_by_id: dict[str, list[dict]],
     new_by_id: dict[str, list[dict]],
+    *,
+    old_index_summary: dict[str, Any] | None = None,
+    new_index_summary: dict[str, Any] | None = None,
 ) -> tuple[int, dict[str, int]]:
+    if old_index_summary is not None and new_index_summary is not None:
+        old_counts = old_index_summary.get("count_by_id")
+        new_counts = new_index_summary.get("count_by_id")
+        old_methods = old_index_summary.get("methods_by_id")
+        if isinstance(old_counts, dict) and isinstance(new_counts, dict) and isinstance(old_methods, dict):
+            return _matched_summary_from_index_summaries(
+                old_counts,
+                new_counts,
+                old_methods,
+            )
+
     matched_total = 0
     counts: dict[str, int] = {}
     left, right = (old_by_id, new_by_id) if len(old_by_id) <= len(new_by_id) else (new_by_id, old_by_id)
@@ -67,6 +88,25 @@ def _matched_summary(
         matched_total += paired
         for idx in range(paired):
             method = old_items[idx].get("identity", {}).get("match_method", "exact_hash")
+            counts[method] = counts.get(method, 0) + 1
+    return matched_total, {method: counts[method] for method in sorted(counts)}
+
+
+def _matched_summary_from_index_summaries(
+    old_count_by_id: dict[str, int],
+    new_count_by_id: dict[str, int],
+    old_methods_by_id: dict[str, list[str]],
+) -> tuple[int, dict[str, int]]:
+    matched_total = 0
+    counts: dict[str, int] = {}
+    for entity_id, old_count in old_count_by_id.items():
+        paired = min(old_count, new_count_by_id.get(entity_id, 0))
+        if paired <= 0:
+            continue
+        matched_total += paired
+        methods = old_methods_by_id.get(entity_id, [])
+        for idx in range(paired):
+            method = methods[idx] if idx < len(methods) else "exact_hash"
             counts[method] = counts.get(method, 0) + 1
     return matched_total, {method: counts[method] for method in sorted(counts)}
 
