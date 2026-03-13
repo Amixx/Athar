@@ -328,16 +328,25 @@ def _index_by_identity(
     profile_entities: dict[int, dict] | None = None,
     compare_entities: dict[int, dict] | None = None,
     profile_hashes: dict[int, str] | None = None,
+    summary: dict[str, Any] | None = None,
+    record_methods: bool = False,
 ) -> dict[str, list[dict]]:
     by_id: dict[str, list[dict]] = {}
     entities = graph.get("entities", {})
     profile_entities = profile_entities or entities
     compare_entities = compare_entities or {}
+    count_by_id = None
+    methods_by_id = None
+    if summary is not None:
+        count_by_id = summary.setdefault("count_by_id", {})
+        if record_methods:
+            methods_by_id = summary.setdefault("methods_by_id", {})
     for step_id, entity in entities.items():
         profile_entity = profile_entities.get(step_id, entity)
         identity_item = identity.get(step_id)
         if identity_item is None:
             identity_item = _DEFAULT_EXACT_HASH_IDENTITY
+        entity_id = ids[step_id]
         item = {
             "step_id": step_id,
             "entity": entity,
@@ -349,5 +358,11 @@ def _index_by_identity(
             item["compare_entity"] = compare_entities[step_id]
         if profile_hashes is not None and step_id in profile_hashes:
             item["profile_hash"] = profile_hashes[step_id]
-        by_id.setdefault(ids[step_id], []).append(item)
+        by_id.setdefault(entity_id, []).append(item)
+        if count_by_id is not None:
+            count_by_id[entity_id] = count_by_id.get(entity_id, 0) + 1
+        if methods_by_id is not None:
+            methods_by_id.setdefault(entity_id, []).append(
+                identity_item.get("match_method", "exact_hash")
+            )
     return by_id

@@ -77,8 +77,8 @@ def test_wl_refinement_auto_round_hash_is_stable():
 def test_wl_refinement_native_xxh3_matches_python_when_extension_available(monkeypatch):
     if importlib.util.find_spec("xxhash") is None:
         pytest.skip("xxhash unavailable in this environment")
-    if wl_refinement_mod._NATIVE_WL_ROUND is None:
-        pytest.skip("native WL round unavailable in this environment")
+    if wl_refinement_mod._NATIVE_WL_REFINE is None:
+        pytest.skip("native WL refine unavailable in this environment")
 
     graph = {
         "entities": {
@@ -104,9 +104,40 @@ def test_wl_refinement_native_xxh3_matches_python_when_extension_available(monke
     }
 
     native_colors = wl_refine_colors(graph, max_rounds=3, round_hash="xxh3_64")
+    monkeypatch.setattr(wl_refinement_mod, "_NATIVE_WL_REFINE", None)
     monkeypatch.setattr(wl_refinement_mod, "_NATIVE_WL_ROUND", None)
     python_colors = wl_refine_colors(graph, max_rounds=3, round_hash="xxh3_64")
     assert native_colors == python_colors
+
+
+def test_wl_refinement_multi_round_native_matches_single_round_fallback(monkeypatch):
+    if importlib.util.find_spec("xxhash") is None:
+        pytest.skip("xxhash unavailable in this environment")
+    if wl_refinement_mod._NATIVE_WL_REFINE is None or wl_refinement_mod._NATIVE_WL_ROUND is None:
+        pytest.skip("native WL implementations unavailable in this environment")
+
+    graph = _symmetric_cycle(5)
+
+    diagnostics_native: dict = {}
+    native_colors = wl_refine_colors(
+        graph,
+        max_rounds=4,
+        round_hash="xxh3_64",
+        diagnostics=diagnostics_native,
+    )
+
+    monkeypatch.setattr(wl_refinement_mod, "_NATIVE_WL_REFINE", None)
+    diagnostics_round_only: dict = {}
+    round_only_colors = wl_refine_colors(
+        graph,
+        max_rounds=4,
+        round_hash="xxh3_64",
+        diagnostics=diagnostics_round_only,
+    )
+
+    assert native_colors == round_only_colors
+    assert diagnostics_native["stop_reason"] == diagnostics_round_only["stop_reason"]
+    assert diagnostics_native["executed_rounds"] == diagnostics_round_only["executed_rounds"]
 
 
 def test_wl_refinement_reports_round_diagnostics():

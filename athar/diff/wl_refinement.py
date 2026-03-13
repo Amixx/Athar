@@ -16,8 +16,10 @@ from ..graph.structural_hash import structural_hash
 
 try:
     from athar._native._core import native_wl_round as _NATIVE_WL_ROUND
+    from athar._native._core import native_wl_refine as _NATIVE_WL_REFINE
 except Exception:
     _NATIVE_WL_ROUND = None
+    _NATIVE_WL_REFINE = None
 
 _DEFAULT_WL_ROUNDS = 8
 _WL_ROUND_HASH_AUTO = "auto"
@@ -75,53 +77,59 @@ def wl_refine_colors(
     round_stats: list[dict[str, Any]] = []
     stop_reason = "max_rounds"
 
-    for round_idx in range(1, rounds + 1):
-        round_started = time.perf_counter()
-        if hasher_name == _WL_ROUND_HASH_XXH3 and _NATIVE_WL_ROUND is not None:
-            next_colors = _NATIVE_WL_ROUND(colors, adjacency)
-            changed = sum(
-                1
-                for step_id, next_color in next_colors.items()
-                if next_color != colors.get(step_id)
-            )
-        else:
-            next_colors = {}
-            changed = 0
-            for step_id, _entity in entities.items():
-                blob = _wl_round_payload(
-                    colors[step_id],
-                    adjacency.get(step_id, []),
-                    colors,
-                    path_bytes_cache=path_bytes_cache,
-                    type_bytes_cache=type_bytes_cache,
-                    color_bytes_cache=color_bytes_cache,
+    if hasher_name == _WL_ROUND_HASH_XXH3 and _NATIVE_WL_REFINE is not None:
+        native_result = _NATIVE_WL_REFINE(colors, adjacency, rounds)
+        colors = native_result["colors"]
+        round_stats = native_result["rounds"]
+        stop_reason = native_result["stop_reason"]
+    else:
+        for round_idx in range(1, rounds + 1):
+            round_started = time.perf_counter()
+            if hasher_name == _WL_ROUND_HASH_XXH3 and _NATIVE_WL_ROUND is not None:
+                next_colors = _NATIVE_WL_ROUND(colors, adjacency)
+                changed = sum(
+                    1
+                    for step_id, next_color in next_colors.items()
+                    if next_color != colors.get(step_id)
                 )
-                digest = hasher(blob)
-                # Keep backend-native WL colors inside refinement rounds to avoid
-                # per-round sha256 wrapping overhead for fast hash backends.
-                next_color = digest
-                next_colors[step_id] = next_color
-                if next_color != colors[step_id]:
-                    changed += 1
-        class_count = len(set(next_colors.values()))
-        if class_count == previous_class_count:
-            stagnant_rounds += 1
-        else:
-            stagnant_rounds = 0
-        round_stats.append({
-            "round": round_idx,
-            "changed": changed,
-            "class_count": class_count,
-            "elapsed_ms": round((time.perf_counter() - round_started) * 1000.0, 3),
-        })
-        colors = next_colors
-        previous_class_count = class_count
-        if changed == 0:
-            stop_reason = "no_color_change"
-            break
-        if stagnant_rounds >= _WL_PARTITION_STAGNANT_ROUNDS:
-            stop_reason = "partition_stable"
-            break
+            else:
+                next_colors = {}
+                changed = 0
+                for step_id, _entity in entities.items():
+                    blob = _wl_round_payload(
+                        colors[step_id],
+                        adjacency.get(step_id, []),
+                        colors,
+                        path_bytes_cache=path_bytes_cache,
+                        type_bytes_cache=type_bytes_cache,
+                        color_bytes_cache=color_bytes_cache,
+                    )
+                    digest = hasher(blob)
+                    # Keep backend-native WL colors inside refinement rounds to avoid
+                    # per-round sha256 wrapping overhead for fast hash backends.
+                    next_color = digest
+                    next_colors[step_id] = next_color
+                    if next_color != colors[step_id]:
+                        changed += 1
+            class_count = len(set(next_colors.values()))
+            if class_count == previous_class_count:
+                stagnant_rounds += 1
+            else:
+                stagnant_rounds = 0
+            round_stats.append({
+                "round": round_idx,
+                "changed": changed,
+                "class_count": class_count,
+                "elapsed_ms": round((time.perf_counter() - round_started) * 1000.0, 3),
+            })
+            colors = next_colors
+            previous_class_count = class_count
+            if changed == 0:
+                stop_reason = "no_color_change"
+                break
+            if stagnant_rounds >= _WL_PARTITION_STAGNANT_ROUNDS:
+                stop_reason = "partition_stable"
+                break
 
     # External IDs (H:/C:) stay sha256-derived for stable wire-level identity.
     if hasher_name != _WL_ROUND_HASH_SHA256:
@@ -131,7 +139,9 @@ def wl_refine_colors(
         diagnostics.update({
             "backend": hasher_name,
             "native_round_impl": (
-                "rust_xxh3_64"
+                "rust_xxh3_64_multi"
+                if hasher_name == _WL_ROUND_HASH_XXH3 and _NATIVE_WL_REFINE is not None
+                else "rust_xxh3_64"
                 if hasher_name == _WL_ROUND_HASH_XXH3 and _NATIVE_WL_ROUND is not None
                 else None
             ),
