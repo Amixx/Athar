@@ -1,0 +1,516 @@
+{
+  "config": {
+    "chunk_size": 1000,
+    "engine_timings": true,
+    "guid_policy": "fail_fast",
+    "heartbeat_s": 10,
+    "iterations": 1,
+    "metrics": ["diff_graphs"],
+    "profile": "semantic_stable",
+    "warmup": 0
+  },
+  "environment": {
+    "ifcopenshell": { "version": "0.8.4.post1" },
+    "platform": { "machine": "arm64", "release": "25.3.0", "system": "Darwin" },
+    "python": {
+      "implementation": "CPython",
+      "version": "3.12.0",
+      "version_info": { "major": 3, "micro": 0, "minor": 12 }
+    }
+  },
+  "generated_at": "2026-03-12T23:51:58.969392+00:00",
+  "results": [
+    {
+      "case": {
+        "name": "house_v1_v2",
+        "new_path": "/Users/imantsliepins/Personal/Athar/tests/fixtures/house_v2.ifc",
+        "old_path": "/Users/imantsliepins/Personal/Athar/tests/fixtures/house_v1.ifc"
+      },
+      "metrics": {
+        "diff_graphs": {
+          "engine_timings_ms": {
+            "samples": {
+              "context.apply_equivalence_classes": [0.039],
+              "context.apply_path_matches": [16.728],
+              "context.apply_secondary_matches": [0.078],
+              "context.apply_text_fingerprint_matches": [682.809],
+              "context.assign_new_ids": [4008.42],
+              "context.assign_new_ids.wl_rounds": [3.0],
+              "context.assign_new_ids.wl_total_ms": [24894.51],
+              "context.assign_old_ids": [2991.661],
+              "context.assign_old_ids.wl_rounds": [3.0],
+              "context.assign_old_ids.wl_total_ms": [23699.936],
+              "context.build_compare_entities": [0.004],
+              "context.build_owner_projectors": [467.607],
+              "context.build_stats": [4337.67],
+              "context.index_new_by_identity": [3787.279],
+              "context.index_old_by_identity": [4079.086],
+              "context.match_after_path": [2953.462],
+              "context.match_root_steps": [18.927],
+              "context.match_unique_ids": [2849.25],
+              "context.path_propagation": [230.009],
+              "context.path_propagation.reused_early": [0.0],
+              "context.precompute_new_identity": [48315.589],
+              "context.precompute_old_identity": [49773.478],
+              "context.root_remap": [2033.006],
+              "context.secondary_match": [2605.747],
+              "context.seed_guid_pairs": [3557.693],
+              "context.seed_guid_pairs.coverage": [0.003],
+              "context.seed_guid_pairs.matched": [3392.0],
+              "context.seed_guid_path_propagation": [0.001],
+              "context.seed_text_fingerprints": [48848.936],
+              "context.seed_text_fingerprints.ambiguous_buckets": [30552.0],
+              "context.seed_text_fingerprints.matched": [114508.0],
+              "context.seed_text_fingerprints.parallel": [0.0],
+              "emit_base_changes": [7535.483],
+              "emit_derived_markers": [1623.844],
+              "prepare_context": [215757.143],
+              "total": [224916.976]
+            },
+            "summary": {
+              "context.apply_equivalence_classes": {
+                "max": 0.039,
+                "mean": 0.039,
+                "median": 0.039,
+                "min": 0.039,
+                "p95": 0.039
+              },
+              "context.apply_path_matches": {
+                "max": 16.728,
+                "mean": 16.728,
+                "median": 16.728,
+                "min": 16.728,
+                "p95": 16.728
+              },
+              "context.apply_secondary_matches": {
+                "max": 0.078,
+                "mean": 0.078,
+                "median": 0.078,
+                "min": 0.078,
+                "p95": 0.078
+              },
+              "context.apply_text_fingerprint_matches": {
+                "max": 682.809,
+                "mean": 682.809,
+                "median": 682.809,
+                "min": 682.809,
+                "p95": 682.809
+              },
+              "context.assign_new_ids": {
+                "max": 4008.42,
+                "mean": 4008.42,
+                "median": 4008.42,
+                "min": 4008.42,
+                "p95": 4008.42
+              },
+              "context.assign_new_ids.wl_rounds": {
+                "max": 3.0,
+                "mean": 3.0,
+                "median": 3.0,
+                "min": 3.0,
+                "p95": 3.0
+              },
+              "context.assign_new_ids.wl_total_ms": {
+                "max": 24894.51,
+                "mean": 24894.51,
+                "median": 24894.51,
+                "min": 24894.51,
+                "p95": 24894.51
+              },
+              "context.assign_old_ids": {
+                "max": 2991.661,
+                "mean": 2991.661,
+                "median": 2991.661,
+                "min": 2991.661,
+                "p95": 2991.661
+              },
+              "context.assign_old_ids.wl_rounds": {
+                "max": 3.0,
+                "mean": 3.0,
+                "median": 3.0,
+                "min": 3.0,
+                "p95": 3.0
+              },
+              "context.assign_old_ids.wl_total_ms": {
+                "max": 23699.936,
+                "mean": 23699.936,
+                "median": 23699.936,
+                "min": 23699.936,
+                "p95": 23699.936
+              },
+              "context.build_compare_entities": {
+                "max": 0.004,
+                "mean": 0.004,
+                "median": 0.004,
+                "min": 0.004,
+                "p95": 0.004
+              },
+              "context.build_owner_projectors": {
+                "max": 467.607,
+                "mean": 467.607,
+                "median": 467.607,
+                "min": 467.607,
+                "p95": 467.607
+              },
+              "context.build_stats": {
+                "max": 4337.67,
+                "mean": 4337.67,
+                "median": 4337.67,
+                "min": 4337.67,
+                "p95": 4337.67
+              },
+              "context.index_new_by_identity": {
+                "max": 3787.279,
+                "mean": 3787.279,
+                "median": 3787.279,
+                "min": 3787.279,
+                "p95": 3787.279
+              },
+              "context.index_old_by_identity": {
+                "max": 4079.086,
+                "mean": 4079.086,
+                "median": 4079.086,
+                "min": 4079.086,
+                "p95": 4079.086
+              },
+              "context.match_after_path": {
+                "max": 2953.462,
+                "mean": 2953.462,
+                "median": 2953.462,
+                "min": 2953.462,
+                "p95": 2953.462
+              },
+              "context.match_root_steps": {
+                "max": 18.927,
+                "mean": 18.927,
+                "median": 18.927,
+                "min": 18.927,
+                "p95": 18.927
+              },
+              "context.match_unique_ids": {
+                "max": 2849.25,
+                "mean": 2849.25,
+                "median": 2849.25,
+                "min": 2849.25,
+                "p95": 2849.25
+              },
+              "context.path_propagation": {
+                "max": 230.009,
+                "mean": 230.009,
+                "median": 230.009,
+                "min": 230.009,
+                "p95": 230.009
+              },
+              "context.path_propagation.reused_early": {
+                "max": 0.0,
+                "mean": 0.0,
+                "median": 0.0,
+                "min": 0.0,
+                "p95": 0.0
+              },
+              "context.precompute_new_identity": {
+                "max": 48315.589,
+                "mean": 48315.589,
+                "median": 48315.589,
+                "min": 48315.589,
+                "p95": 48315.589
+              },
+              "context.precompute_old_identity": {
+                "max": 49773.478,
+                "mean": 49773.478,
+                "median": 49773.478,
+                "min": 49773.478,
+                "p95": 49773.478
+              },
+              "context.root_remap": {
+                "max": 2033.006,
+                "mean": 2033.006,
+                "median": 2033.006,
+                "min": 2033.006,
+                "p95": 2033.006
+              },
+              "context.secondary_match": {
+                "max": 2605.747,
+                "mean": 2605.747,
+                "median": 2605.747,
+                "min": 2605.747,
+                "p95": 2605.747
+              },
+              "context.seed_guid_pairs": {
+                "max": 3557.693,
+                "mean": 3557.693,
+                "median": 3557.693,
+                "min": 3557.693,
+                "p95": 3557.693
+              },
+              "context.seed_guid_pairs.coverage": {
+                "max": 0.003,
+                "mean": 0.003,
+                "median": 0.003,
+                "min": 0.003,
+                "p95": 0.003
+              },
+              "context.seed_guid_pairs.matched": {
+                "max": 3392.0,
+                "mean": 3392.0,
+                "median": 3392.0,
+                "min": 3392.0,
+                "p95": 3392.0
+              },
+              "context.seed_guid_path_propagation": {
+                "max": 0.001,
+                "mean": 0.001,
+                "median": 0.001,
+                "min": 0.001,
+                "p95": 0.001
+              },
+              "context.seed_text_fingerprints": {
+                "max": 48848.936,
+                "mean": 48848.936,
+                "median": 48848.936,
+                "min": 48848.936,
+                "p95": 48848.936
+              },
+              "context.seed_text_fingerprints.ambiguous_buckets": {
+                "max": 30552.0,
+                "mean": 30552.0,
+                "median": 30552.0,
+                "min": 30552.0,
+                "p95": 30552.0
+              },
+              "context.seed_text_fingerprints.matched": {
+                "max": 114508.0,
+                "mean": 114508.0,
+                "median": 114508.0,
+                "min": 114508.0,
+                "p95": 114508.0
+              },
+              "context.seed_text_fingerprints.parallel": {
+                "max": 0.0,
+                "mean": 0.0,
+                "median": 0.0,
+                "min": 0.0,
+                "p95": 0.0
+              },
+              "emit_base_changes": {
+                "max": 7535.483,
+                "mean": 7535.483,
+                "median": 7535.483,
+                "min": 7535.483,
+                "p95": 7535.483
+              },
+              "emit_derived_markers": {
+                "max": 1623.844,
+                "mean": 1623.844,
+                "median": 1623.844,
+                "min": 1623.844,
+                "p95": 1623.844
+              },
+              "prepare_context": {
+                "max": 215757.143,
+                "mean": 215757.143,
+                "median": 215757.143,
+                "min": 215757.143,
+                "p95": 215757.143
+              },
+              "total": {
+                "max": 224916.976,
+                "mean": 224916.976,
+                "median": 224916.976,
+                "min": 224916.976,
+                "p95": 224916.976
+              }
+            }
+          },
+          "output_signature": {
+            "base_change_count": 111,
+            "derived_marker_count": 0
+          },
+          "samples": {
+            "peak_mem_bytes": [3947310973],
+            "time_ms": [229195.205]
+          },
+          "stable_output_signature": true,
+          "summary": {
+            "peak_mem_bytes": {
+              "max": 3947310973,
+              "mean": 3947310973,
+              "median": 3947310973,
+              "min": 3947310973,
+              "p95": 3947310973
+            },
+            "time_ms": {
+              "max": 229195.205,
+              "mean": 229195.205,
+              "median": 229195.205,
+              "min": 229195.205,
+              "p95": 229195.205
+            }
+          }
+        }
+      },
+      "parse_ms": {
+        "new_graph": 55335.983,
+        "old_graph": 34276.393,
+        "total": 89612.376
+      }
+    },
+    {
+      "case": {
+        "name": "basichouse_same_file",
+        "new_path": "/Users/imantsliepins/Personal/Athar/data/BasicHouse.ifc",
+        "old_path": "/Users/imantsliepins/Personal/Athar/data/BasicHouse.ifc"
+      },
+      "metrics": {
+        "diff_graphs": {
+          "engine_timings_ms": {
+            "samples": {
+              "emit_base_changes": [0.0],
+              "emit_derived_markers": [0.0],
+              "prepare_context": [0.0],
+              "total": [0.0]
+            },
+            "summary": {
+              "emit_base_changes": {
+                "max": 0.0,
+                "mean": 0.0,
+                "median": 0.0,
+                "min": 0.0,
+                "p95": 0.0
+              },
+              "emit_derived_markers": {
+                "max": 0.0,
+                "mean": 0.0,
+                "median": 0.0,
+                "min": 0.0,
+                "p95": 0.0
+              },
+              "prepare_context": {
+                "max": 0.0,
+                "mean": 0.0,
+                "median": 0.0,
+                "min": 0.0,
+                "p95": 0.0
+              },
+              "total": {
+                "max": 0.0,
+                "mean": 0.0,
+                "median": 0.0,
+                "min": 0.0,
+                "p95": 0.0
+              }
+            }
+          },
+          "output_signature": {
+            "base_change_count": 0,
+            "derived_marker_count": 0
+          },
+          "samples": { "peak_mem_bytes": [516698], "time_ms": [408.643] },
+          "stable_output_signature": true,
+          "summary": {
+            "peak_mem_bytes": {
+              "max": 516698,
+              "mean": 516698,
+              "median": 516698,
+              "min": 516698,
+              "p95": 516698
+            },
+            "time_ms": {
+              "max": 408.643,
+              "mean": 408.643,
+              "median": 408.643,
+              "min": 408.643,
+              "p95": 408.643
+            }
+          }
+        }
+      },
+      "parse_ms": {
+        "new_graph": 0.0,
+        "old_graph": 31047.551,
+        "total": 31047.551
+      }
+    },
+    {
+      "case": {
+        "name": "advancedproject_same_file",
+        "new_path": "/Users/imantsliepins/Personal/Athar/data/AdvancedProject.ifc",
+        "old_path": "/Users/imantsliepins/Personal/Athar/data/AdvancedProject.ifc"
+      },
+      "metrics": {
+        "diff_graphs": {
+          "engine_timings_ms": {
+            "samples": {
+              "emit_base_changes": [0.0],
+              "emit_derived_markers": [0.0],
+              "prepare_context": [0.0],
+              "total": [0.0]
+            },
+            "summary": {
+              "emit_base_changes": {
+                "max": 0.0,
+                "mean": 0.0,
+                "median": 0.0,
+                "min": 0.0,
+                "p95": 0.0
+              },
+              "emit_derived_markers": {
+                "max": 0.0,
+                "mean": 0.0,
+                "median": 0.0,
+                "min": 0.0,
+                "p95": 0.0
+              },
+              "prepare_context": {
+                "max": 0.0,
+                "mean": 0.0,
+                "median": 0.0,
+                "min": 0.0,
+                "p95": 0.0
+              },
+              "total": {
+                "max": 0.0,
+                "mean": 0.0,
+                "median": 0.0,
+                "min": 0.0,
+                "p95": 0.0
+              }
+            }
+          },
+          "output_signature": {
+            "base_change_count": 0,
+            "derived_marker_count": 0
+          },
+          "samples": { "peak_mem_bytes": [8008714], "time_ms": [462.857] },
+          "stable_output_signature": true,
+          "summary": {
+            "peak_mem_bytes": {
+              "max": 8008714,
+              "mean": 8008714,
+              "median": 8008714,
+              "min": 8008714,
+              "p95": 8008714
+            },
+            "time_ms": {
+              "max": 462.857,
+              "mean": 462.857,
+              "median": 462.857,
+              "min": 462.857,
+              "p95": 462.857
+            }
+          }
+        }
+      },
+      "parse_ms": {
+        "new_graph": 0.0,
+        "old_graph": 26696.765,
+        "total": 26696.765
+      }
+    }
+  ],
+  "run_summary": {
+    "total_cases": 3,
+    "total_elapsed_ms": 379261.425,
+    "total_elapsed_text": "6m 19s 261.4ms"
+  }
+}

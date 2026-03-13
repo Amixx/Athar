@@ -14,6 +14,11 @@ from typing import Any, Callable
 from ..graph.graph_utils import build_adjacency, build_reverse_adjacency
 from ..graph.structural_hash import structural_hash
 
+try:
+    from athar._native._core import native_wl_round as _NATIVE_WL_ROUND
+except Exception:
+    _NATIVE_WL_ROUND = None
+
 _DEFAULT_WL_ROUNDS = 8
 _WL_ROUND_HASH_AUTO = "auto"
 _WL_ROUND_HASH_SHA256 = "sha256"
@@ -72,24 +77,32 @@ def wl_refine_colors(
 
     for round_idx in range(1, rounds + 1):
         round_started = time.perf_counter()
-        next_colors: dict[int, str] = {}
-        changed = 0
-        for step_id, _entity in entities.items():
-            blob = _wl_round_payload(
-                colors[step_id],
-                adjacency.get(step_id, []),
-                colors,
-                path_bytes_cache=path_bytes_cache,
-                type_bytes_cache=type_bytes_cache,
-                color_bytes_cache=color_bytes_cache,
+        if hasher_name == _WL_ROUND_HASH_XXH3 and _NATIVE_WL_ROUND is not None:
+            next_colors = _NATIVE_WL_ROUND(colors, adjacency)
+            changed = sum(
+                1
+                for step_id, next_color in next_colors.items()
+                if next_color != colors.get(step_id)
             )
-            digest = hasher(blob)
-            # Keep backend-native WL colors inside refinement rounds to avoid
-            # per-round sha256 wrapping overhead for fast hash backends.
-            next_color = digest
-            next_colors[step_id] = next_color
-            if next_color != colors[step_id]:
-                changed += 1
+        else:
+            next_colors = {}
+            changed = 0
+            for step_id, _entity in entities.items():
+                blob = _wl_round_payload(
+                    colors[step_id],
+                    adjacency.get(step_id, []),
+                    colors,
+                    path_bytes_cache=path_bytes_cache,
+                    type_bytes_cache=type_bytes_cache,
+                    color_bytes_cache=color_bytes_cache,
+                )
+                digest = hasher(blob)
+                # Keep backend-native WL colors inside refinement rounds to avoid
+                # per-round sha256 wrapping overhead for fast hash backends.
+                next_color = digest
+                next_colors[step_id] = next_color
+                if next_color != colors[step_id]:
+                    changed += 1
         class_count = len(set(next_colors.values()))
         if class_count == previous_class_count:
             stagnant_rounds += 1
@@ -117,6 +130,11 @@ def wl_refine_colors(
     if diagnostics is not None:
         diagnostics.update({
             "backend": hasher_name,
+            "native_round_impl": (
+                "rust_xxh3_64"
+                if hasher_name == _WL_ROUND_HASH_XXH3 and _NATIVE_WL_ROUND is not None
+                else None
+            ),
             "external_color_backend": _WL_ROUND_HASH_SHA256,
             "configured_rounds": rounds,
             "executed_rounds": len(round_stats),

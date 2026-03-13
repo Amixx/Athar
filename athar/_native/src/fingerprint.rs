@@ -4,11 +4,6 @@ use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 use xxhash_rust::xxh3::Xxh3;
 
 pub fn native_entity_fingerprint(entity: &Bound<'_, PyAny>) -> PyResult<String> {
-    let module = entity.py().import("athar.diff.text_fingerprint")?;
-    let function = module.getattr("python_entity_text_fingerprint")?;
-    return function.call1((entity,))?.extract();
-
-    #[allow(unreachable_code)]
     let entity_dict = entity
         .downcast::<PyDict>()
         .map_err(|_| PyTypeError::new_err("entity must be a dict"))?;
@@ -18,7 +13,12 @@ pub fn native_entity_fingerprint(entity: &Bound<'_, PyAny>) -> PyResult<String> 
     hash_scalar_any(&mut hasher, entity_dict.get_item("entity_type")?.as_ref())?;
 
     hash_token(&mut hasher, "attributes");
-    hash_value_stripping_refs(&mut hasher, entity_dict.get_item("attributes")?.as_ref())?;
+    if let Some(attributes) = entity_dict.get_item("attributes")? {
+        hash_value_stripping_refs(&mut hasher, Some(&attributes))?;
+    } else {
+        hasher.update(b"{");
+        hasher.update(b"}");
+    }
 
     hash_token(&mut hasher, "edges");
     hash_edge_multiset(&mut hasher, entity_dict.get_item("refs")?.as_ref())?;
@@ -63,9 +63,10 @@ fn hash_scalar_any(hasher: &mut Xxh3, value: Option<&Bound<'_, PyAny>>) -> PyRes
                 return Ok(());
             }
             if item.is_instance_of::<PyFloat>() {
-                let value = item.extract::<f64>()?;
+                let value = item.repr()?;
+                let value = value.to_str()?;
                 hasher.update(b"F");
-                hasher.update(value.to_string().as_bytes());
+                hasher.update(value.as_bytes());
                 hasher.update(b";");
                 return Ok(());
             }
@@ -148,13 +149,21 @@ fn hash_edge_multiset(hasher: &mut Xxh3, refs: Option<&Bound<'_, PyAny>>) -> PyR
             .map(|item| item.extract::<String>())
             .transpose()?
             .unwrap_or_default();
-        let target_type = dict
-            .get_item("target_type")?
-            .map(|item| item.extract::<String>())
-            .transpose()?;
+        let target_type = match dict.get_item("target_type")? {
+            None => None,
+            Some(item) if item.is_none() => None,
+            Some(item) => Some(item.extract::<String>()?),
+        };
         edges.push((path, target_type));
     }
-    edges.sort_by(|left, right| left.cmp(right));
+    edges.sort_by(|left, right| {
+        left.0.cmp(&right.0).then_with(|| {
+            left.1
+                .as_deref()
+                .unwrap_or("")
+                .cmp(right.1.as_deref().unwrap_or(""))
+        })
+    });
 
     hasher.update(b"E{");
     let mut index = 0usize;
@@ -174,7 +183,9 @@ fn hash_edge_multiset(hasher: &mut Xxh3, refs: Option<&Bound<'_, PyAny>>) -> PyR
             }
         }
         hasher.update(b"C");
+        hasher.update(b"I");
         hasher.update(count.to_string().as_bytes());
+        hasher.update(b";");
         hasher.update(b";");
         index += count;
     }
