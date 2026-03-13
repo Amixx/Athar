@@ -192,7 +192,7 @@ def test_prepare_context_reuses_early_guid_path_propagation(monkeypatch):
     assert calls["count"] == 1
 
 
-def test_prepare_context_uses_guid_overlap_not_whole_graph_coverage_for_early_path(monkeypatch):
+def test_prepare_context_uses_whole_graph_coverage_for_early_path(monkeypatch):
     old_entities = {
         1: {
             "entity_type": "IfcWall",
@@ -239,7 +239,7 @@ def test_prepare_context_uses_guid_overlap_not_whole_graph_coverage_for_early_pa
     context["old_owner_projector"].close()
     context["new_owner_projector"].close()
 
-    assert calls["count"] == 2
+    assert calls["count"] == 1
 
 
 def test_prepare_context_does_not_cache_seeded_identity_state(monkeypatch):

@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from athar.graph.determinism import canonical_json
 import json
 import athar.diff.markers as diff_engine_markers
@@ -220,6 +221,39 @@ def test_diff_engine_applies_secondary_match_for_unmatched_non_root():
         and change["identity"]["matched_on"]["stage"] in {"scored_assignment", "signature_unique"}
         for change in diff["base_changes"]
     )
+
+
+def test_diff_engine_disables_gc_during_emit_phase(monkeypatch):
+    old_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall A"}},
+            "refs": [],
+        },
+    })
+    new_graph = _graph_with_entities({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "AAA",
+            "attributes": {"Name": {"kind": "string", "value": "Wall B"}},
+            "refs": [],
+        },
+    })
+
+    events: list[str] = []
+
+    @contextmanager
+    def wrapped_gc_guard():
+        events.append("enter")
+        yield
+        events.append("exit")
+
+    monkeypatch.setattr(diff_engine_mod, "_temporarily_disable_gc", wrapped_gc_guard)
+
+    diff_graphs(old_graph, new_graph)
+
+    assert events == ["enter", "exit"]
 
 
 def test_diff_engine_geometry_policy_invariant_probe_suppresses_form_swap_modify():
