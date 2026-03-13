@@ -43,6 +43,7 @@ _PREPARE_CONTEXT_TOTAL_STEPS = 22
 _GUID_SEED_PATH_PROPAGATION_THRESHOLD = 0.05
 _PARALLEL_ENV = "ATHAR_PARALLEL"
 _FORCE_GC_COLLECT_ENV = "ATHAR_FORCE_GC_COLLECT"
+_AUTO_PARALLEL_MIN_TOTAL_ENTITIES = 50000
 
 
 def prepare_diff_context(
@@ -185,10 +186,11 @@ def prepare_diff_context(
     if seeding_enabled:
         exclude_old = set(seed_guid_pairs) | set(seed_path_pairs)
         exclude_new = set(seed_guid_pairs.values()) | set(seed_path_pairs.values())
-        if (
-            cached_identity_old is None
-            and cached_identity_new is None
-            and _parallel_enabled()
+        if _should_parallelize_seeded_sides(
+            old_graph,
+            new_graph,
+            cached_identity_old=cached_identity_old,
+            cached_identity_new=cached_identity_new,
         ):
             parallel_seed_results = _prepare_seeded_sides_parallel(
                 old_graph,
@@ -668,9 +670,55 @@ def _record_timing(target: dict[str, float] | None, key: str, started: float) ->
     target[key] = round((time.perf_counter() - started) * 1000.0, 3)
 
 
-def _parallel_enabled() -> bool:
-    raw = os.environ.get(_PARALLEL_ENV, "0").strip().lower()
-    return raw not in {"", "0", "false", "no", "off"}
+def _parallel_requested() -> bool | None:
+    raw = os.environ.get(_PARALLEL_ENV, "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _parallel_runtime_available() -> bool:
+    try:
+        if multiprocessing.cpu_count() <= 1:
+            return False
+    except NotImplementedError:
+        return False
+    try:
+        multiprocessing.get_context("fork")
+    except ValueError:
+        return False
+    return True
+
+
+def _graph_entity_count(graph: GraphIR) -> int:
+    metadata = graph.get("metadata", {})
+    if isinstance(metadata, dict):
+        entity_count = metadata.get("entity_count")
+        if isinstance(entity_count, int) and entity_count >= 0:
+            return entity_count
+    return len(graph.get("entities", {}))
+
+
+def _should_parallelize_seeded_sides(
+    old_graph: GraphIR,
+    new_graph: GraphIR,
+    *,
+    cached_identity_old: dict[str, Any] | None,
+    cached_identity_new: dict[str, Any] | None,
+) -> bool:
+    requested = _parallel_requested()
+    if requested is False:
+        return False
+    if cached_identity_old is not None or cached_identity_new is not None:
+        return False
+    if not _parallel_runtime_available():
+        return False
+    if requested is True:
+        return True
+    total_entities = _graph_entity_count(old_graph) + _graph_entity_count(new_graph)
+    return total_entities >= _AUTO_PARALLEL_MIN_TOTAL_ENTITIES
 
 
 def _force_gc_collect() -> bool:
