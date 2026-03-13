@@ -1,7 +1,7 @@
 """Benchmark diff engine runtime and peak Python memory usage.
 
 Default cases:
-- house_v1_v2: tests/fixtures/house_v1.ifc vs house_v2.ifc (large, low-GUID cross-version diff)
+- house_v1_v2_scrambled: tests/fixtures/house_v1.ifc vs house_v2_scrambled.ifc (large, scrambled-GUID cross-version diff)
 - basichouse_v1_v2: tests/fixtures/BasicHouse.ifc vs tests/fixtures/BasicHouse_modified.ifc (medium, high-GUID cross-version diff)
 - basichouse_same_file: data/BasicHouse.ifc vs itself (short-circuit)
 - advancedproject_same_file: data/AdvancedProject.ifc vs itself (short-circuit)
@@ -45,9 +45,9 @@ class Case:
 def _default_cases(repo_root: Path) -> list[Case]:
     return [
         Case(
-            name="house_v1_v2",
+            name="house_v1_v2_scrambled",
             old_path=repo_root / "tests" / "fixtures" / "house_v1.ifc",
-            new_path=repo_root / "tests" / "fixtures" / "house_v2.ifc",
+            new_path=repo_root / "tests" / "fixtures" / "house_v2_scrambled.ifc",
         ),
         Case(
             name="basichouse_v1_v2",

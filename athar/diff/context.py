@@ -42,6 +42,7 @@ ProgressCallback = Callable[[dict[str, Any]], None]
 _PREPARE_CONTEXT_TOTAL_STEPS = 22
 _GUID_SEED_PATH_PROPAGATION_THRESHOLD = 0.05
 _PARALLEL_ENV = "ATHAR_PARALLEL"
+_FORCE_GC_COLLECT_ENV = "ATHAR_FORCE_GC_COLLECT"
 
 
 def prepare_diff_context(
@@ -131,7 +132,13 @@ def prepare_diff_context(
     if seeding_enabled:
         seed_guid_pairs, guid_seed_diagnostics = unique_guid_pairs(old_graph, new_graph)
     else:
-        guid_seed_diagnostics = {"matched": 0, "coverage": 0.0, "old_unique": 0, "new_unique": 0}
+        guid_seed_diagnostics = {
+            "matched": 0,
+            "coverage": 0.0,
+            "unique_guid_overlap": 0.0,
+            "old_unique": 0,
+            "new_unique": 0,
+        }
     _record_timing(timing_collector, "seed_guid_pairs", stage_started)
     if timing_collector is not None:
         timing_collector["seed_guid_pairs.matched"] = float(guid_seed_diagnostics.get("matched", 0))
@@ -139,12 +146,17 @@ def prepare_diff_context(
             float(guid_seed_diagnostics.get("coverage", 0.0)),
             6,
         )
+        timing_collector["seed_guid_pairs.unique_guid_overlap"] = round(
+            float(guid_seed_diagnostics.get("unique_guid_overlap", 0.0)),
+            6,
+        )
     _step_done("seed_guid_pairs")
 
     stage_started = time.perf_counter()
     if (
         seed_guid_pairs
-        and float(guid_seed_diagnostics.get("coverage", 0.0)) >= _GUID_SEED_PATH_PROPAGATION_THRESHOLD
+        and float(guid_seed_diagnostics.get("unique_guid_overlap", 0.0))
+        >= _GUID_SEED_PATH_PROPAGATION_THRESHOLD
     ):
         early_guid_path = propagate_matches_by_typed_path(
             old_graph,
@@ -152,9 +164,10 @@ def prepare_diff_context(
             seed_guid_pairs,
             pre_matched_old=set(seed_guid_pairs),
             pre_matched_new=set(seed_guid_pairs.values()),
+            collect_diagnostics=False,
         )
         seed_path_pairs = early_guid_path.get("old_to_new", {})
-        seed_path_diagnostics = early_guid_path.get("diagnostics", {})
+        seed_path_diagnostics = early_guid_path.get("match_info", {})
         seed_path_ambiguous = int(early_guid_path.get("ambiguous", 0))
     _record_timing(timing_collector, "seed_guid_path_propagation", stage_started)
     _step_done("seed_guid_path_propagation")
@@ -336,7 +349,14 @@ def prepare_diff_context(
             filtered_old_to_new[old_step] = new_step
             diag = seed_path_diagnostics.get(old_step)
             if diag is not None:
-                filtered_diagnostics[old_step] = diag
+                filtered_diagnostics[old_step] = {
+                    "match_confidence": 1.0,
+                    "matched_on": {
+                        "stage": "typed_path",
+                        "path": diag[0],
+                        "target_type": diag[1],
+                    },
+                }
         path_propagation = {
             "old_to_new": filtered_old_to_new,
             "diagnostics": filtered_diagnostics,
@@ -475,7 +495,8 @@ def prepare_diff_context(
 
     # Re-enable cyclic GC after hot phases.
     gc.enable()
-    gc.collect()
+    if _force_gc_collect():
+        gc.collect()
 
     _emit_progress(progress_callback, {
         "status": "done",
@@ -645,6 +666,11 @@ def _record_timing(target: dict[str, float] | None, key: str, started: float) ->
 
 def _parallel_enabled() -> bool:
     raw = os.environ.get(_PARALLEL_ENV, "0").strip().lower()
+    return raw not in {"", "0", "false", "no", "off"}
+
+
+def _force_gc_collect() -> bool:
+    raw = os.environ.get(_FORCE_GC_COLLECT_ENV, "0").strip().lower()
     return raw not in {"", "0", "false", "no", "off"}
 
 

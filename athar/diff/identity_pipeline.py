@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..graph.graph_utils import build_adjacency, build_reverse_adjacency
+from ..graph.graph_utils import (
+    NATIVE_ADJACENCY_MAPS_AVAILABLE,
+    build_adjacency,
+    build_adjacency_maps,
+    build_reverse_adjacency,
+)
 from ..graph.structural_hash import structural_hash
 from .wl_refinement import wl_refine_with_scc_fallback
 from .guid_policy import enforce_or_disambiguate_guid_policy
@@ -28,8 +33,7 @@ def _precompute_identity_state(
     entities = graph.get("entities", {})
     guid_counts, guid_quality = _guid_quality(entities)
     unique_guid_steps = _unique_guid_step_index(entities, guid_counts=guid_counts)
-    graph_adjacency = build_adjacency(entities)
-    graph_reverse_adjacency = build_reverse_adjacency(entities, graph_adjacency)
+    graph_adjacency, graph_reverse_adjacency = build_adjacency_maps(entities)
     if precomputed_profile_entities is not None:
         id_entities = precomputed_profile_entities
     else:
@@ -38,6 +42,8 @@ def _precompute_identity_state(
     if id_entities is entities:
         id_adjacency = graph_adjacency
         id_reverse_adjacency = graph_reverse_adjacency
+    elif NATIVE_ADJACENCY_MAPS_AVAILABLE:
+        id_adjacency, id_reverse_adjacency = build_adjacency_maps(id_entities)
     else:
         # Derive profile adjacency from full-graph adjacency.
         # entity_for_profile returns the same object when no filtering was needed,

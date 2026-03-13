@@ -11,6 +11,13 @@ import json
 from collections import Counter
 from typing import Any
 
+try:
+    from athar._native._core import native_build_adjacency_maps as _NATIVE_BUILD_ADJACENCY_MAPS
+except Exception:
+    _NATIVE_BUILD_ADJACENCY_MAPS = None
+
+NATIVE_ADJACENCY_MAPS_AVAILABLE = _NATIVE_BUILD_ADJACENCY_MAPS is not None
+
 
 def sha256_json(payload: Any) -> str:
     """Deterministic SHA-256 hex digest over JSON-serialized payload."""
@@ -57,6 +64,26 @@ def build_adjacency(
     entities: dict[int, dict],
 ) -> dict[int, list[tuple[str, str | None, int]]]:
     """Forward adjacency: step_id -> [(path, target_type, target_step)]."""
+    return _build_adjacency_python(entities)
+
+
+def build_adjacency_maps(
+    entities: dict[int, dict],
+) -> tuple[
+    dict[int, list[tuple[str, str | None, int]]],
+    dict[int, list[tuple[str, str | None, int]]],
+]:
+    """Build forward + reverse adjacency, preferring the native combined path."""
+    if _NATIVE_BUILD_ADJACENCY_MAPS is not None:
+        return _NATIVE_BUILD_ADJACENCY_MAPS(entities)
+    adjacency = _build_adjacency_python(entities)
+    return adjacency, _build_reverse_adjacency_python(entities, adjacency)
+
+
+def _build_adjacency_python(
+    entities: dict[int, dict],
+) -> dict[int, list[tuple[str, str | None, int]]]:
+    """Pure-Python forward adjacency builder."""
     adjacency: dict[int, list[tuple[str, str | None, int]]] = {}
     for step_id, entity in entities.items():
         edges: list[tuple[str, str | None, int]] = []
@@ -74,6 +101,14 @@ def build_reverse_adjacency(
     adjacency: dict[int, list[tuple[str, str | None, int]]],
 ) -> dict[int, list[tuple[str, str | None, int]]]:
     """Reverse adjacency: target_step -> [(path, source_type, source_step)]."""
+    return _build_reverse_adjacency_python(entities, adjacency)
+
+
+def _build_reverse_adjacency_python(
+    entities: dict[int, dict],
+    adjacency: dict[int, list[tuple[str, str | None, int]]],
+) -> dict[int, list[tuple[str, str | None, int]]]:
+    """Pure-Python reverse adjacency builder."""
     reverse: dict[int, list[tuple[str, str | None, int]]] = {step_id: [] for step_id in entities}
     for source_step, edges in adjacency.items():
         source_type = entities.get(source_step, {}).get("entity_type")

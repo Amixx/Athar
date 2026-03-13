@@ -3,6 +3,7 @@
 Creates:
   tests/fixtures/house_v1.ifc — Original (copy of BasicHouse.ifc)
   tests/fixtures/house_v2.ifc — Renovation: move furniture, remove some windows, add door property
+  tests/fixtures/house_v2_scrambled.ifc — Same as v2, but all GlobalIds deterministically rewritten
   tests/fixtures/house_v3.ifc — Further changes: delete interior wall + its door, move exterior door
 
 The changes are designed to exercise different diff capabilities:
@@ -14,13 +15,17 @@ Usage:
 """
 
 import shutil
+import uuid
 import ifcopenshell
+import ifcopenshell.guid
 
 
 SRC = "data/BasicHouse.ifc"
 V1 = "tests/fixtures/house_v1.ifc"
 V2 = "tests/fixtures/house_v2.ifc"
+V2_SCRAMBLED = "tests/fixtures/house_v2_scrambled.ifc"
 V3 = "tests/fixtures/house_v3.ifc"
+_GUID_SCRAMBLE_NAMESPACE = uuid.UUID("f43a7c2b-8fd4-4d2d-9898-8891d75432b2")
 
 
 def _remove_element_and_relationships(ifc, element):
@@ -120,6 +125,13 @@ def _move_element(ifc, element, dx=0, dy=0, dz=0):
 def _find_by_guid(ifc, guid):
     """Find an element by GlobalId."""
     return ifc.by_guid(guid)
+
+
+def _scramble_guid(guid):
+    """Deterministically rewrite an IFC compressed GlobalId."""
+    return ifcopenshell.guid.compress(
+        uuid.uuid5(_GUID_SCRAMBLE_NAMESPACE, guid).hex,
+    )
 
 
 BASE_TIMESTAMP = "2020-11-30T10:34:18"
@@ -260,14 +272,38 @@ def generate_v3():
           f" (was 71, expected 66)")
 
 
+def generate_v2_scrambled():
+    """Generate a GUID-scrambled variant of v2 for worst-case matching benchmarks."""
+    shutil.copy(V2, V2_SCRAMBLED)
+    ifc = ifcopenshell.open(V2_SCRAMBLED)
+
+    print(f"\nGenerating {V2_SCRAMBLED}:")
+    rewritten = 0
+    for entity in ifc:
+        if not hasattr(entity, "GlobalId"):
+            continue
+        guid = entity.GlobalId
+        if not isinstance(guid, str) or guid.strip() == "":
+            continue
+        entity.GlobalId = _scramble_guid(guid)
+        rewritten += 1
+
+    ifc.write(V2_SCRAMBLED)
+    _set_timestamp(V2_SCRAMBLED, V2_TIMESTAMP)
+    print(f"  Rewrote {rewritten} GlobalIds")
+    print(f"  Written {V2_SCRAMBLED}")
+
+
 def main():
     print("Generating BasicHouse versions for diff testing\n")
     generate_v1()
     generate_v2()
+    generate_v2_scrambled()
     generate_v3()
     print("\n✓ All versions generated:")
     print(f"  {V1} — Original")
     print(f"  {V2} — Renovation (windows removed, furniture moved, door property changed)")
+    print(f"  {V2_SCRAMBLED} — Renovation with deterministically scrambled GlobalIds")
     print(f"  {V3} — Further changes (wall removed, door moved, furniture deleted)")
 
 

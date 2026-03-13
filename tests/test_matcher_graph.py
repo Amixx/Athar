@@ -76,6 +76,40 @@ def test_typed_path_propagation_rejects_ambiguous_buckets():
     assert result["ambiguous"] == 2
 
 
+def test_typed_path_propagation_can_skip_full_diagnostics():
+    old_graph = _graph({
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "GUID_A",
+            "attributes": {},
+            "refs": [{"path": "/ObjectPlacement", "target": 100, "target_type": "IfcLocalPlacement"}],
+        },
+        100: {"entity_type": "IfcLocalPlacement", "attributes": {}, "refs": []},
+    })
+    new_graph = _graph({
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "GUID_A",
+            "attributes": {},
+            "refs": [{"path": "/ObjectPlacement", "target": 200, "target_type": "IfcLocalPlacement"}],
+        },
+        200: {"entity_type": "IfcLocalPlacement", "attributes": {}, "refs": []},
+    })
+
+    result = propagate_matches_by_typed_path(
+        old_graph,
+        new_graph,
+        {1: 2},
+        pre_matched_old={1},
+        pre_matched_new={2},
+        collect_diagnostics=False,
+    )
+
+    assert result["old_to_new"] == {100: 200}
+    assert result["diagnostics"] == {}
+    assert result["match_info"] == {100: ("/ObjectPlacement", "IfcLocalPlacement")}
+
+
 def test_secondary_match_unresolved_matches_unique_block():
     old_graph = _graph({
         1: {

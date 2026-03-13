@@ -22,6 +22,7 @@ def test_unique_guid_pairs_matches_only_unique_overlap():
     pairs, diagnostics = unique_guid_pairs(old_graph, new_graph)
     assert pairs == {1: 10}
     assert diagnostics["matched"] == 1
+    assert diagnostics["unique_guid_overlap"] == 1.0
 
 
 def test_text_fingerprint_pairs_skips_ambiguous_buckets():
@@ -189,6 +190,56 @@ def test_prepare_context_reuses_early_guid_path_propagation(monkeypatch):
     context["new_owner_projector"].close()
 
     assert calls["count"] == 1
+
+
+def test_prepare_context_uses_guid_overlap_not_whole_graph_coverage_for_early_path(monkeypatch):
+    old_entities = {
+        1: {
+            "entity_type": "IfcWall",
+            "global_id": "GUID_A",
+            "attributes": {"ObjectPlacement": {"kind": "ref", "id": 100}},
+            "refs": [{"path": "/ObjectPlacement", "target": 100, "target_type": "IfcLocalPlacement"}],
+        },
+        100: {
+            "entity_type": "IfcLocalPlacement",
+            "attributes": {"RelativePlacement": {"kind": "null"}},
+            "refs": [],
+        },
+    }
+    new_entities = {
+        2: {
+            "entity_type": "IfcWall",
+            "global_id": "GUID_A",
+            "attributes": {"ObjectPlacement": {"kind": "ref", "id": 200}},
+            "refs": [{"path": "/ObjectPlacement", "target": 200, "target_type": "IfcLocalPlacement"}],
+        },
+        200: {
+            "entity_type": "IfcLocalPlacement",
+            "attributes": {"RelativePlacement": {"kind": "null"}},
+            "refs": [],
+        },
+    }
+    for idx in range(1000, 1120):
+        old_entities[idx] = {"entity_type": "IfcCartesianPoint", "attributes": {}, "refs": []}
+    for idx in range(2000, 2120):
+        new_entities[idx] = {"entity_type": "IfcCartesianPoint", "attributes": {}, "refs": []}
+
+    calls = {"count": 0}
+
+    def wrapped_propagate(*args, **kwargs):
+        calls["count"] += 1
+        return {"method": "typed_path_propagation", "old_to_new": {}, "diagnostics": {}, "ambiguous": 0}
+
+    monkeypatch.setattr(diff_engine_context_mod, "propagate_matches_by_typed_path", wrapped_propagate)
+    context = prepare_diff_context(
+        _graph_with_entities(old_entities),
+        _graph_with_entities(new_entities),
+        profile="semantic_stable",
+    )
+    context["old_owner_projector"].close()
+    context["new_owner_projector"].close()
+
+    assert calls["count"] == 2
 
 
 def test_prepare_context_does_not_cache_seeded_identity_state(monkeypatch):

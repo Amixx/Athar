@@ -1,12 +1,12 @@
 PYTHON ?= python
 MATURIN ?= maturin
 DATE := $(shell date +%F)
-CASE ?= house_v1_v2:tests/fixtures/house_v1.ifc:tests/fixtures/house_v2.ifc
+CASE ?= house_v1_v2_scrambled:tests/fixtures/house_v1.ifc:tests/fixtures/house_v2_scrambled.ifc
 PERF_DIR ?= docs/perf
 PERF_HEARTBEAT ?= 10
 PERF_PROFILE ?= semantic_stable
 
-.PHONY: help dev-setup native-dev native-dev-release native-build native-release test-native test-perf determinism perf-native perf-native-parallel perf-native-check perf-native-stream perf-compare profile-prepare make-basichouse-modified
+.PHONY: help dev-setup native-dev native-dev-release native-build native-release test-native test-perf determinism perf-native perf-native-parallel perf-native-check perf-native-stream perf-compare profile-prepare make-basichouse-modified make-house-versions
 
 help:
 	@printf "%s\n" \
@@ -20,6 +20,7 @@ help:
 	"  make test-perf                  Run focused perf-script regression tests" \
 	"  make determinism                Run determinism stress harness" \
 	"  make make-basichouse-modified   Regenerate data/BasicHouse_modified.ifc from data/BasicHouse.ifc" \
+	"  make make-house-versions        Regenerate house_v1/v2/v2_scrambled/v3 fixtures" \
 	"  make perf-native                Benchmark diff_graphs with ATHAR_PARALLEL=0 (release native)" \
 	"  make perf-native-parallel       Benchmark diff_graphs with ATHAR_PARALLEL=1 (release native)" \
 	"  make perf-native-check          Run the full default diff_graphs perf matrix with parallel off/on (release native, timestamped reports)" \
@@ -67,6 +68,9 @@ determinism:
 
 make-basichouse-modified:
 	$(PYTHON) scripts/make_modified_ifc.py data/BasicHouse.ifc tests/fixtures/BasicHouse_modified.ifc
+
+make-house-versions:
+	$(PYTHON) scripts/generate_house_versions.py
 
 perf-native: native-dev-release
 	ATHAR_BENCHMARK_NAME=native_only_rust ATHAR_PARALLEL=0 $(PYTHON) -m scripts.explore.benchmark_diff_engine \
@@ -124,7 +128,7 @@ perf-compare:
 profile-prepare:
 	$(PYTHON) -m scripts.explore.profile_prepare_context \
 		--old tests/fixtures/house_v1.ifc \
-		--new tests/fixtures/house_v2.ifc \
+		--new tests/fixtures/house_v2_scrambled.ifc \
 		--warmup 0 \
 		--iterations 1 \
 		--heartbeat-s 15 \

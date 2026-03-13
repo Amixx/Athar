@@ -38,9 +38,11 @@ def unique_guid_pairs(
         pairs[old_unique[gid]] = new_unique[gid]
 
     denominator = max(1, min(len(old_entities), len(new_entities)))
+    unique_denominator = max(1, min(len(old_unique), len(new_unique)))
     return pairs, {
         "matched": len(pairs),
         "coverage": len(pairs) / denominator,
+        "unique_guid_overlap": len(pairs) / unique_denominator,
         "old_unique": len(old_unique),
         "new_unique": len(new_unique),
     }
