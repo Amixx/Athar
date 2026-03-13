@@ -9,10 +9,7 @@ fn native_entity_fingerprint(entity: &Bound<'_, PyAny>) -> PyResult<String> {
 }
 
 #[pyfunction]
-fn native_wl_round(
-    colors: &Bound<'_, PyAny>,
-    adjacency: &Bound<'_, PyAny>,
-) -> PyResult<PyObject> {
+fn native_wl_round(colors: &Bound<'_, PyAny>, adjacency: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     wl::native_wl_round(colors, adjacency)
 }
 

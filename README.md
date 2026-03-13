@@ -11,7 +11,7 @@ pip install -e .
 ```
 
 Requires Python 3.10+, [ifcopenshell](https://ifcopenshell.org/), and `xxhash`.
-Optional native acceleration scaffolding lives under `athar/_native/` and is designed to be built separately with `maturin`/Rust while preserving pure-Python fallbacks when not installed.
+Optional native acceleration lives under `athar/_native/` and can be built separately with `maturin`/Rust while preserving pure-Python fallbacks when not installed. The current extension accelerates entity text fingerprinting plus the `xxh3_64` WL round path.
 
 Recommended local dev flow is a repo-local virtualenv plus a separate native build step:
 
@@ -24,7 +24,16 @@ make test-native
 make test-perf
 ```
 
+For performance runs, prefer the release-mode install path so the native extension is benchmarked optimized:
+
+```bash
+make native-dev-release
+make perf-native-check
+```
+
 `athar/_native/pyproject.toml` is configured as a mixed Python/Rust project (`python-source = "../.."`), so `maturin develop --manifest-path athar/_native/Cargo.toml` installs the extension at `athar._native._core` inside the repo package rather than as a top-level `_core` module.
+`make perf-native-check` always refreshes that extension in release mode first, then runs the default `diff_graphs` benchmark case set twice: once with `ATHAR_PARALLEL=0` and once with `ATHAR_PARALLEL=1`.
+When `benchmark_diff_engine.py` is run without `--out`, it now writes a timestamped JSON artifact under `docs/perf/`; `ATHAR_BENCHMARK_NAME` controls the filename prefix.
 
 ## Usage
 
@@ -248,10 +257,9 @@ Diff strategy now lives under `athar/diff/`: low-overlap rooted GUID churn uses 
 
 `athar/diff/context.py` normalizes `G:` entity attribute/ref targets to matched identity IDs during equality checks, preventing false `MODIFY` noise from pure STEP-ID renumbering. It also runs an early conservative similarity seeding pass (`athar/diff/similarity_seed.py` + `athar/diff/text_fingerprint.py`): non-GUID text fingerprints are pre-matched (unique buckets first, then small ambiguous-bucket neighbor refinement) and used as precompute seeds so unchanged entities can skip structural hash work, while GUID-bearing entities remain on GUID/root/path match paths first. Stream framing is centralized in `athar/diff/streaming.py` for both full-result and live event paths, while graph-only `TypedDict` contracts live in `athar/graph/types.py` and diff-layer contracts live in `athar/diff/types.py`.
 
-`athar/diff/wl_refinement.py` supports pluggable fast hash backends for WL refinement rounds (`auto`, `xxh3_64`, `blake3`, `blake2b_64`, `sha256`), while external/wire identity IDs remain `sha256`; WL round payload construction avoids per-node JSON/dict allocations in the hot loop. `athar/graph/structural_hash.py` hashes canonical entity fields directly in the hot path (deterministic streaming hash over entity type/attributes/edge multiset) instead of building per-entity JSON payloads. `athar/diff/engine.py` overlaps opening the second IFC while extracting the first graph (`graph_parser.open_ifc()` + `graph_parser.graph_from_ifc()`), reducing `diff_files`/`stream_diff_files` parse wall time on large pairs, and also short-circuits same-graph inputs (including same-path parses reused as one graph object) to immediate empty diff/stream output after schema/profile/GUID/matcher-policy validation.
+`athar/diff/wl_refinement.py` supports pluggable fast hash backends for WL refinement rounds (`auto`, `xxh3_64`, `blake3`, `blake2b_64`, `sha256`), while external/wire identity IDs remain `sha256`; WL round payload construction avoids per-node JSON/dict allocations in the hot loop, and the optional native extension can execute the `xxh3_64` round loop in Rust when `athar._native._core` is installed. `athar/graph/structural_hash.py` hashes canonical entity fields directly in the hot path (deterministic streaming hash over entity type/attributes/edge multiset) instead of building per-entity JSON payloads. `athar/diff/engine.py` overlaps opening the second IFC while extracting the first graph (`graph_parser.open_ifc()` + `graph_parser.graph_from_ifc()`), reducing `diff_files`/`stream_diff_files` parse wall time on large pairs, and also short-circuits same-graph inputs (including same-path parses reused as one graph object) to immediate empty diff/stream output after schema/profile/GUID/matcher-policy validation.
 
-The native-acceleration seam now exists under `athar/_native/`: the package is structured for an optional `athar._native._core` PyO3 extension, while `athar/diff/text_fingerprint.py` keeps the pure-Python implementation as the authoritative fallback until the compiled module is available and parity-tested.
-At the current checkpoint, the exported native fingerprint entrypoint is wired through the authoritative Python implementation to keep build/install/module-placement/parity workflow stable while the true Rust hot-path implementation is completed.
+The native seam under `athar/_native/` now contains parity-checked Rust implementations for entity text fingerprinting and the `xxh3_64` WL inner round, with `athar/diff/text_fingerprint.py` and `athar/diff/wl_refinement.py` falling back to the pure-Python implementations when the extension is absent.
 
 Rooted-owner projection is demand-driven by default (reverse reachability per changed step with caching). Set `ATHAR_OWNER_INDEX_DISK_THRESHOLD` to opt into eager full owner-index mode; when estimated owner pairs exceed that threshold, indexing spills to a temporary SQLite store instead of keeping full closure sets in memory.
 

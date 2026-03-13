@@ -3,23 +3,32 @@ MATURIN ?= maturin
 DATE := $(shell date +%F)
 CASE ?= house_v1_v2:tests/fixtures/house_v1.ifc:tests/fixtures/house_v2.ifc
 PERF_DIR ?= docs/perf
+PERF_HEARTBEAT ?= 10
+PERF_PROFILE ?= semantic_stable
 
-.PHONY: help dev-setup native-dev native-build native-release test-native test-perf determinism perf-native perf-native-parallel perf-compare profile-prepare
+.PHONY: help dev-setup native-dev native-dev-release native-build native-release test-native test-perf determinism perf-native perf-native-parallel perf-native-check perf-native-stream perf-compare profile-prepare make-basichouse-modified
 
 help:
 	@printf "%s\n" \
 	"Targets:" \
-	"  make dev-setup             Install common dev/runtime deps into the active venv" \
-	"  make native-dev            Build/install the native extension into the active venv" \
-	"  make native-build          Build native wheels in debug mode" \
-	"  make native-release        Build native wheels in release mode" \
-	"  make test-native           Run focused tests for native/fingerprint paths" \
-	"  make test-perf             Run focused perf-script regression tests" \
-	"  make determinism           Run determinism stress harness" \
-	"  make perf-native           Benchmark diff_graphs with ATHAR_PARALLEL=0" \
-	"  make perf-native-parallel  Benchmark diff_graphs with ATHAR_PARALLEL=1" \
-	"  make perf-compare          Compare OLD=... and NEW=... benchmark JSON reports" \
-	"  make profile-prepare       Profile prepare_diff_context on house fixtures"
+	"  make dev-setup                  Install common dev/runtime deps into the active venv" \
+	"  make native-dev                 Build/install the native extension into the active venv" \
+	"  make native-dev-release         Build/install the native extension in release mode" \
+	"  make native-build               Build native wheels in debug mode" \
+	"  make native-release             Build native wheels in release mode" \
+	"  make test-native                Run focused tests for native/fingerprint paths" \
+	"  make test-perf                  Run focused perf-script regression tests" \
+	"  make determinism                Run determinism stress harness" \
+	"  make make-basichouse-modified   Regenerate data/BasicHouse_modified.ifc from data/BasicHouse.ifc" \
+	"  make perf-native                Benchmark diff_graphs with ATHAR_PARALLEL=0 (release native)" \
+	"  make perf-native-parallel       Benchmark diff_graphs with ATHAR_PARALLEL=1 (release native)" \
+	"  make perf-native-check          Run the full default diff_graphs perf matrix with parallel off/on (release native, timestamped reports)" \
+	"  make perf-native-stream         Run diff+stream metrics on basichouse_v1_v2 with ATHAR_PARALLEL=0 (release native)" \
+	"  make perf-compare               Compare OLD=... and NEW=... benchmark JSON reports" \
+	"  make profile-prepare            Profile prepare_diff_context on house fixtures" \
+	"" \
+	"Variables:" \
+	"  PERF_PROFILE=semantic_stable    Diff profile for perf targets (e.g. raw_exact)"
 
 dev-setup:
 	@missing="$$( $(PYTHON) -c "import importlib.util; packages=['pytest','xxhash','ifcopenshell']; print(' '.join(name for name in packages if importlib.util.find_spec(name) is None))" )"; \
@@ -27,6 +36,9 @@ dev-setup:
 
 native-dev:
 	$(MATURIN) develop --manifest-path athar/_native/Cargo.toml
+
+native-dev-release:
+	$(MATURIN) develop --release --manifest-path athar/_native/Cargo.toml
 
 native-build:
 	$(MATURIN) build --manifest-path athar/_native/Cargo.toml
@@ -53,25 +65,56 @@ determinism:
 		--progress-every 1 \
 		--out $(PERF_DIR)/determinism_native_$(DATE).json
 
-perf-native:
-	ATHAR_PARALLEL=0 $(PYTHON) -m scripts.explore.benchmark_diff_engine \
-		--case "$(CASE)" \
-		--metric diff_graphs \
-		--warmup 0 \
-		--iterations 1 \
-		--engine-timings \
-		--heartbeat-s 15 \
-		--out $(PERF_DIR)/native_only_$(DATE).json
+make-basichouse-modified:
+	$(PYTHON) scripts/make_modified_ifc.py data/BasicHouse.ifc tests/fixtures/BasicHouse_modified.ifc
 
-perf-native-parallel:
-	ATHAR_PARALLEL=1 $(PYTHON) -m scripts.explore.benchmark_diff_engine \
+perf-native: native-dev-release
+	ATHAR_BENCHMARK_NAME=native_only_rust ATHAR_PARALLEL=0 $(PYTHON) -m scripts.explore.benchmark_diff_engine \
 		--case "$(CASE)" \
 		--metric diff_graphs \
+		--profile $(PERF_PROFILE) \
 		--warmup 0 \
 		--iterations 1 \
 		--engine-timings \
-		--heartbeat-s 15 \
-		--out $(PERF_DIR)/native_parallel_$(DATE).json
+		--heartbeat-s $(PERF_HEARTBEAT)
+
+perf-native-parallel: native-dev-release
+	ATHAR_BENCHMARK_NAME=native_parallel_rust ATHAR_PARALLEL=1 $(PYTHON) -m scripts.explore.benchmark_diff_engine \
+		--case "$(CASE)" \
+		--metric diff_graphs \
+		--profile $(PERF_PROFILE) \
+		--warmup 0 \
+		--iterations 1 \
+		--engine-timings \
+		--heartbeat-s $(PERF_HEARTBEAT)
+
+perf-native-check: native-dev-release
+	ATHAR_BENCHMARK_NAME=native_check_rust_serial ATHAR_PARALLEL=0 $(PYTHON) -m scripts.explore.benchmark_diff_engine \
+		--metric diff_graphs \
+		--profile $(PERF_PROFILE) \
+		--warmup 0 \
+		--iterations 1 \
+		--engine-timings \
+		--heartbeat-s $(PERF_HEARTBEAT)
+	ATHAR_BENCHMARK_NAME=native_check_rust_parallel ATHAR_PARALLEL=1 $(PYTHON) -m scripts.explore.benchmark_diff_engine \
+		--metric diff_graphs \
+		--profile $(PERF_PROFILE) \
+		--warmup 0 \
+		--iterations 1 \
+		--engine-timings \
+		--heartbeat-s $(PERF_HEARTBEAT)
+
+perf-native-stream: native-dev-release
+	ATHAR_BENCHMARK_NAME=native_stream_rust ATHAR_PARALLEL=0 $(PYTHON) -m scripts.explore.benchmark_diff_engine \
+		--case "basichouse_v1_v2:tests/fixtures/BasicHouse.ifc:tests/fixtures/BasicHouse_modified.ifc" \
+		--metric diff_graphs \
+		--metric stream_ndjson \
+		--metric stream_chunked_json \
+		--profile $(PERF_PROFILE) \
+		--warmup 0 \
+		--iterations 1 \
+		--engine-timings \
+		--heartbeat-s $(PERF_HEARTBEAT)
 
 perf-compare:
 	@test -n "$(OLD)" || (echo "Set OLD=path/to/old.json"; exit 1)

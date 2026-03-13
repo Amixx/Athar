@@ -13,7 +13,7 @@ Athar contains the core diff engine plus a transitional integration package.
 The core engine is responsible for parsing IFC files, aligning entities across models, and generating a structured JSON diff.
 
 - `athar/__main__.py` — Minimal CLI for the core engine. Diffs two files and prints raw JSON to stdout.
-- `athar/_native/` — Optional PyO3/maturin native-accelerator scaffold for hot loops. Intended to provide `athar._native._core` with drop-in helpers such as native entity fingerprinting/WL round logic while keeping pure-Python fallbacks in place when the extension is not built.
+- `athar/_native/` — Optional PyO3/maturin native accelerators for hot loops. Provides `athar._native._core` with drop-in helpers for entity text fingerprinting and the `xxh3_64` WL round while keeping pure-Python fallbacks in place when the extension is not built.
 - `athar/graph/types.py` — Graph-layer `TypedDict` contracts (`GraphIR`, `EntityIR`, `EntityRefIR`) shared by graph extraction and diff consumers.
 - `athar/graph/canonical_values.py` — Deterministic canonicalization of scalar and aggregate values for the graph layer. Preserves wrapper/select type information, enforces deterministic ordering for SET/BAG, and applies profile-driven measure-aware normalization (length/area/volume/angle/derived via unit context) for `semantic_stable`.
 - `athar/graph/profile_policy.py` — Central profile contract (`raw_exact`, `semantic_stable`) with validation and volatility filtering rules used by parser/diff paths.
@@ -31,7 +31,7 @@ The core engine is responsible for parsing IFC files, aligning entities across m
 - `athar/diff/stats.py` — Shared diff statistics helpers, including root `GlobalId` quality summaries.
 - `athar/diff/identity_pipeline.py` — Identity assignment internals for structural hashes, WL colors, SCC ambiguity classes, and GUID policy application.
 - `athar/diff/root_remap.py` — Phase 2.5 rooted remap for low GUID overlap. Uses staged matching: GUID-independent root signatures, neighbor-signature disambiguation, then bounded scored assignment (`threshold`, `margin`, `assignment_max`) for unresolved buckets, with deterministic tie rejection and ambiguity accounting.
-- `athar/diff/wl_refinement.py` — WL-style refinement and SCC-aware ambiguity fallback. WL round hashing is pluggable (`auto`, `xxh3_64`, `blake3`, `blake2b_64`, `sha256`) while external IDs stay `sha256`; fast backends now run backend-native colors during rounds and normalize to sha256 once at output boundary.
+- `athar/diff/wl_refinement.py` — WL-style refinement and SCC-aware ambiguity fallback. WL round hashing is pluggable (`auto`, `xxh3_64`, `blake3`, `blake2b_64`, `sha256`) while external IDs stay `sha256`; fast backends now run backend-native colors during rounds and normalize to sha256 once at output boundary, and the optional native extension can execute the `xxh3_64` round loop in Rust.
 - `athar/diff/matcher_graph.py` — Matching stages for graph diffing. Implements deterministic typed-path propagation from matched root pairs and scored secondary matching for unresolved non-root entities.
 - `athar/diff/matcher_graph_scoring.py` — Feature extraction and scoring helpers used by secondary matching and rooted remap assignment.
 - `athar/diff/matcher_assignment.py` — Deterministic min-cost bipartite assignment helpers used by matcher scoring.
@@ -71,7 +71,7 @@ Detailed information for these components can be found in [athar_layers/AGENTS.m
 - No deep B-rep geometry comparison. Compare placement matrices and geometric parameters only.
 - Minimal dependencies. Core runtime deps are `ifcopenshell` and `xxhash`.
 - Native acceleration is optional. When working on `athar/_native/`, keep Python fallback behavior intact and validate parity against the pure-Python implementations.
-- Prefer a repo-local `.venv` for development. `pyproject.toml` defines packaging/build metadata; it does not replace environment isolation. Verified local workflow is `make dev-setup`, `make native-dev`, `make test-native`, `make test-perf`.
+- Prefer a repo-local `.venv` for development. `pyproject.toml` defines packaging/build metadata; it does not replace environment isolation. Verified local workflow is `make dev-setup`, `make native-dev`, `make test-native`, `make test-perf`. For perf benchmarking, use `make native-dev-release` or `make perf-native-check` so native code is measured in optimized release mode.
 - Matching quality is prioritized over throughput: preserve `MODIFY` recovery (correct entity alignment) rather than collapsing into `ADD/REMOVE`; keep matcher cutoffs conservative and only use aggressive gates as safety valves for pathological inputs.
 
 ## Running
@@ -99,6 +99,7 @@ python -m athar old.ifc new.ifc                       # raw JSON diff
 - `scripts/explore/canonical_reference_impl.py` — Executable reference for canonical value normalization (value grammar, ordering, and profiles).
 - `scripts/explore/generate_determinism_fixtures.py` — Regenerate frozen golden outputs for deterministic low-level diff/stream payloads and environment fingerprint fixture.
 - `scripts/explore/benchmark_diff_engine.py` — Reproducible runtime/peak-memory benchmark harness for `diff_graphs` and streaming modes (`ndjson`, `chunked_json`) on default or explicit IFC case pairs; captures per-case parser timings (`parse_ms`), supports iteration heartbeat logs (`--heartbeat-s`) with stage-aware coarse progress/ETA estimates (ETA rendered as `h m s` when needed), prints parse/heartbeat/mean/total durations in human form (`Xm Ys Zms`), includes end-to-end run totals in report `run_summary`, supports optional metric selection (`--metric`) to avoid unnecessary full reruns, and optional `--engine-timings` per-stage `diff_graphs` timing breakdowns from engine stats.
+- When `benchmark_diff_engine.py` runs without `--out`, it now auto-writes a timestamped JSON artifact under `docs/perf/`; use `ATHAR_BENCHMARK_NAME` to control the filename prefix.
 - `scripts/explore/benchmark_diff_engine.py` also supports live progress sidecar output (`--progress-file`) with run state + current case/metric/stage progress for external monitors.
 - For stream metrics, `benchmark_diff_engine` heartbeat uses emitted-record count progress (`items=...`) with ETA from observed throughput when expected stream record counts are derivable.
 - `athar/diff/engine.py` + `athar/diff/context.py` expose stage-progress callbacks used by benchmark heartbeats (`prepare_context` substeps, base-change scan progress, derived-marker completion).

@@ -36,20 +36,39 @@ def test_native_entity_text_fingerprint_matches_python_when_extension_available(
     if text_fingerprint_mod._NATIVE_ENTITY_FINGERPRINT is None:
         return
 
-    entity = {
-        "entity_type": "IfcWall",
-        "attributes": {
-            "Name": {"kind": "string", "value": "Wall A"},
-            "ObjectPlacement": {"kind": "ref", "id": 42},
-            "SomeList": {"kind": "list", "items": [{"kind": "int", "value": 1}]},
+    entities = [
+        {
+            "entity_type": "IfcWall",
+            "attributes": {
+                "Name": {"kind": "string", "value": "Wall A"},
+                "ObjectPlacement": {"kind": "ref", "id": 42},
+                "SomeList": {"kind": "list", "items": [{"kind": "int", "value": 1}]},
+            },
+            "refs": [
+                {"path": "/ObjectPlacement", "target": 42, "target_type": "IfcLocalPlacement"}
+            ],
         },
-        "refs": [{"path": "/ObjectPlacement", "target": 42, "target_type": "IfcLocalPlacement"}],
-    }
+        {
+            "entity_type": "IfcProxy",
+            "attributes": {
+                "Flags": {"kind": "list", "items": [True, False, None, 1.25, "abc"]},
+                "Bag": {
+                    "kind": "bag",
+                    "items": [{"kind": "ref", "id": 9}, {"kind": "string", "value": "x"}],
+                },
+            },
+            "refs": [
+                {"path": "/Relating", "target": 9, "target_type": None},
+                {"path": "/Relating", "target": 10, "target_type": None},
+            ],
+        },
+    ]
 
-    assert (
-        text_fingerprint_mod.entity_text_fingerprint(entity)
-        == text_fingerprint_mod.python_entity_text_fingerprint(entity)
-    )
+    for entity in entities:
+        assert (
+            text_fingerprint_mod.entity_text_fingerprint(entity)
+            == text_fingerprint_mod.python_entity_text_fingerprint(entity)
+        )
 
 
 def test_python_entity_text_fingerprint_ignores_ref_ids_but_preserves_edge_shape():

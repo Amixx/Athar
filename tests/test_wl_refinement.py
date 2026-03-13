@@ -2,6 +2,7 @@ import importlib.util
 
 import pytest
 
+import athar.diff.wl_refinement as wl_refinement_mod
 from athar.diff.wl_refinement import wl_refine_colors, wl_refine_with_scc_fallback
 
 
@@ -71,6 +72,41 @@ def test_wl_refinement_auto_round_hash_is_stable():
     first = wl_refine_colors(_make_graph(edge_path="/Ref"), max_rounds=3, round_hash="auto")
     second = wl_refine_colors(_make_graph(edge_path="/Ref"), max_rounds=3, round_hash="auto")
     assert first == second
+
+
+def test_wl_refinement_native_xxh3_matches_python_when_extension_available(monkeypatch):
+    if importlib.util.find_spec("xxhash") is None:
+        pytest.skip("xxhash unavailable in this environment")
+    if wl_refinement_mod._NATIVE_WL_ROUND is None:
+        pytest.skip("native WL round unavailable in this environment")
+
+    graph = {
+        "entities": {
+            1: {
+                "entity_type": "IfcWall",
+                "attributes": {"Name": {"kind": "string", "value": "A"}},
+                "refs": [
+                    {"path": "/Ref", "target": 2, "target_type": "IfcLocalPlacement"},
+                    {"path": "/Ref", "target": 2, "target_type": "IfcLocalPlacement"},
+                ],
+            },
+            2: {
+                "entity_type": "IfcLocalPlacement",
+                "attributes": {"RelativePlacement": {"kind": "null"}},
+                "refs": [{"path": "/Parent", "target": 3, "target_type": None}],
+            },
+            3: {
+                "entity_type": "IfcAxis2Placement3D",
+                "attributes": {},
+                "refs": [],
+            },
+        }
+    }
+
+    native_colors = wl_refine_colors(graph, max_rounds=3, round_hash="xxh3_64")
+    monkeypatch.setattr(wl_refinement_mod, "_NATIVE_WL_ROUND", None)
+    python_colors = wl_refine_colors(graph, max_rounds=3, round_hash="xxh3_64")
+    assert native_colors == python_colors
 
 
 def test_wl_refinement_reports_round_diagnostics():

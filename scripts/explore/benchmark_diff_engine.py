@@ -1,7 +1,8 @@
 """Benchmark diff engine runtime and peak Python memory usage.
 
 Default cases:
-- house_v1_v2: tests/fixtures/house_v1.ifc vs house_v2.ifc (real diff)
+- house_v1_v2: tests/fixtures/house_v1.ifc vs house_v2.ifc (large, low-GUID cross-version diff)
+- basichouse_v1_v2: tests/fixtures/BasicHouse.ifc vs tests/fixtures/BasicHouse_modified.ifc (medium, high-GUID cross-version diff)
 - basichouse_same_file: data/BasicHouse.ifc vs itself (short-circuit)
 - advancedproject_same_file: data/AdvancedProject.ifc vs itself (short-circuit)
 """
@@ -13,6 +14,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import statistics
 import sys
@@ -48,6 +50,11 @@ def _default_cases(repo_root: Path) -> list[Case]:
             new_path=repo_root / "tests" / "fixtures" / "house_v2.ifc",
         ),
         Case(
+            name="basichouse_v1_v2",
+            old_path=repo_root / "tests" / "fixtures" / "BasicHouse.ifc",
+            new_path=repo_root / "tests" / "fixtures" / "BasicHouse_modified.ifc",
+        ),
+        Case(
             name="basichouse_same_file",
             old_path=repo_root / "data" / "BasicHouse.ifc",
             new_path=repo_root / "data" / "BasicHouse.ifc",
@@ -58,6 +65,13 @@ def _default_cases(repo_root: Path) -> list[Case]:
             new_path=repo_root / "data" / "AdvancedProject.ifc",
         ),
     ]
+
+
+def _default_report_path(repo_root: Path) -> Path:
+    perf_dir = repo_root / "docs" / "perf"
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    label = os.getenv("ATHAR_BENCHMARK_NAME", "benchmark_diff_engine").strip() or "benchmark_diff_engine"
+    return perf_dir / f"{label}_{timestamp}.json"
 
 
 def _parse_case_arg(raw: str) -> Case:
@@ -774,7 +788,11 @@ def main() -> None:
     parser.add_argument(
         "--out",
         default=None,
-        help="Optional output path for JSON report.",
+        help=(
+            "Optional output path for JSON report. "
+            "If omitted, writes to docs/perf/<label>_<timestamp>.json "
+            "(label from ATHAR_BENCHMARK_NAME or benchmark_diff_engine)."
+        ),
     )
     parser.add_argument(
         "--engine-timings",
@@ -914,20 +932,16 @@ def main() -> None:
         "total_cases": total_cases,
     }
     payload = canonical_json(report) + "\n"
-    if args.out:
-        out_path = Path(args.out)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(payload, encoding="utf-8")
-        print(f"Wrote benchmark report to {out_path}")
-    else:
-        print(payload, end="")
-        out_path = None
+    out_path = Path(args.out) if args.out else _default_report_path(repo_root)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(payload, encoding="utf-8")
+    print(f"Wrote benchmark report to {out_path}")
 
     _progress_update({
         "state": "completed",
         "completed_cases": total_cases,
         "current_case": None,
-        "report_path": str(out_path) if args.out else None,
+        "report_path": str(out_path),
         "total_elapsed_ms": round(total_elapsed_ms, 3),
         "total_elapsed_text": _format_duration_ms(total_elapsed_ms),
     })
