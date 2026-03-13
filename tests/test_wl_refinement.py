@@ -1,5 +1,3 @@
-import importlib.util
-
 import pytest
 
 import athar.diff.wl_refinement as wl_refinement_mod
@@ -61,25 +59,28 @@ def test_wl_refinement_rejects_unknown_round_hash():
         wl_refine_colors(_make_graph(), round_hash="weird_hash")
 
 
-def test_wl_refinement_rejects_unavailable_explicit_backend():
-    if importlib.util.find_spec("xxhash") is not None:
-        pytest.skip("xxhash available in this environment")
-    with pytest.raises(ValueError, match="backend unavailable"):
-        wl_refine_colors(_make_graph(), round_hash="xxh3_64")
-
-
 def test_wl_refinement_auto_round_hash_is_stable():
-    first = wl_refine_colors(_make_graph(edge_path="/Ref"), max_rounds=3, round_hash="auto")
-    second = wl_refine_colors(_make_graph(edge_path="/Ref"), max_rounds=3, round_hash="auto")
+    diagnostics_first: dict = {}
+    diagnostics_second: dict = {}
+    first = wl_refine_colors(
+        _make_graph(edge_path="/Ref"),
+        max_rounds=3,
+        round_hash="auto",
+        diagnostics=diagnostics_first,
+    )
+    second = wl_refine_colors(
+        _make_graph(edge_path="/Ref"),
+        max_rounds=3,
+        round_hash="auto",
+        diagnostics=diagnostics_second,
+    )
     assert first == second
+    assert diagnostics_first["backend"] == "xxh3_64"
+    assert diagnostics_first["native_round_impl"] == "rust_xxh3_64_multi"
+    assert diagnostics_second["backend"] == "xxh3_64"
 
 
-def test_wl_refinement_native_xxh3_matches_python_when_extension_available(monkeypatch):
-    if importlib.util.find_spec("xxhash") is None:
-        pytest.skip("xxhash unavailable in this environment")
-    if wl_refinement_mod._NATIVE_WL_REFINE is None:
-        pytest.skip("native WL refine unavailable in this environment")
-
+def test_wl_refinement_required_native_xxh3_path_runs():
     graph = {
         "entities": {
             1: {
@@ -103,41 +104,40 @@ def test_wl_refinement_native_xxh3_matches_python_when_extension_available(monke
         }
     }
 
-    native_colors = wl_refine_colors(graph, max_rounds=3, round_hash="xxh3_64")
-    monkeypatch.setattr(wl_refinement_mod, "_NATIVE_WL_REFINE", None)
-    monkeypatch.setattr(wl_refinement_mod, "_NATIVE_WL_ROUND", None)
-    python_colors = wl_refine_colors(graph, max_rounds=3, round_hash="xxh3_64")
-    assert native_colors == python_colors
+    diagnostics: dict = {}
+    colors = wl_refine_colors(graph, max_rounds=3, round_hash="xxh3_64", diagnostics=diagnostics)
+    assert colors
+    assert diagnostics["backend"] == "xxh3_64"
+    assert diagnostics["native_round_impl"] == "rust_xxh3_64_multi"
 
 
-def test_wl_refinement_multi_round_native_matches_single_round_fallback(monkeypatch):
-    if importlib.util.find_spec("xxhash") is None:
-        pytest.skip("xxhash unavailable in this environment")
-    if wl_refinement_mod._NATIVE_WL_REFINE is None or wl_refinement_mod._NATIVE_WL_ROUND is None:
-        pytest.skip("native WL implementations unavailable in this environment")
+def test_wl_refinement_explicit_blake3_requires_dependency(monkeypatch):
+    real_import_module = wl_refinement_mod.importlib.import_module
 
+    def fake_import_module(name: str):
+        if name == "blake3":
+            raise ModuleNotFoundError(name)
+        return real_import_module(name)
+
+    monkeypatch.setattr(wl_refinement_mod.importlib, "import_module", fake_import_module)
+    with pytest.raises(ValueError, match="backend unavailable"):
+        wl_refine_colors(_symmetric_cycle(5), max_rounds=4, round_hash="blake3")
+
+
+def test_wl_refinement_multi_round_native_reports_consistent_diagnostics():
     graph = _symmetric_cycle(5)
 
     diagnostics_native: dict = {}
-    native_colors = wl_refine_colors(
+    colors = wl_refine_colors(
         graph,
         max_rounds=4,
         round_hash="xxh3_64",
         diagnostics=diagnostics_native,
     )
-
-    monkeypatch.setattr(wl_refinement_mod, "_NATIVE_WL_REFINE", None)
-    diagnostics_round_only: dict = {}
-    round_only_colors = wl_refine_colors(
-        graph,
-        max_rounds=4,
-        round_hash="xxh3_64",
-        diagnostics=diagnostics_round_only,
-    )
-
-    assert native_colors == round_only_colors
-    assert diagnostics_native["stop_reason"] == diagnostics_round_only["stop_reason"]
-    assert diagnostics_native["executed_rounds"] == diagnostics_round_only["executed_rounds"]
+    assert colors
+    assert diagnostics_native["backend"] == "xxh3_64"
+    assert diagnostics_native["native_round_impl"] == "rust_xxh3_64_multi"
+    assert diagnostics_native["executed_rounds"] >= 1
 
 
 def test_wl_refinement_reports_round_diagnostics():

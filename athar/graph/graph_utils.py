@@ -11,13 +11,6 @@ import json
 from collections import Counter
 from typing import Any
 
-try:
-    from athar._native._core import native_build_adjacency_maps as _NATIVE_BUILD_ADJACENCY_MAPS
-except Exception:
-    _NATIVE_BUILD_ADJACENCY_MAPS = None
-
-NATIVE_ADJACENCY_MAPS_AVAILABLE = _NATIVE_BUILD_ADJACENCY_MAPS is not None
-
 
 def sha256_json(payload: Any) -> str:
     """Deterministic SHA-256 hex digest over JSON-serialized payload."""
@@ -73,9 +66,7 @@ def build_adjacency_maps(
     dict[int, list[tuple[str, str | None, int]]],
     dict[int, list[tuple[str, str | None, int]]],
 ]:
-    """Build forward + reverse adjacency, preferring the native combined path."""
-    if _NATIVE_BUILD_ADJACENCY_MAPS is not None:
-        return _NATIVE_BUILD_ADJACENCY_MAPS(entities)
+    """Build forward + reverse adjacency with the shared graph reference builders."""
     adjacency = _build_adjacency_python(entities)
     return adjacency, _build_reverse_adjacency_python(entities, adjacency)
 

@@ -4,22 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import importlib
-import importlib.util
 import json
 import os
 import time
 from collections import Counter
 from typing import Any, Callable
 
-from ..graph.graph_utils import build_adjacency, build_adjacency_maps, build_reverse_adjacency
-from ..graph.structural_hash import structural_hash
+import xxhash
 
-try:
-    from athar._native._core import native_wl_round as _NATIVE_WL_ROUND
-    from athar._native._core import native_wl_refine as _NATIVE_WL_REFINE
-except Exception:
-    _NATIVE_WL_ROUND = None
-    _NATIVE_WL_REFINE = None
+from .._native.required import native_build_adjacency_maps, native_wl_refine
+from ..graph.graph_utils import build_adjacency, build_reverse_adjacency
+from ..graph.structural_hash import structural_hash
 
 _DEFAULT_WL_ROUNDS = 8
 _WL_ROUND_HASH_AUTO = "auto"
@@ -77,40 +72,32 @@ def wl_refine_colors(
     round_stats: list[dict[str, Any]] = []
     stop_reason = "max_rounds"
 
-    if hasher_name == _WL_ROUND_HASH_XXH3 and _NATIVE_WL_REFINE is not None:
-        native_result = _NATIVE_WL_REFINE(colors, adjacency, rounds)
+    if hasher_name == _WL_ROUND_HASH_XXH3:
+        native_result = native_wl_refine(colors, adjacency, rounds)
         colors = native_result["colors"]
         round_stats = native_result["rounds"]
         stop_reason = native_result["stop_reason"]
     else:
         for round_idx in range(1, rounds + 1):
             round_started = time.perf_counter()
-            if hasher_name == _WL_ROUND_HASH_XXH3 and _NATIVE_WL_ROUND is not None:
-                next_colors = _NATIVE_WL_ROUND(colors, adjacency)
-                changed = sum(
-                    1
-                    for step_id, next_color in next_colors.items()
-                    if next_color != colors.get(step_id)
+            next_colors = {}
+            changed = 0
+            for step_id, _entity in entities.items():
+                blob = _wl_round_payload(
+                    colors[step_id],
+                    adjacency.get(step_id, []),
+                    colors,
+                    path_bytes_cache=path_bytes_cache,
+                    type_bytes_cache=type_bytes_cache,
+                    color_bytes_cache=color_bytes_cache,
                 )
-            else:
-                next_colors = {}
-                changed = 0
-                for step_id, _entity in entities.items():
-                    blob = _wl_round_payload(
-                        colors[step_id],
-                        adjacency.get(step_id, []),
-                        colors,
-                        path_bytes_cache=path_bytes_cache,
-                        type_bytes_cache=type_bytes_cache,
-                        color_bytes_cache=color_bytes_cache,
-                    )
-                    digest = hasher(blob)
-                    # Keep backend-native WL colors inside refinement rounds to avoid
-                    # per-round sha256 wrapping overhead for fast hash backends.
-                    next_color = digest
-                    next_colors[step_id] = next_color
-                    if next_color != colors[step_id]:
-                        changed += 1
+                digest = hasher(blob)
+                # Keep backend-native WL colors inside refinement rounds to avoid
+                # per-round sha256 wrapping overhead for fast hash backends.
+                next_color = digest
+                next_colors[step_id] = next_color
+                if next_color != colors[step_id]:
+                    changed += 1
             class_count = len(set(next_colors.values()))
             if class_count == previous_class_count:
                 stagnant_rounds += 1
@@ -140,9 +127,7 @@ def wl_refine_colors(
             "backend": hasher_name,
             "native_round_impl": (
                 "rust_xxh3_64_multi"
-                if hasher_name == _WL_ROUND_HASH_XXH3 and _NATIVE_WL_REFINE is not None
-                else "rust_xxh3_64"
-                if hasher_name == _WL_ROUND_HASH_XXH3 and _NATIVE_WL_ROUND is not None
+                if hasher_name == _WL_ROUND_HASH_XXH3
                 else None
             ),
             "external_color_backend": _WL_ROUND_HASH_SHA256,
@@ -267,7 +252,7 @@ def wl_refine_with_scc_fallback(
         return {}, {}
 
     if adjacency is None and reverse_adjacency is None:
-        adjacency, reverse_adjacency = build_adjacency_maps(entities)
+        adjacency, reverse_adjacency = native_build_adjacency_maps(entities)
     else:
         adjacency = adjacency if adjacency is not None else build_adjacency(entities)
         reverse_adjacency = (
@@ -349,32 +334,26 @@ def _resolve_wl_round_hasher(name: str) -> tuple[str, Callable[[bytes], str]]:
         raise ValueError(f"Unknown WL round hash: {name!r}")
 
     if name == _WL_ROUND_HASH_AUTO:
-        for candidate in (_WL_ROUND_HASH_XXH3, _WL_ROUND_HASH_BLAKE3, _WL_ROUND_HASH_BLAKE2B64):
-            hasher = _resolve_optional_hasher(candidate)
-            if hasher is not None:
-                return candidate, hasher
-        return _WL_ROUND_HASH_SHA256, _sha256_hexdigest
+        return _WL_ROUND_HASH_XXH3, xxhash.xxh3_64_hexdigest
 
     if name == _WL_ROUND_HASH_SHA256:
         return _WL_ROUND_HASH_SHA256, _sha256_hexdigest
 
-    hasher = _resolve_optional_hasher(name)
+    hasher = _resolve_backend_hasher(name)
     if hasher is None:
         raise ValueError(f"WL round hash backend unavailable: {name!r}")
     return name, hasher
 
 
-def _resolve_optional_hasher(name: str) -> Callable[[bytes], str] | None:
+def _resolve_backend_hasher(name: str) -> Callable[[bytes], str] | None:
     if name == _WL_ROUND_HASH_XXH3:
-        if importlib.util.find_spec("xxhash") is None:
-            return None
-        xxhash = importlib.import_module("xxhash")
         return xxhash.xxh3_64_hexdigest
 
     if name == _WL_ROUND_HASH_BLAKE3:
-        if importlib.util.find_spec("blake3") is None:
+        try:
+            blake3 = importlib.import_module("blake3")
+        except ModuleNotFoundError:
             return None
-        blake3 = importlib.import_module("blake3")
         return lambda data: blake3.blake3(data).hexdigest()
 
     if name == _WL_ROUND_HASH_BLAKE2B64:
