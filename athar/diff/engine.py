@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+import gc
 import os
 import time
 from typing import Any
@@ -171,30 +173,31 @@ def diff_graphs(
         base_changes: list[dict[str, Any]] = []
         change_index: dict[str, list[str]] = {}
 
-        started = time.perf_counter()
-        for change in _iter_base_changes(
-            context,
-            include_snapshots=True,
-            progress_callback=progress_callback,
-        ):
-            base_changes.append(change)
-            index_change(change_index, change)
-        emit_base_changes_ms = _elapsed_ms(started)
+        with _temporarily_disable_gc():
+            started = time.perf_counter()
+            for change in _iter_base_changes(
+                context,
+                include_snapshots=True,
+                progress_callback=progress_callback,
+            ):
+                base_changes.append(change)
+                index_change(change_index, change)
+            emit_base_changes_ms = _elapsed_ms(started)
 
-        _emit_progress(progress_callback, {
-            "stage": "emit_derived_markers",
-            "status": "start",
-            "overall_progress": _PROGRESS_PREPARE_CONTEXT_WEIGHT + _PROGRESS_EMIT_BASE_CHANGES_WEIGHT,
-        })
-        started = time.perf_counter()
-        derived_markers = build_derived_markers(
-            old_graph=context["old_graph"],
-            new_graph=context["new_graph"],
-            old_ids=context["old_ids"],
-            new_ids=context["new_ids"],
-            change_index=change_index,
-        )
-        emit_derived_markers_ms = _elapsed_ms(started)
+            _emit_progress(progress_callback, {
+                "stage": "emit_derived_markers",
+                "status": "start",
+                "overall_progress": _PROGRESS_PREPARE_CONTEXT_WEIGHT + _PROGRESS_EMIT_BASE_CHANGES_WEIGHT,
+            })
+            started = time.perf_counter()
+            derived_markers = build_derived_markers(
+                old_graph=context["old_graph"],
+                new_graph=context["new_graph"],
+                old_ids=context["old_ids"],
+                new_ids=context["new_ids"],
+                change_index=change_index,
+            )
+            emit_derived_markers_ms = _elapsed_ms(started)
         _emit_progress(progress_callback, {
             "stage": "emit_derived_markers",
             "status": "done",
@@ -352,8 +355,9 @@ def stream_diff_graphs(
                 timings_ms[f"context.{key}"] = context_timings_ms[key]
         context["stats"]["timings_ms"] = timings_ms
     try:
-        events = _iter_stream_events(context)
-        yield from stream_diff_events(events, mode=mode, chunk_size=chunk_size)
+        with _temporarily_disable_gc():
+            events = _iter_stream_events(context)
+            yield from stream_diff_events(events, mode=mode, chunk_size=chunk_size)
     finally:
         _close_owner_projectors(context)
 
@@ -643,6 +647,18 @@ class _ParseResult:
         self.new_file_hash = new_file_hash
         self.old_cached_identity = old_cached_identity
         self.new_cached_identity = new_cached_identity
+
+
+@contextmanager
+def _temporarily_disable_gc():
+    was_enabled = gc.isenabled()
+    if was_enabled:
+        gc.disable()
+    try:
+        yield
+    finally:
+        if was_enabled:
+            gc.enable()
 
 
 def _parse_graph_pair(

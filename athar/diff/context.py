@@ -155,7 +155,11 @@ def prepare_diff_context(
     stage_started = time.perf_counter()
     if (
         seed_guid_pairs
-        and float(guid_seed_diagnostics.get("unique_guid_overlap", 0.0))
+        # Gate early typed-path expansion on whole-graph anchor coverage, not
+        # just GUID quality among GUID-bearing entities. Large sparse-GUID
+        # graphs can have near-perfect unique_guid_overlap while still having
+        # far too few anchors for propagation to pay off.
+        and float(guid_seed_diagnostics.get("coverage", 0.0))
         >= _GUID_SEED_PATH_PROPAGATION_THRESHOLD
     ):
         early_guid_path = propagate_matches_by_typed_path(
