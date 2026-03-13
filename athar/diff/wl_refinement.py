@@ -11,7 +11,7 @@ import time
 from collections import Counter
 from typing import Any, Callable
 
-from ..graph.graph_utils import build_adjacency, build_reverse_adjacency
+from ..graph.graph_utils import build_adjacency, build_adjacency_maps, build_reverse_adjacency
 from ..graph.structural_hash import structural_hash
 
 try:
@@ -266,12 +266,15 @@ def wl_refine_with_scc_fallback(
     if not entities:
         return {}, {}
 
-    adjacency = adjacency if adjacency is not None else build_adjacency(entities)
-    reverse_adjacency = (
-        reverse_adjacency
-        if reverse_adjacency is not None
-        else build_reverse_adjacency(entities, adjacency)
-    )
+    if adjacency is None and reverse_adjacency is None:
+        adjacency, reverse_adjacency = build_adjacency_maps(entities)
+    else:
+        adjacency = adjacency if adjacency is not None else build_adjacency(entities)
+        reverse_adjacency = (
+            reverse_adjacency
+            if reverse_adjacency is not None
+            else build_reverse_adjacency(entities, adjacency)
+        )
 
     wl_diagnostics: dict[str, Any] = {}
     colors = wl_refine_colors(

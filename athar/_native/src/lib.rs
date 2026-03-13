@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 
+mod adjacency;
 mod fingerprint;
 mod wl;
 
@@ -22,11 +23,19 @@ fn native_wl_refine(
     wl::native_wl_refine(colors, adjacency, max_rounds)
 }
 
+#[pyfunction]
+fn native_build_adjacency_maps(
+    entities: &Bound<'_, PyAny>,
+) -> PyResult<(PyObject, PyObject)> {
+    adjacency::native_build_adjacency_maps(entities)
+}
+
 #[pymodule]
 fn _core(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(native_entity_fingerprint, module)?)?;
     module.add_function(wrap_pyfunction!(native_wl_round, module)?)?;
     module.add_function(wrap_pyfunction!(native_wl_refine, module)?)?;
+    module.add_function(wrap_pyfunction!(native_build_adjacency_maps, module)?)?;
     module.add("__doc__", "Native accelerators for Athar hot loops.")?;
     let _ = py;
     Ok(())

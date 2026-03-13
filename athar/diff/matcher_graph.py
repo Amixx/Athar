@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Any
 
-from ..graph.graph_utils import build_adjacency, build_reverse_adjacency
+from ..graph.graph_utils import build_adjacency, build_adjacency_maps, build_reverse_adjacency
 from .matcher_graph_scoring import (
     SECONDARY_ASSIGNMENT_MAX,
     SECONDARY_ASSIGNMENT_AMBIGUITY_MARGIN,
@@ -31,6 +31,7 @@ def propagate_matches_by_typed_path(
     *,
     pre_matched_old: set[int] | None = None,
     pre_matched_new: set[int] | None = None,
+    collect_diagnostics: bool = True,
 ) -> dict[str, Any]:
     """Match unique non-root targets by typed path propagation."""
     old_entities = old_graph.get("entities", {})
@@ -42,42 +43,47 @@ def propagate_matches_by_typed_path(
     queue: deque[tuple[int, int]] = deque(sorted(root_pairs.items(), key=lambda p: p[0]))
     matches: dict[int, int] = {}
     diagnostics: dict[int, dict[str, Any]] = {}
+    match_info: dict[int, tuple[str, str | None]] = {}
     ambiguous = 0
 
     while queue:
         old_parent, new_parent = queue.popleft()
-        old_buckets = _edge_buckets(old_entities, old_parent, used_old)
-        new_buckets = _edge_buckets(new_entities, new_parent, used_new)
+        old_buckets = _edge_bucket_counts(old_entities, old_parent, used_old)
+        new_buckets = _edge_bucket_counts(new_entities, new_parent, used_new)
 
         for edge_key in sorted(set(old_buckets) & set(new_buckets)):
-            old_targets = old_buckets[edge_key]
-            new_targets = new_buckets[edge_key]
-            if len(old_targets) == 1 and len(new_targets) == 1:
-                old_target = old_targets[0]
-                new_target = new_targets[0]
+            old_count, old_target = old_buckets[edge_key]
+            new_count, new_target = new_buckets[edge_key]
+            if old_count == 1 and new_count == 1:
                 if _is_root(old_entities.get(old_target)) or _is_root(new_entities.get(new_target)):
                     continue
                 matches[old_target] = new_target
-                diagnostics[old_target] = {
-                    "match_confidence": 1.0,
-                    "matched_on": {
-                        "stage": "typed_path",
-                        "path": edge_key[0],
-                        "target_type": edge_key[1],
-                    },
-                }
+                if collect_diagnostics:
+                    diagnostics[old_target] = {
+                        "match_confidence": 1.0,
+                        "matched_on": {
+                            "stage": "typed_path",
+                            "path": edge_key[0],
+                            "target_type": edge_key[1],
+                        },
+                    }
+                else:
+                    match_info[old_target] = edge_key
                 used_old.add(old_target)
                 used_new.add(new_target)
                 queue.append((old_target, new_target))
-            elif old_targets and new_targets:
-                ambiguous += min(len(old_targets), len(new_targets))
+            elif old_count and new_count:
+                ambiguous += min(old_count, new_count)
 
-    return {
+    out = {
         "method": "typed_path_propagation",
         "old_to_new": matches,
         "diagnostics": diagnostics,
         "ambiguous": ambiguous,
     }
+    if match_info:
+        out["match_info"] = match_info
+    return out
 
 
 def secondary_match_unresolved(
@@ -199,14 +205,20 @@ def secondary_match_unresolved(
                 })
             continue
 
-        if old_adjacency_cache is None:
-            old_adjacency_cache = build_adjacency(old_entities)
-        if new_adjacency_cache is None:
-            new_adjacency_cache = build_adjacency(new_entities)
-        if old_reverse_cache is None:
-            old_reverse_cache = build_reverse_adjacency(old_entities, old_adjacency_cache)
-        if new_reverse_cache is None:
-            new_reverse_cache = build_reverse_adjacency(new_entities, new_adjacency_cache)
+        if old_adjacency_cache is None and old_reverse_cache is None:
+            old_adjacency_cache, old_reverse_cache = build_adjacency_maps(old_entities)
+        else:
+            if old_adjacency_cache is None:
+                old_adjacency_cache = build_adjacency(old_entities)
+            if old_reverse_cache is None:
+                old_reverse_cache = build_reverse_adjacency(old_entities, old_adjacency_cache)
+        if new_adjacency_cache is None and new_reverse_cache is None:
+            new_adjacency_cache, new_reverse_cache = build_adjacency_maps(new_entities)
+        else:
+            if new_adjacency_cache is None:
+                new_adjacency_cache = build_adjacency(new_entities)
+            if new_reverse_cache is None:
+                new_reverse_cache = build_reverse_adjacency(new_entities, new_adjacency_cache)
 
         for step_id in old_steps:
             if step_id in old_features:
@@ -277,13 +289,13 @@ def _fallback_large_family_block(
     return fallback_signature_block_match(old_steps, new_steps, old_features, new_features)
 
 
-def _edge_buckets(
+def _edge_bucket_counts(
     entities: dict[int, dict],
     parent_step: int,
     used_steps: set[int],
-) -> dict[tuple[str, str | None], list[int]]:
+) -> dict[tuple[str, str | None], tuple[int, int]]:
     parent = entities.get(parent_step)
-    buckets: defaultdict[tuple[str, str | None], list[int]] = defaultdict(list)
+    buckets: dict[tuple[str, str | None], tuple[int, int]] = {}
     if not parent:
         return {}
     for ref in parent.get("refs", []):
@@ -293,10 +305,12 @@ def _edge_buckets(
         if target not in entities:
             continue
         edge_key = (ref.get("path", ""), ref.get("target_type"))
-        buckets[edge_key].append(target)
-    for targets in buckets.values():
-        targets.sort()
-    return dict(buckets)
+        count, first_target = buckets.get(edge_key, (0, target))
+        if count == 0:
+            buckets[edge_key] = (1, target)
+        else:
+            buckets[edge_key] = (count + 1, first_target)
+    return buckets
 
 
 def _is_root(entity: dict | None) -> bool:
