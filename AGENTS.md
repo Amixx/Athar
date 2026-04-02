@@ -12,7 +12,18 @@ Athar contains the core diff engine plus a transitional integration package.
 
 The core engine is responsible for parsing IFC files, aligning entities across models, and generating a structured JSON diff.
 
-- `athar/__main__.py` — Minimal CLI for the core engine. Diffs two files and prints raw JSON to stdout.
+Current runtime path is the engine rewrite (legacy CLI compatibility intentionally removed):
+
+- `athar/engine.py` — Orchestrates Bottom + Matcher + Delta layers for CLI/runtime.
+- `athar/bottom/` — New bottom-layer pipeline (`index.py`, `parser.py`, `link_inversion.py`, `edge_policy.py`, `merkle.py`, `wl_gossip.py`, `spatial.py`, `signatures.py`).
+- `athar/matcher/` — Phase 1 candidate generation, confidence scoring, and greedy assignment.
+- `athar/delta/report.py` — Per-aspect change report assembly.
+
+Schema policy for this path: support both IFC4 and IFC2X3, but only same-schema comparisons in one run (no IFC2X3↔IFC4 translation).
+Spatial fallback uses world-space centroid/AABB features by transforming collected geometry points with each entity's resolved `ObjectPlacement` matrix chain.
+Bottom parser spatial tagging supports both IFC4 (`IfcSpatialElement`) and IFC2X3 (`IfcSpatialStructureElement`) roots, and scalar canonicalization keeps numeric string literals (`"0"`, `"1"`) as strings rather than coercing them to booleans.
+
+- `athar/__main__.py` — Minimal engine CLI. Supports `--stream`, `--chunk-size`, and `--matcher-radius-m`.
 - `athar/_native/` — Required PyO3/maturin native accelerators for hot loops. Provides `athar._native._core` helpers for entity text fingerprinting, combined adjacency/reverse-adjacency building, and the `xxh3_64` WL refinement path, including a multi-round native refine helper that avoids repeated Python/Rust conversions between rounds. Missing the extension is an installation failure.
 - `athar/graph/types.py` — Graph-layer `TypedDict` contracts (`GraphIR`, `EntityIR`, `EntityRefIR`) shared by graph extraction and diff consumers.
 - `athar/graph/canonical_values.py` — Deterministic canonicalization of scalar and aggregate values for the graph layer. Preserves wrapper/select type information, enforces deterministic ordering for SET/BAG, and applies profile-driven measure-aware normalization (length/area/volume/angle/derived via unit context) for `semantic_stable`.
@@ -46,7 +57,7 @@ The core engine is responsible for parsing IFC files, aligning entities across m
 - `athar/diff/geometry_policy.py` — Geometry representation policy contract (`strict_syntax`, `invariant_probe`) with validation.
 - `athar/diff/geometry_invariants.py` — Coarse representation-invariant probe helpers (point-count, bbox, centroid from representation subgraphs).
 - `athar/diff/graph_cache.py` — Binary disk cache for parsed GraphIR + precomputed identity state. Keyed by file content hash (`xxh3_128`) + profile; uses pickle (internal, not a wire format). Cache location: `~/.cache/athar/` (override via `ATHAR_CACHE_DIR`). Disable via `ATHAR_CACHE=0`. LRU eviction at 64 entries. Saves after fresh identity precompute; loads skip parse + identity computation entirely on repeat-file hits.
-- `athar/__main__.py` — CLI is graph-engine only, with streamed output modes via `--stream ndjson|chunked_json`, `--chunk-size`, explicit matcher-policy overrides for rooted remap/secondary matcher tuning, geometry policy selection via `--geometry-policy`, owner-index spill control via `--owner-index-disk-threshold`, graph cache control via `--no-cache`/`--cache-dir`/`--clear-cache`, and optional runtime timings via `--timings`.
+- `athar/__main__.py` — CLI is the current engine path, with streamed output modes via `--stream ndjson|chunked_json`, `--chunk-size`, and spatial fallback tuning via `--matcher-radius-m`.
 
 ### Higher Layers (`athar_layers/`)
 
@@ -130,6 +141,9 @@ python -m athar old.ifc new.ifc                       # raw JSON diff
 python -m pytest tests/                          # full suite
 python -m pytest tests/test_graph_cache.py -q    # focused: cache module
 python -m pytest tests/test_diff_engine.py -q    # focused: engine core
+python -m pytest tests/test_engine.py -q  # focused: current engine path
+python -m pytest tests/test_engine_contracts.py -q
+python -m pytest tests/test_engine_package_boundaries.py -q
 ```
 
 During active development, run only the focused tests relevant to your changes rather than the full suite. Run the full suite before committing.

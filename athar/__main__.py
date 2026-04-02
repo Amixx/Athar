@@ -1,41 +1,18 @@
-"""Minimal CLI for Athar core engine — for computers."""
+"""Minimal CLI for the Athar core engine."""
 
-import sys
-import json
+from __future__ import annotations
+
 import argparse
-import os
-from typing import Any
+import json
+import sys
 
-from athar.diff.engine import diff_files, stream_diff_files
-from athar.diff.markers import OWNER_INDEX_DISK_THRESHOLD_ENV
-from athar.diff.graph_cache import _CACHE_DIR_ENV, _CACHE_ENABLED_ENV, clear_cache
-from athar.diff.geometry_policy import GEOMETRY_POLICY_CHOICES, GEOMETRY_POLICY_STRICT_SYNTAX
-from athar.diff.guid_policy import GUID_POLICY_CHOICES, GUID_POLICY_FAIL_FAST
-from athar.graph.profile_policy import DEFAULT_PROFILE, SUPPORTED_PROFILES
+from athar.engine import diff_files, stream_diff_files
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(prog="athar-core")
     parser.add_argument("old", nargs="?", help="Path to old IFC file")
     parser.add_argument("new", nargs="?", help="Path to new IFC file")
-    parser.add_argument(
-        "--profile",
-        choices=SUPPORTED_PROFILES,
-        default=DEFAULT_PROFILE,
-        help="Canonicalization profile",
-    )
-    parser.add_argument(
-        "--guid-policy",
-        choices=GUID_POLICY_CHOICES,
-        default=GUID_POLICY_FAIL_FAST,
-        help="Policy for duplicate/invalid GlobalId handling",
-    )
-    parser.add_argument(
-        "--geometry-policy",
-        choices=GEOMETRY_POLICY_CHOICES,
-        default=GEOMETRY_POLICY_STRICT_SYNTAX,
-        help="Geometry representation policy",
-    )
     parser.add_argument(
         "--stream",
         choices=["none", "ndjson", "chunked_json"],
@@ -49,128 +26,24 @@ def main():
         help="Chunk size for --stream chunked_json",
     )
     parser.add_argument(
-        "--timings",
-        action="store_true",
-        help="Include non-deterministic runtime timings in stats.timings_ms",
-    )
-    parser.add_argument(
-        "--root-remap-guid-overlap-threshold",
+        "--matcher-radius-m",
         type=float,
-        default=None,
-        help="Override root remap GUID-overlap gate (0..1)",
-    )
-    parser.add_argument(
-        "--root-remap-score-threshold",
-        type=float,
-        default=None,
-        help="Override root remap scored-assignment threshold (0..1)",
-    )
-    parser.add_argument(
-        "--root-remap-score-margin",
-        type=float,
-        default=None,
-        help="Override root remap scored-assignment tie margin (0..1)",
-    )
-    parser.add_argument(
-        "--root-remap-assignment-max",
-        type=int,
-        default=None,
-        help="Override root remap assignment cap",
-    )
-    parser.add_argument(
-        "--secondary-score-threshold",
-        type=float,
-        default=None,
-        help="Override secondary matcher score threshold (0..1)",
-    )
-    parser.add_argument(
-        "--secondary-score-margin",
-        type=float,
-        default=None,
-        help="Override secondary matcher ambiguity margin (0..1)",
-    )
-    parser.add_argument(
-        "--secondary-assignment-max",
-        type=int,
-        default=None,
-        help="Override secondary matcher assignment cap",
-    )
-    parser.add_argument(
-        "--secondary-depth2-max",
-        type=int,
-        default=None,
-        help="Override iterative deepening depth-2 block limit",
-    )
-    parser.add_argument(
-        "--secondary-depth3-max",
-        type=int,
-        default=None,
-        help="Override iterative deepening depth-3 block limit",
-    )
-    parser.add_argument(
-        "--secondary-unresolved-limit",
-        type=int,
-        default=None,
-        help="Override unresolved-entity gate for secondary matcher",
-    )
-    parser.add_argument(
-        "--secondary-unresolved-pair-limit",
-        type=int,
-        default=None,
-        help="Override unresolved pair-product gate for secondary matcher",
-    )
-    parser.add_argument(
-        "--owner-index-disk-threshold",
-        type=int,
-        default=None,
-        help=(
-            "Optional estimated owner-pair threshold for spilling rooted-owner index to disk "
-            f"(sets {OWNER_INDEX_DISK_THRESHOLD_ENV} for this run; <=0 disables spill)"
-        ),
-    )
-    parser.add_argument(
-        "--no-cache",
-        action="store_true",
-        help=f"Disable graph/identity disk cache (sets {_CACHE_ENABLED_ENV}=0)",
-    )
-    parser.add_argument(
-        "--cache-dir",
-        type=str,
-        default=None,
-        help=f"Override cache directory (sets {_CACHE_DIR_ENV})",
-    )
-    parser.add_argument(
-        "--clear-cache",
-        action="store_true",
-        help="Clear the graph cache and exit",
+        default=0.5,
+        help="Spatial fallback radius in meters (Phase 1 default: 0.5m)",
     )
     args = parser.parse_args()
-    if args.clear_cache:
-        n = clear_cache()
-        print(f"Cleared {n} cache entries.")
-        return
     if not args.old or not args.new:
         parser.error("the following arguments are required: old, new")
-    if args.no_cache:
-        os.environ[_CACHE_ENABLED_ENV] = "0"
-    if args.cache_dir is not None:
-        os.environ[_CACHE_DIR_ENV] = args.cache_dir
-    if args.owner_index_disk_threshold is not None:
-        os.environ[OWNER_INDEX_DISK_THRESHOLD_ENV] = str(max(0, args.owner_index_disk_threshold))
-    matcher_policy = _matcher_policy_overrides(args)
 
+    matcher_policy = {"spatial_radius_m": args.matcher_radius_m}
     try:
         if args.stream != "none":
             for line in stream_diff_files(
                 args.old,
                 args.new,
-                profile=args.profile,
-                geometry_policy=args.geometry_policy,
-                guid_policy=args.guid_policy,
                 matcher_policy=matcher_policy,
                 mode=args.stream,
                 chunk_size=args.chunk_size,
-                timings=args.timings,
             ):
                 print(line)
             return
@@ -178,57 +51,13 @@ def main():
         result = diff_files(
             args.old,
             args.new,
-            profile=args.profile,
-            geometry_policy=args.geometry_policy,
-            guid_policy=args.guid_policy,
             matcher_policy=matcher_policy,
-            timings=args.timings,
         )
-        if args.stream == "none":
-            json.dump(result, sys.stdout, indent=2)
-            print()
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        json.dump(result, sys.stdout, indent=2)
+        print()
+    except Exception as exc:  # pragma: no cover - CLI error path
+        print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
-
-
-def _matcher_policy_overrides(args: argparse.Namespace) -> dict[str, dict[str, Any]] | None:
-    root_remap: dict[str, Any] = {}
-    secondary_match: dict[str, Any] = {}
-
-    if args.root_remap_guid_overlap_threshold is not None:
-        root_remap["guid_overlap_threshold"] = args.root_remap_guid_overlap_threshold
-    if args.root_remap_score_threshold is not None:
-        root_remap["score_threshold"] = args.root_remap_score_threshold
-    if args.root_remap_score_margin is not None:
-        root_remap["score_margin"] = args.root_remap_score_margin
-    if args.root_remap_assignment_max is not None:
-        root_remap["assignment_max"] = args.root_remap_assignment_max
-
-    if args.secondary_score_threshold is not None:
-        secondary_match["score_threshold"] = args.secondary_score_threshold
-    if args.secondary_score_margin is not None:
-        secondary_match["score_margin"] = args.secondary_score_margin
-    if args.secondary_assignment_max is not None:
-        secondary_match["assignment_max"] = args.secondary_assignment_max
-    if args.secondary_depth2_max is not None:
-        secondary_match["depth2_max"] = args.secondary_depth2_max
-    if args.secondary_depth3_max is not None:
-        secondary_match["depth3_max"] = args.secondary_depth3_max
-    if args.secondary_unresolved_limit is not None:
-        secondary_match["unresolved_limit"] = args.secondary_unresolved_limit
-    if args.secondary_unresolved_pair_limit is not None:
-        secondary_match["unresolved_pair_limit"] = args.secondary_unresolved_pair_limit
-
-    if not root_remap and not secondary_match:
-        return None
-
-    out: dict[str, dict[str, Any]] = {}
-    if root_remap:
-        out["root_remap"] = root_remap
-    if secondary_match:
-        out["secondary_match"] = secondary_match
-    return out
 
 
 if __name__ == "__main__":

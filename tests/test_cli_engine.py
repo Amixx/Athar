@@ -1,210 +1,71 @@
-import os
 import sys
 
+import pytest
+
 import athar.__main__ as main_mod
-from athar.diff.markers import OWNER_INDEX_DISK_THRESHOLD_ENV
 
 
-def test_cli_graph_engine_calls_diff_files(monkeypatch, capsys):
+def test_cli_calls_engine_diff_files(monkeypatch, capsys):
     called = {}
 
-    def fake_diff_files(old, new, profile, geometry_policy, guid_policy, matcher_policy, timings):
-        called["args"] = (old, new, profile, geometry_policy, guid_policy, matcher_policy, timings)
+    def fake_diff_files(old, new, matcher_policy, **_kwargs):
+        called["args"] = (old, new, matcher_policy)
         return {"ok": True}
 
     monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
-    monkeypatch.setattr(sys, "argv", ["athar", "old.ifc", "new.ifc", "--profile", "raw_exact"])
+    monkeypatch.setattr(sys, "argv", ["athar", "old.ifc", "new.ifc"])
 
     main_mod.main()
     out = capsys.readouterr().out
     assert "\"ok\": true" in out
-    assert called["args"] == ("old.ifc", "new.ifc", "raw_exact", "strict_syntax", "fail_fast", None, False)
+    assert called["args"] == ("old.ifc", "new.ifc", {"spatial_radius_m": 0.5})
 
 
-def test_cli_graph_engine_streams_ndjson(monkeypatch, capsys):
+def test_cli_streams_ndjson(monkeypatch, capsys):
     called = {}
 
-    def fake_stream_files(old, new, profile, geometry_policy, guid_policy, matcher_policy, mode, chunk_size, timings):
-        called["stream"] = (old, new, profile, geometry_policy, guid_policy, matcher_policy, mode, chunk_size, timings)
+    def fake_stream_files(old, new, matcher_policy, mode, chunk_size, **_kwargs):
+        called["stream"] = (old, new, matcher_policy, mode, chunk_size)
         return iter(["{\"record_type\":\"header\"}", "{\"record_type\":\"end\"}"])
 
     monkeypatch.setattr(main_mod, "stream_diff_files", fake_stream_files)
-    monkeypatch.setattr(main_mod, "diff_files", lambda *_: (_ for _ in ()).throw(AssertionError("diff_files called")))
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["athar", "old.ifc", "new.ifc", "--stream", "ndjson"],
-    )
+    monkeypatch.setattr(main_mod, "diff_files", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(sys, "argv", ["athar", "old.ifc", "new.ifc", "--stream", "ndjson"])
 
     main_mod.main()
     out = capsys.readouterr().out
     assert "{\"record_type\":\"header\"}" in out
     assert "{\"record_type\":\"end\"}" in out
-    assert called["stream"] == (
-        "old.ifc",
-        "new.ifc",
-        "semantic_stable",
-        "strict_syntax",
-        "fail_fast",
-        None,
-        "ndjson",
-        1000,
-        False,
-    )
+    assert called["stream"] == ("old.ifc", "new.ifc", {"spatial_radius_m": 0.5}, "ndjson", 1000)
 
 
-def test_cli_chunked_stream_passes_chunk_size(monkeypatch, capsys):
+def test_cli_stream_chunk_size_and_radius(monkeypatch, capsys):
     called = {}
 
-    def fake_stream_files(old, new, profile, geometry_policy, guid_policy, matcher_policy, mode, chunk_size, timings):
-        called["stream"] = (old, new, profile, geometry_policy, guid_policy, matcher_policy, mode, chunk_size, timings)
+    def fake_stream_files(old, new, matcher_policy, mode, chunk_size, **_kwargs):
+        called["stream"] = (old, new, matcher_policy, mode, chunk_size)
         return iter(["{\"chunk_type\":\"header\"}", "{\"chunk_type\":\"end\"}"])
 
     monkeypatch.setattr(main_mod, "stream_diff_files", fake_stream_files)
-    monkeypatch.setattr(main_mod, "diff_files", lambda *_: (_ for _ in ()).throw(AssertionError("diff_files called")))
+    monkeypatch.setattr(main_mod, "diff_files", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError()))
     monkeypatch.setattr(
         sys,
         "argv",
-        ["athar", "old.ifc", "new.ifc", "--stream", "chunked_json", "--chunk-size", "7"],
+        ["athar", "old.ifc", "new.ifc", "--stream", "chunked_json", "--chunk-size", "7", "--matcher-radius-m", "1.2"],
     )
 
     main_mod.main()
     _ = capsys.readouterr().out
-    assert called["stream"] == (
-        "old.ifc",
-        "new.ifc",
-        "semantic_stable",
-        "strict_syntax",
-        "fail_fast",
-        None,
-        "chunked_json",
-        7,
-        False,
-    )
+    assert called["stream"] == ("old.ifc", "new.ifc", {"spatial_radius_m": 1.2}, "chunked_json", 7)
 
 
-def test_cli_passes_guid_policy(monkeypatch, capsys):
-    called = {}
-
-    def fake_diff_files(old, new, profile, geometry_policy, guid_policy, matcher_policy, timings):
-        called["args"] = (old, new, profile, geometry_policy, guid_policy, matcher_policy, timings)
-        return {"ok": True}
-
-    monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["athar", "old.ifc", "new.ifc", "--guid-policy", "disambiguate"],
-    )
-
-    main_mod.main()
-    _ = capsys.readouterr().out
-    assert called["args"] == ("old.ifc", "new.ifc", "semantic_stable", "strict_syntax", "disambiguate", None, False)
+def test_cli_rejects_removed_legacy_flags(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["athar", "old.ifc", "new.ifc", "--guid-policy", "disambiguate"])
+    with pytest.raises(SystemExit):
+        main_mod.main()
 
 
-def test_cli_passes_matcher_policy_overrides(monkeypatch, capsys):
-    called = {}
-
-    def fake_diff_files(old, new, profile, geometry_policy, guid_policy, matcher_policy, timings):
-        called["args"] = (old, new, profile, geometry_policy, guid_policy, matcher_policy, timings)
-        return {"ok": True}
-
-    monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "athar",
-            "old.ifc",
-            "new.ifc",
-            "--root-remap-score-threshold",
-            "0.61",
-            "--root-remap-assignment-max",
-            "5",
-            "--secondary-score-margin",
-            "0.14",
-            "--secondary-depth2-max",
-            "7",
-            "--secondary-unresolved-pair-limit",
-            "1234",
-        ],
-    )
-
-    main_mod.main()
-    _ = capsys.readouterr().out
-    assert called["args"] == (
-        "old.ifc",
-        "new.ifc",
-        "semantic_stable",
-        "strict_syntax",
-        "fail_fast",
-        {
-            "root_remap": {"score_threshold": 0.61, "assignment_max": 5},
-            "secondary_match": {"score_margin": 0.14, "depth2_max": 7, "unresolved_pair_limit": 1234},
-        },
-        False,
-    )
-
-
-def test_cli_owner_index_disk_threshold_sets_env_for_run(monkeypatch, capsys):
-    called = {}
-
-    def fake_diff_files(old, new, profile, geometry_policy, guid_policy, matcher_policy, timings):
-        called["threshold"] = os.environ.get(OWNER_INDEX_DISK_THRESHOLD_ENV)
-        called["geometry_policy"] = geometry_policy
-        called["timings"] = timings
-        return {"ok": True}
-
-    monkeypatch.delenv(OWNER_INDEX_DISK_THRESHOLD_ENV, raising=False)
-    monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["athar", "old.ifc", "new.ifc", "--owner-index-disk-threshold", "12345"],
-    )
-
-    main_mod.main()
-    _ = capsys.readouterr().out
-    assert called["threshold"] == "12345"
-    assert called["geometry_policy"] == "strict_syntax"
-    assert called["timings"] is False
-
-
-def test_cli_passes_timings_flag(monkeypatch, capsys):
-    called = {}
-
-    def fake_diff_files(old, new, profile, geometry_policy, guid_policy, matcher_policy, timings):
-        called["geometry_policy"] = geometry_policy
-        called["timings"] = timings
-        return {"ok": True}
-
-    monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["athar", "old.ifc", "new.ifc", "--timings"],
-    )
-
-    main_mod.main()
-    _ = capsys.readouterr().out
-    assert called["geometry_policy"] == "strict_syntax"
-    assert called["timings"] is True
-
-
-def test_cli_passes_geometry_policy(monkeypatch, capsys):
-    called = {}
-
-    def fake_diff_files(old, new, profile, geometry_policy, guid_policy, matcher_policy, timings):
-        called["geometry_policy"] = geometry_policy
-        return {"ok": True}
-
-    monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["athar", "old.ifc", "new.ifc", "--geometry-policy", "invariant_probe"],
-    )
-
-    main_mod.main()
-    _ = capsys.readouterr().out
-    assert called["geometry_policy"] == "invariant_probe"
+def test_cli_rejects_removed_timings_flag(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["athar", "old.ifc", "new.ifc", "--timings"])
+    with pytest.raises(SystemExit):
+        main_mod.main()

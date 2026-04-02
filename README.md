@@ -4,6 +4,19 @@ Semantic diff for IFC files. Compares BIM models at the entity/property level �
 
 *Athar (Arabic: أثار) — a trace left behind.*
 
+## Engine Status
+
+Athar now ships the current engine path as the default CLI flow:
+
+- Bottom layer: `athar/bottom/` (`index.py`, `parser.py`, `link_inversion.py`, `edge_policy.py`, `merkle.py`, `wl_gossip.py`, `spatial.py`, `signatures.py`)
+- Matcher layer: `athar/matcher/` (`candidates.py`, `scoring.py`, `assignment.py`)
+- Delta layer: `athar/delta/report.py`
+- Orchestration: `athar/engine.py`
+
+Schema support is **IFC4 and IFC2X3**, with a same-schema requirement per run (cross-schema translation is out of scope).
+Spatial fallback uses world-space centroid/AABB features (geometry points transformed by resolved `ObjectPlacement` matrices), and parser scalar canonicalization preserves numeric string literals like `"0"`/`"1"` as strings.
+This runtime is intentionally breaking: legacy graph-engine CLI flags are removed from the primary interface.
+
 ## Installation
 
 ```bash
@@ -63,35 +76,15 @@ python -m athar_layers some-folder/ --report version-history.md
 # Two-file diff (JSON output for computers)
 python -m athar old.ifc new.ifc
 
-# Select profile
-python -m athar old.ifc new.ifc --profile semantic_stable
-
-# Set GlobalId policy (default: fail_fast)
-python -m athar old.ifc new.ifc --guid-policy disambiguate
-
-# Set geometry representation policy (default: strict_syntax)
-python -m athar old.ifc new.ifc --geometry-policy invariant_probe
-
-# Enable eager rooted-owner indexing; spill to disk above threshold (estimated owner pairs)
-python -m athar old.ifc new.ifc --owner-index-disk-threshold 500000
+# Control spatial fallback radius for matching (meters)
+python -m athar old.ifc new.ifc --matcher-radius-m 0.5
 
 # Stream output as NDJSON records
 python -m athar old.ifc new.ifc --stream ndjson
 
 # Stream output as chunked JSON records
 python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
-
-# Include runtime timing breakdown in stats (non-deterministic, profiling only)
-python -m athar old.ifc new.ifc --timings
-
-# Override matcher policy knobs
-python -m athar old.ifc new.ifc --secondary-score-threshold 0.65 --secondary-assignment-max 6
-python -m athar old.ifc new.ifc --root-remap-score-threshold 0.7 --root-remap-score-margin 0.06
-python -m athar old.ifc new.ifc --secondary-unresolved-limit 120000
-python -m athar old.ifc new.ifc --secondary-unresolved-pair-limit 10000000
 ```
-
-Matcher tuning is quality-first: defaults are chosen to preserve stable `MODIFY` alignment (instead of degrading into `ADD/REMOVE`), and hard cutoffs are intended only as guardrails for pathological datasets.
 
 See the [sample report](docs/SAMPLE_REPORT.md) for what the output looks like.
 
@@ -99,6 +92,8 @@ See the [sample report](docs/SAMPLE_REPORT.md) for what the output looks like.
 
 ```bash
 python -m pytest tests/
+python -m pytest tests/test_engine.py -q
+python -m pytest tests/test_engine_contracts.py -q
 ```
 
 Determinism fixtures for low-level output are stored in `tests/fixtures/determinism/`.
