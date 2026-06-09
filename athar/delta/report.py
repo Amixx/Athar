@@ -19,11 +19,13 @@ def build_delta_report(
 
     modified: list[dict] = []
     unchanged: list[dict] = []
+    dropped_matches = 0
 
     for pair in matches:
         old_sig = old_signatures.get(pair.old_step)
         new_sig = new_signatures.get(pair.new_step)
         if old_sig is None or new_sig is None:
+            dropped_matches += 1
             continue
         aspects = _aspect_diff(old_sig, new_sig)
         change_scope = _change_scope(aspects)
@@ -72,6 +74,7 @@ def build_delta_report(
             "modified_conflicts": _conflict_stats(modified),
             "modified_match_reasons": _match_reason_stats(modified),
             "modified_score_bands": _score_band_stats(modified),
+            "dropped_matches": dropped_matches,
         },
         "added": added,
         "deleted": deleted,

@@ -163,6 +163,52 @@ def test_build_delta_report_ignores_matches_with_missing_signature_steps():
     assert report["unchanged"] == []
     assert len(report["added"]) == 1
     assert len(report["deleted"]) == 1
+    # dropped pairs are surfaced, not hidden
+    assert report["stats"]["dropped_matches"] == 1
+
+
+def test_build_delta_report_stats_counts_are_internally_consistent():
+    old_bundle = _bundle(
+        schema="IFC4",
+        signatures={
+            1: _signature(1, guid="A"),
+            2: _signature(2, guid="B", vh_data="d-old"),
+            3: _signature(3, guid="GONE"),
+        },
+    )
+    new_bundle = _bundle(
+        schema="IFC4",
+        signatures={
+            10: _signature(10, guid="A"),
+            20: _signature(20, guid="B", vh_data="d-new"),
+            30: _signature(30, guid="FRESH"),
+        },
+    )
+
+    report = build_delta_report(
+        old_bundle,
+        new_bundle,
+        matches=[
+            MatchedPair(old_step=1, new_step=10, score=1.0, reason="guid"),
+            MatchedPair(old_step=2, new_step=20, score=0.9, reason="guid"),
+        ],
+        unmatched_old=[3],
+        unmatched_new=[30],
+    )
+
+    stats = report["stats"]
+    assert stats["added"] == len(report["added"]) == 1
+    assert stats["deleted"] == len(report["deleted"]) == 1
+    assert stats["modified"] == len(report["modified"]) == 1
+    assert stats["unchanged"] == len(report["unchanged"]) == 1
+    assert stats["dropped_matches"] == 0
+    # every old signature is accounted for exactly once, same for new
+    assert stats["deleted"] + stats["modified"] + stats["unchanged"] == stats["old_signatures"]
+    assert stats["added"] + stats["modified"] + stats["unchanged"] == stats["new_signatures"]
+    assert sum(stats["modified_change_scope"].values()) == stats["modified"]
+    assert sum(stats["modified_conflicts"].values()) == stats["modified"]
+    assert sum(stats["modified_score_bands"].values()) == stats["modified"]
+    assert sum(stats["modified_match_reasons"].values()) == stats["modified"]
 
 
 def test_build_delta_report_sets_placement_delta_none_when_matrices_are_missing_or_short():

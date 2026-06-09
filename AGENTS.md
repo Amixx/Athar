@@ -10,155 +10,94 @@ Athar contains the core diff engine plus a transitional integration package.
 
 ### Core Engine (`athar/`)
 
-The core engine is responsible for parsing IFC files, aligning entities across models, and generating a structured JSON diff.
+Pure Python. Pipeline: parse → signatures → tiered matching → delta report.
 
-Current runtime path is the engine rewrite (legacy CLI compatibility intentionally removed):
+- `athar/engine.py` — Orchestration. `diff_files()` builds a `SignatureBundle` per file (with an in-process cache keyed by path/mtime/size), enforces the same-schema policy, runs the matcher, and assembles the report with `guid_collisions` and `matcher_diagnostics` stats. `stream_diff_files()` wraps the same report as `ndjson` or `chunked_json` records with a deterministic `end` stats record.
+- `athar/bottom/` — Signature pipeline for one IFC file (`build_signature_bundle`):
+  - `index.py` — Byte-offset STEP index for random-access diagnostics.
+  - `parser.py` — Schema-aware parse via ifcopenshell into `ParsedEntity` records with canonicalized scalar attributes (unit-normalized quantized lengths, numeric string literals like `"0"`/`"1"` preserved as strings, NFC text). Spatial tagging supports both IFC4 (`IfcSpatialElement`) and IFC2X3 (`IfcSpatialStructureElement`) roots.
+  - `link_inversion.py` — Reverse-reference maps for parsed entities.
+  - `edge_policy.py` — Declarative edge classification table (relationship → include/context, geometry/data/placement/spatial domain).
+  - `merkle.py` — Bottom-up sha256 Merkle hashing over domain subgraphs. Produces location-independent `vh_geometry` (placement excluded, so repeated identical components share it across locations) and `vh_data`. GlobalId and OwnerHistory never enter any hash.
+  - `wl_gossip.py` — WL-style topology hash `vh_topology` from a self seed (`class|vh_geometry|vh_data`) plus context (k=1) and spatial (k=2) neighbor seeds.
+  - `spatial.py` — Resolves `ObjectPlacement` matrix chains; emits world-space quantized placement matrix, centroid, and AABB per product.
+  - `signatures.py` — Assembles per-product/spatial `SignatureVector`s into a `SignatureBundle` (signatures + diagnostics + edge stats only; the full parse result is not retained).
+- `athar/matcher/core.py` — Tiered pool-reduction matching (`match_signatures`). Each tier examines only still-unmatched pools and emits disjoint 1:1 pairs; there are no candidate lists, no scoring pass, and no assignment step, so memory stays O(N) and ambiguity is resolved by construction. Tiers, strongest first: unique GlobalId + same class (score 1.0 when the full vector is identical, else 0.9); same-class full signature-vector equality zipped in step order (`geometry_hash`, 0.8); globally unique `(canonical_class, vh_topology)` bucket with proximity sanity (`tier2_signature`, 0.7); class-compatible spatial fallback via exact-centroid zip or uniform-grid nearest neighbour within `radius_m` (`spatial_fallback`, 0.5). Every tier keys on canonical class, so matched pairs never cross classes. Duplicated GlobalIds are never identity evidence — those entities fall through to the structural tiers. The only safety valve is `spatial_probe_limit` (default 128 grid probes per entity, policy key `spatial_probe_limit`): a capped entity is left unmatched rather than matched approximately, surfaced in diagnostics as `spatial.probe_capped`.
+- `athar/delta/report.py` — Per-aspect change report assembly. Sections `added/deleted/modified/unchanged`; matched items carry `match{score,reason}`, per-aspect `changed/unchanged` for `geometry/data/topology/placement` plus `placement_delta_mm`, `data_hash{old,new}`, `change_scope` (`intrinsic|transitive|mixed|none`), and conservative `conflict` downgrade metadata for low-confidence fallback transitive/mixed matches. Stats cover section counts, signature counts, parse diagnostics, edge stats, `modified_change_scope`, `modified_conflicts`, `modified_match_reasons`, `modified_score_bands` (`high|medium|low`), and `dropped_matches`.
+- `athar/__main__.py` — Minimal CLI: `--stream ndjson|chunked_json`, `--chunk-size`, `--matcher-radius-m`. Errors print to stderr and exit 1.
 
-- `athar/engine.py` — Orchestrates Bottom + Matcher + Delta layers for CLI/runtime.
-- `athar/bottom/` — New bottom-layer pipeline (`index.py`, `parser.py`, `link_inversion.py`, `edge_policy.py`, `merkle.py`, `wl_gossip.py`, `spatial.py`, `signatures.py`).
-- `athar/matcher/` — Candidate generation, confidence scoring, and greedy assignment.
-  - Candidate generation now includes a conservative Tier 2 fallback (`tier2_signature`) for unique unmatched `(canonical_class, vh_topology)` buckets before spatial fallback, so data/geometry churn can still recover 1:1 candidates without broad ambiguous fan-out.
-- `athar/delta/report.py` — Per-aspect change report assembly.
-  - Matched items include `change_scope` (`intrinsic|transitive|mixed|none`), conservative `conflict` downgrade metadata for fallback low-confidence transitive/mixed matches, and `data_hash` (`old`/`new` `vh_data`) for quick structured-data change inspection.
-  - Stats include matcher diagnostics for modified items: `modified_match_reasons` and `modified_score_bands` (`high|medium|low`).
-
-Schema policy for this path: support both IFC4 and IFC2X3, but only same-schema comparisons in one run (no IFC2X3↔IFC4 translation).
-Spatial fallback uses world-space centroid/AABB features by transforming collected geometry points with each entity's resolved `ObjectPlacement` matrix chain.
-Bottom parser spatial tagging supports both IFC4 (`IfcSpatialElement`) and IFC2X3 (`IfcSpatialStructureElement`) roots, and scalar canonicalization keeps numeric string literals (`"0"`, `"1"`) as strings rather than coercing them to booleans.
-
-- `athar/__main__.py` — Minimal engine CLI. Supports `--stream`, `--chunk-size`, and `--matcher-radius-m`.
-- `athar/_native/` — Required PyO3/maturin native accelerators for hot loops. Provides `athar._native._core` helpers for entity text fingerprinting, combined adjacency/reverse-adjacency building, and the `xxh3_64` WL refinement path, including a multi-round native refine helper that avoids repeated Python/Rust conversions between rounds. Missing the extension is an installation failure.
-- `athar/graph/types.py` — Graph-layer `TypedDict` contracts (`GraphIR`, `EntityIR`, `EntityRefIR`) shared by graph extraction and diff consumers.
-- `athar/graph/canonical_values.py` — Deterministic canonicalization of scalar and aggregate values for the graph layer. Preserves wrapper/select type information, enforces deterministic ordering for SET/BAG, and applies profile-driven measure-aware normalization (length/area/volume/angle/derived via unit context) for `semantic_stable`.
-- `athar/graph/profile_policy.py` — Central profile contract (`raw_exact`, `semantic_stable`) with validation and volatility filtering rules used by parser/diff paths.
-- `athar/graph/graph_parser.py` — Full-instance graph extractor. Emits explicit attributes in canonical form plus a typed edge list labeled with JSON-Pointer-like paths, parse diagnostics for malformed/dangling references (`metadata.diagnostics`), and extracted unit assignment context (`metadata.units`) used for semantic measure normalization. Exposes `open_ifc()` + `graph_from_ifc()` so callers can overlap open/extract work across file pairs.
-- `athar/graph/graph_utils.py` — Shared graph primitives such as adjacency builders, edge signatures, stripping ref IDs, and deterministic JSON hashing helpers. Exposes deterministic Python reference builders for forward/reverse adjacency; diff hot paths that need the required native combined builder call it from `athar/_native/required.py` instead so the graph layer stays native-free.
-- `athar/graph/structural_hash.py` — Structural hash helpers for engine identity (`H:`) seeds. Computes deterministic hashes that ignore STEP IDs/inverse attributes; hot path now hashes canonical entity fields directly (no `json.dumps` payload serialization in the per-entity loop).
-- `athar/graph/canonical_serializer.py` — Deterministic serializer for identity/class records with total ordering `G:` then `H:` then `C:`.
-- `athar/graph/determinism.py` — Canonical JSON serialization helpers plus environment fingerprint reporting for determinism fixtures/tools.
-- `athar/index/store.py` — Query-oriented GraphIR index store. Provides ambiguity-aware GUID lookup, exact and subtype-inclusive type queries, canonical attribute presence/value lookup, and labeled forward/reverse relationship indices with attribute-path provenance.
-- `athar/index/query.py` — Thin higher-level query composition helpers built on `GraphIndex`; keeps query semantics as a direct composition of GraphIR-derived indices rather than a second interpretation layer.
-- `athar/diff/types.py` — Diff-layer `TypedDict` contracts (`IdentityInfo`, `ContextEntityItem`, `DiffContext`) layered on top of graph types.
-- `athar/diff/engine.py` — Core diff engine orchestration that merges identity sets and emits the v2 wire format. Integrates rooted remap planning + typed-path propagation + secondary matching before ID assignment/merge, records `match_method` (`exact_guid`, `guid_disambiguated`, `root_remap`, `path_propagation`, `secondary_match`, `text_fingerprint`, `equivalence_class`, `exact_hash`) plus `match_confidence` and `matched_on` diagnostics per change, applies profile-driven volatility filtering in both comparison and H-hash assignment (`semantic_stable` suppresses OwnerHistory-reference churn and normalizes `IfcOwnerHistory`; `raw_exact` preserves it), enforces same-schema policy, includes dangling-reference counts in stats, short-circuits same-graph inputs after validation, and overlaps opening the second IFC while extracting the first graph to reduce parse wall-time.
-- `athar/diff/context.py` — Context prep and equality semantics; `G:` entity equality compares attribute/ref targets via matched identity IDs rather than raw STEP IDs to reduce renumber-only false positives, threads precomputed graph adjacency/reverse-adjacency from identity precompute into secondary matching and owner projection, and runs early similarity seeding (unique GUID diagnostics, optional GUID-anchored propagation probe, conservative text-fingerprint matches) before identity precompute so unchanged non-GUID entities can skip structural hash calculation. The heaviest adjacency builds are expected to come through the shared `build_adjacency_maps()` seam so native acceleration can reduce identity-precompute wall time without changing matcher logic. Early GUID-anchored typed-path seeding must stay gated by whole-graph GUID anchor coverage, not just `unique_guid_overlap`, so sparse-GUID million-entity graphs do not over-propagate from a small root set. High-GUID-overlap early typed-path seeding should stay allocation-light; seed-time propagation now avoids building nested per-match diagnostics unless those matches are later reused, and forced end-of-context `gc.collect()` is opt-in via `ATHAR_FORCE_GC_COLLECT=1`. `ATHAR_PARALLEL` now defaults to an auto mode: large uncached graph pairs can use the existing fork-based side-parallel text-fingerprint + identity-precompute path automatically, while small diffs and cache hits stay serial unless explicitly forced.
-- `athar/diff/engine.py` — Base-change and derived-marker emission now temporarily disables cyclic GC around the emit phase so compare-normalization allocations do not turn into giant wall-clock GC pauses on large mostly-unchanged models.
-- `athar/diff/changes.py` — Base change assembly helpers, including rooted-owner enrichment and field-op shaping for `MODIFY`.
-- `athar/diff/markers.py` — Derived-marker and rooted-owner helpers. Default rooted-owner projection is demand-driven (reverse reachability per changed step with caching) to avoid full closure materialization; setting `ATHAR_OWNER_INDEX_DISK_THRESHOLD` enables eager full owner-index mode with optional disk spill for very large closures.
-- `athar/diff/streaming.py` — Single source of stream framing/protocol (`ndjson` and `chunked_json`), including deterministic `end` counters (`base_change_count`, `derived_marker_count`, `op_counts`) for both full-result and event-stream paths.
-- `athar/diff/stats.py` — Shared diff statistics helpers, including root `GlobalId` quality summaries. `build_stats()` now prefers lightweight index summaries from identity indexing so match-method counts do not require a second full pass over `old_by_id` / `new_by_id`.
-- `athar/diff/identity_pipeline.py` — Identity assignment internals for structural hashes, WL colors, SCC ambiguity classes, and GUID policy application.
-- `athar/diff/root_remap.py` — Phase 2.5 rooted remap for low GUID overlap. Uses staged matching: GUID-independent root signatures, neighbor-signature disambiguation, then bounded scored assignment (`threshold`, `margin`, `assignment_max`) for unresolved buckets, with deterministic tie rejection and ambiguity accounting.
-- `athar/diff/wl_refinement.py` — WL-style refinement and SCC-aware ambiguity fallback. WL round hashing is pluggable (`auto`, `xxh3_64`, `blake3`, `blake2b_64`, `sha256`) while external IDs stay `sha256`; fast backends now run backend-native colors during rounds and normalize to sha256 once at output boundary, and the required native extension executes the `xxh3_64` refinement loop through the multi-round Rust entrypoint. When callers need both forward and reverse adjacency for SCC fallback, the module uses the required native combined adjacency builder directly.
-- `athar/diff/matcher_graph.py` — Matching stages for graph diffing. Implements deterministic typed-path propagation from matched root pairs and scored secondary matching for unresolved non-root entities. Typed-path propagation now uses compact per-edge bucket counts instead of materializing full target lists, and can skip full diagnostics in early seeding mode while returning just enough path metadata to synthesize diagnostics later.
-- `athar/diff/matcher_graph_scoring.py` — Feature extraction and scoring helpers used by secondary matching and rooted remap assignment.
-- `athar/diff/matcher_assignment.py` — Deterministic min-cost bipartite assignment helpers used by matcher scoring.
-- `athar/diff/matcher_policy.py` — Validated matcher policy defaults/overrides for rooted remap and secondary matcher stages, including secondary unresolved-set gating (`unresolved_limit`) and unresolved pair-product gating (`unresolved_pair_limit`) for very large unmatched populations.
-- `athar/diff/guid_policy.py` — GlobalId quality policy (`fail_fast` or `disambiguate`) with deterministic `G!:` disambiguation and diagnostics.
-- `athar/diff/equivalence_classes.py` — Equivalence-class assignment for unresolved exact-hash or SCC-ambiguous partitions.
-- `athar/diff/semantic_signature.py` — Soft signature (`S:`) for candidate blocking. Uses attribute/aggregate shape and typed edge signatures while ignoring literal values.
-- `athar/diff/similarity_seed.py` — Early seed builders for unique GUID pairing diagnostics and conservative text-fingerprint pairing/refinement before full identity precompute.
-- `athar/diff/geometry_policy.py` — Geometry representation policy contract (`strict_syntax`, `invariant_probe`) with validation.
-- `athar/diff/geometry_invariants.py` — Coarse representation-invariant probe helpers (point-count, bbox, centroid from representation subgraphs).
-- `athar/diff/graph_cache.py` — Binary disk cache for parsed GraphIR + precomputed identity state. Keyed by file content hash (`xxh3_128`) + profile; uses pickle (internal, not a wire format). Cache location: `~/.cache/athar/` (override via `ATHAR_CACHE_DIR`). Disable via `ATHAR_CACHE=0`. LRU eviction at 64 entries. Saves after fresh identity precompute; loads skip parse + identity computation entirely on repeat-file hits.
-- `athar/__main__.py` — CLI is the current engine path, with streamed output modes via `--stream ndjson|chunked_json`, `--chunk-size`, and spatial fallback tuning via `--matcher-radius-m`.
+Schema policy: IFC4 and IFC2X3 are both supported, but only same-schema comparisons in one run (no IFC2X3↔IFC4 translation).
 
 ### Higher Layers (`athar_layers/`)
 
-Integration layers that build upon the core engine for human-readable output, scene modeling, and folder-level versioning. This package is transitional and may be moved out of this repository. The `athar_layers` CLI is currently disabled pending rewiring to the graph engine.
+Integration layers that build upon the core engine for human-readable output, scene modeling, and folder-level versioning. This package is transitional and may be moved out of this repository. The `athar_layers` CLI is currently disabled pending rewiring to the current engine.
 
 Detailed information for these components can be found in [athar_layers/AGENTS.md](athar_layers/AGENTS.md).
 
-- `athar_layers/scene.py` — Human-oriented "Scene Model" and labeling.
-- `athar_layers/placement.py` — Human-readable placement descriptions.
-- `athar_layers/folder.py` — Folder scanning and version grouping.
-- `athar_layers/report.py` — Markdown report generation.
-- `athar_layers/cli.py` — Full-featured CLI (Summary, Folder mode, Reports).
-
 ## Conventions
 
-- Python 3.10+
+- Python 3.10+, pure Python. The only core runtime dependency is `ifcopenshell`.
 - Engine modules (`athar/`) must not depend on integration/presentation modules (`athar_layers/`).
-- `athar/diff/` may depend on `athar/graph/` and optional low-level accelerators under `athar/_native/`; `athar/graph/` must remain independent of both.
-- `athar/index/` may depend on `athar/graph/` and IfcOpenShell schema helpers, but never on `athar/diff/`.
-- Integration/presentation layers enrich the raw JSON output from the engine for human consumption.
+- Layering inside the engine: `athar/bottom/` is self-contained; `athar/matcher/` may depend on `athar/bottom/` types; `athar/delta/` may depend on both; `athar/engine.py` orchestrates all three.
 - Use `ifcopenshell` for all IFC parsing. Do not parse STEP files as text.
-- Match entities across files by GlobalId (the stable identifier across revisions).
 - Keep diffing deterministic and algorithmic — no AI in the diff pipeline itself.
+- Identity is evidence-tiered: unique GlobalIds are the strongest signal, but duplicated GlobalIds must never become identity evidence, and GUID-free recovery (vector/topology/spatial tiers) must stay conservative — 1:1 by construction, no ambiguous fan-out.
+- Matching quality is prioritized over throughput: preserve correct entity alignment (`modified`) rather than collapsing into `added/deleted`; keep cutoffs conservative and use safety valves (`spatial_probe_limit`) only for pathological inputs, surfaced via diagnostics.
 - Output structured JSON. Human-readable summaries are a presentation concern, not a diff concern.
-- No deep B-rep geometry comparison. Compare placement matrices and geometric parameters only.
-- Minimal dependencies. Core runtime deps are `ifcopenshell` and `xxhash`.
-- Native acceleration is required. When working on `athar/_native/`, preserve the hard requirement on the extension and validate behavior against focused tests rather than reintroducing Python compatibility paths.
-- Prefer a repo-local `.venv` for development. `pyproject.toml` defines packaging/build metadata; it does not replace environment isolation. Verified local workflow is `make dev-setup`, `make native-dev`, `make test-native`, `make test-perf`. For perf benchmarking, use `make native-dev-release` or `make perf-native-check` so native code is measured in optimized release mode.
-- Matching quality is prioritized over throughput: preserve `MODIFY` recovery (correct entity alignment) rather than collapsing into `ADD/REMOVE`; keep matcher cutoffs conservative and only use aggressive gates as safety valves for pathological inputs.
-- Index answers should stay equivalent to brute-force GraphIR scans. Preserve GUID ambiguity instead of collapsing duplicates, and keep relationship indices provenance-aware (`attr_name`, aggregate-vs-direct edge shape).
+- No deep B-rep geometry comparison. Signatures hash geometry-domain subgraphs and compare placement matrices/spatial features only.
+- Prefer a repo-local `.venv` for development. Verified local workflow is `make dev-setup` then `make test`.
 
 ## Running
-
-### Full Tool (Summary, Folder mode, Reports)
-
-```bash
-python -m athar_layers old.ifc new.ifc                # two-file diff summary
-python -m athar_layers old.ifc new.ifc --report r.md  # Markdown report
-python -m athar_layers some-folder/                   # folder mode: auto-group + diff
-```
 
 ### Core Engine (Raw JSON)
 
 ```bash
-python -m athar old.ifc new.ifc                       # raw JSON diff
+python -m athar old.ifc new.ifc                          # raw JSON diff
+python -m athar old.ifc new.ifc --stream ndjson          # NDJSON records
+python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
+python -m athar old.ifc new.ifc --matcher-radius-m 0.5   # spatial fallback radius
 ```
+
+### Full Tool (`athar_layers`)
+
+Currently disabled pending rewiring to the current engine.
 
 ## Scripts
 
 - `scripts/inspect_ifc.py` — Print summary stats for an IFC file.
-- `scripts/make_modified_ifc.py` — Produce a modified copy of an IFC file for testing.
 - `scripts/inspect_ifc_identity.py` — Show project name/GlobalId and header timestamp.
 - `scripts/inspect_guid_overlap.py` — Show entity GUID overlap matrix between files.
-- `scripts/explore/canonical_reference_impl.py` — Executable reference for canonical value normalization (value grammar, ordering, and profiles).
-- `scripts/explore/generate_determinism_fixtures.py` — Regenerate frozen golden outputs for deterministic low-level diff/stream payloads and environment fingerprint fixture.
-- `scripts/explore/benchmark_diff_engine.py` — Reproducible runtime/peak-memory benchmark harness for `diff_graphs` and streaming modes (`ndjson`, `chunked_json`) on default or explicit IFC case pairs; captures per-case parser timings (`parse_ms`), supports iteration heartbeat logs (`--heartbeat-s`) with stage-aware coarse progress/ETA estimates (ETA rendered as `h m s` when needed), prints parse/heartbeat/mean/total durations in human form (`Xm Ys Zms`), includes end-to-end run totals in report `run_summary`, supports optional metric selection (`--metric`) to avoid unnecessary full reruns, and optional `--engine-timings` per-stage `diff_graphs` timing breakdowns from engine stats.
-- When `benchmark_diff_engine.py` runs without `--out`, it now auto-writes a timestamped JSON artifact under `docs/perf/`; use `ATHAR_BENCHMARK_NAME` to control the filename prefix.
-- `scripts/explore/benchmark_diff_engine.py` also supports live progress sidecar output (`--progress-file`) with run state + current case/metric/stage progress for external monitors.
-- For stream metrics, `benchmark_diff_engine` heartbeat uses emitted-record count progress (`items=...`) with ETA from observed throughput when expected stream record counts are derivable.
-- `athar/diff/engine.py` + `athar/diff/context.py` expose stage-progress callbacks used by benchmark heartbeats (`prepare_context` substeps, base-change scan progress, derived-marker completion).
-- `scripts/explore/benchmark_wl_backends.py` — WL refinement backend benchmark harness (`auto`, `sha256`, `xxh3_64`, `blake3`, `blake2b_64`) with runtime/peak-memory summaries.
-- `scripts/explore/check_wl_backend_consistency.py` — WL backend consistency checker that compares compact color/class partition fingerprints against `sha256` baseline per graph.
-- `scripts/explore/benchmark_owner_projection.py` — Rooted-owner projection benchmark comparing in-memory index vs disk-spill mode (`ATHAR_OWNER_INDEX_DISK_THRESHOLD`).
-- `scripts/explore/profile_prepare_context.py` — Isolated prepare-context profiler (parse once, benchmark `prepare_diff_context` only) with heartbeat, per-stage timing summaries, and optional `cProfile` top tables.
-- `scripts/explore/evaluate_matcher_quality.py` — Deterministic matcher quality harness (precision/recall/F1) across rooted remap, typed-path propagation, and secondary matching scenarios; prints per-scenario progress to stderr.
-- `scripts/explore/stress_determinism.py` — Repeated-run hash stability harness for `diff_graphs` and both stream modes; prints per-round progress (configurable via `--progress-every`) to stderr.
-- `scripts/explore/render_perf_summary.py` — Render benchmark/quality/stability JSON artifacts into a concise markdown summary, including optional `diff_graphs` stage timing tables when baseline artifacts include `engine_timings_ms`, parse timing tables, and suite-step status summaries when passed a perf-suite manifest.
-- `scripts/explore/render_perf_summary.py` also renders live suite heartbeat probe snapshots (when present in manifest `current_step`) for in-progress baseline visibility.
-- `scripts/explore/run_perf_suite.py` — Sequential overnight runner for baseline, WL benchmark, matcher quality, determinism stress, and final summary generation; supports bounded execution via per-step timeout, suite-level heartbeat logs (`--heartbeat-s`), scoped WL graph inputs, optional baseline stage-timing capture (`--baseline-engine-timings`), and resumable step skipping via `--resume` with incremental manifest checkpoints and run-state metadata.
-- `scripts/explore/run_perf_suite.py` can forward baseline sidecar progress output via `--baseline-progress-file`.
-- With `--heartbeat-s`, `run_perf_suite` heartbeat output can include nested baseline sidecar details (case/metric/stage/progress/eta).
-- While running, `run_perf_suite` manifest `current_step` can include latest heartbeat/probe snapshots for file-based monitoring.
-- `scripts/explore/watch_progress.py` — Poll and render concise live status from benchmark sidecar progress JSON (`--file`, `--interval-s`, optional `--follow`).
-- Watcher/status output includes stream counters (`items`) and emitted `bytes` when present in sidecar snapshots.
-- `scripts/explore/` — Exploratory/investigative scripts.
-- Benchmark harnesses should emit visible progress logs (graph/case/backend + iteration) for long runs.
+- `scripts/explore/` — Exploratory/investigative scripts (entity/relationship/pset inspectors).
 
 ## Testing
 
 ```bash
-python -m pytest tests/                          # full suite
-python -m pytest tests/test_graph_cache.py -q    # focused: cache module
-python -m pytest tests/test_diff_engine.py -q    # focused: engine core
-python -m pytest tests/test_engine.py -q  # focused: current engine path
-python -m pytest tests/test_engine_contracts.py -q
-python -m pytest tests/test_engine_package_boundaries.py -q
+make test                                        # full default suite (~3s)
+python -m pytest tests/test_matcher_core.py -q   # focused: matcher tiers
+python -m pytest tests/test_engine.py -q         # focused: engine end-to-end
+make test-large-acceptance                       # opt-in large IFC acceptance
 ```
 
-During active development, run only the focused tests relevant to your changes rather than the full suite. Run the full suite before committing.
+The default suite is fast because engine end-to-end tests run on small real
+fixtures: the `real-world-test/Building-Landscaping-v1/v2.ifc` IFC4 pair
+(~1.2MB each), `real-world-test/Duplex-Architecture.ifc` (2.3MB IFC2X3 — the
+only default-tier run through the IFC2X3 parse path), and
+`tests/fixtures/tiny_no_products.ifc` (empty-model edge case), plus tiny
+synthetic inputs. There are no multi-minute fixtures in the default path. The
+GUID-scramble metamorphic test generates its own scrambled variant of the small
+pair at test time, and the determinism test re-runs the full pipeline with the
+bundle cache cleared and asserts byte-identical output.
 
 Large acceptance tier is opt-in via `ATHAR_RUN_LARGE_ACCEPTANCE=1` (see `tests/test_acceptance_large_ifc.py`). Current repo-default corpus paths are:
 - `real-world-test/real-world-spanish-180mb.ifc` (primary large acceptance model)
-- `real-world-test/uni-project-house-50mb.ifc` (geometry-simplified companion)
-Path overrides are supported with `ATHAR_ACCEPTANCE_HOLY_GRAIL_PATH` and `ATHAR_ACCEPTANCE_SIMPLIFIED_PATH`.
+- `real-world-test/uni-project-house-50mb.ifc` (smaller unrelated companion model)
+Path overrides: `ATHAR_ACCEPTANCE_HOLY_GRAIL_PATH`, `ATHAR_ACCEPTANCE_SIMPLIFIED_PATH`. Optional per-test wall-clock bound: `ATHAR_ACCEPTANCE_TIMEOUT_S` (seconds).
+
+During active development, run only the focused tests relevant to your changes rather than the full suite. Run the full suite before committing.
 
 ## Dev practices
 
 - Don't write throwaway scripts. Save exploratory ones in `scripts/explore/`.
 - **Preserve knowledge during feature work.** Update README.md and AGENTS.md with what was built, why, and domain insights learned.
-- When a perf investigation yields concrete bottlenecks or measured stage timings, save a concise findings note under `docs/perf/` (facts only: command/context, key numbers, hotspots, and chosen follow-up actions).
+- When a perf investigation yields concrete bottlenecks or measured stage timings, save a concise findings note under `docs/perf/` (facts only: command/context, key numbers, hotspots, and chosen follow-up actions). Notes under `docs/perf/` are dated historical records; `docs/perf/STATUS.md` states what is still current.
 - Don't state obvious operational facts to the user (for example, that an already-running process won't pick up new code until restarted).
