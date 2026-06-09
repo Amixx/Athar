@@ -7,12 +7,10 @@ import os
 from collections import Counter
 from typing import Iterator
 
-from athar.bottom.constants import CANON_VERSION
+from athar.bottom.constants import CANON_VERSION, DEFAULT_MATCH_RADIUS_M
 from athar.bottom.signatures import build_signature_bundle
 from athar.delta.report import build_delta_report
-from athar.matcher.assignment import greedy_assign
-from athar.matcher.candidates import generate_candidates
-from athar.matcher.scoring import score_candidates
+from athar.matcher.core import DEFAULT_SPATIAL_PROBE_LIMIT, match_signatures
 
 _BUNDLE_CACHE: dict[tuple[str, int, int], object] = {}
 
@@ -32,15 +30,18 @@ def diff_files(
         new_bundle = _load_bundle(new_path)
     _assert_schema_compatible(old_bundle.schema, new_bundle.schema)
 
-    radius_m = _matcher_radius_from_policy(matcher_policy)
-    candidates = generate_candidates(old_bundle.signatures, new_bundle.signatures, radius_m=radius_m)
-    scored = score_candidates(candidates, old_bundle.signatures, new_bundle.signatures, radius_m=radius_m)
-    matches, unmatched_old, unmatched_new = greedy_assign(scored, old_bundle.signatures, new_bundle.signatures)
+    matches, unmatched_old, unmatched_new, matcher_diagnostics = match_signatures(
+        old_bundle.signatures,
+        new_bundle.signatures,
+        radius_m=_matcher_radius_from_policy(matcher_policy),
+        probe_limit=_probe_limit_from_policy(matcher_policy),
+    )
     report = build_delta_report(old_bundle, new_bundle, matches, unmatched_old, unmatched_new)
     report["stats"]["guid_collisions"] = {
         "old": _guid_collision_count(old_bundle.signatures),
         "new": _guid_collision_count(new_bundle.signatures),
     }
+    report["stats"]["matcher_diagnostics"] = matcher_diagnostics
     report["canon_version"] = CANON_VERSION
     return report
 
@@ -93,11 +94,24 @@ def _assert_schema_compatible(old_schema: str, new_schema: str) -> None:
 
 def _matcher_radius_from_policy(policy: dict | None) -> float:
     if not isinstance(policy, dict):
-        return 0.5
+        return DEFAULT_MATCH_RADIUS_M
     raw = policy.get("spatial_radius_m")
-    if isinstance(raw, (int, float)) and raw > 0:
-        return float(raw)
-    return 0.5
+    if raw is None:
+        return DEFAULT_MATCH_RADIUS_M
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw <= 0:
+        raise ValueError(f"matcher_policy.spatial_radius_m must be a positive number, got {raw!r}")
+    return float(raw)
+
+
+def _probe_limit_from_policy(policy: dict | None) -> int:
+    if not isinstance(policy, dict):
+        return DEFAULT_SPATIAL_PROBE_LIMIT
+    raw = policy.get("spatial_probe_limit")
+    if raw is None:
+        return DEFAULT_SPATIAL_PROBE_LIMIT
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        raise ValueError(f"matcher_policy.spatial_probe_limit must be a positive int, got {raw!r}")
+    return raw
 
 
 def _guid_collision_count(signatures) -> int:
