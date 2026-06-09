@@ -1,4 +1,4 @@
-"""Phase 1 confidence scoring."""
+"""Confidence scoring."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def score_candidates(
     *,
     radius_m: float = DEFAULT_MATCH_RADIUS_M,
 ) -> list[ScoredCandidate]:
-    """Score candidates with the Phase 1 confidence tiers."""
+    """Score candidates with confidence tiers."""
     dirty_old = _dirty_guids(old_signatures)
     dirty_new = _dirty_guids(new_signatures)
     radius_sq = radius_m * radius_m
@@ -48,6 +48,7 @@ def _score_pair(old_sig: SignatureVector, new_sig: SignatureVector, *, radius_sq
     same_guid = bool(old_sig.guid) and old_sig.guid == new_sig.guid
     same_class = old_sig.canonical_class == new_sig.canonical_class
     same_vector = _same_signature_vector(old_sig, new_sig)
+    same_tier2 = _same_tier2_signature(old_sig, new_sig)
     close = _close_enough(old_sig.centroid, new_sig.centroid, radius_sq=radius_sq)
 
     if same_guid and same_class and same_vector:
@@ -56,6 +57,8 @@ def _score_pair(old_sig: SignatureVector, new_sig: SignatureVector, *, radius_sq
         return 0.9
     if (not same_guid) and same_vector and close:
         return 0.8
+    if (not same_guid) and same_tier2 and close:
+        return 0.7
     if (not same_guid) and (not same_vector) and same_class and close:
         return 0.5
     if same_guid and not same_class:
@@ -69,6 +72,14 @@ def _same_signature_vector(a: SignatureVector, b: SignatureVector) -> bool:
         and a.vh_data == b.vh_data
         and a.vh_topology == b.vh_topology
         and a.placement == b.placement
+    )
+
+
+def _same_tier2_signature(a: SignatureVector, b: SignatureVector) -> bool:
+    return (
+        a.canonical_class == b.canonical_class
+        and bool(a.vh_topology)
+        and a.vh_topology == b.vh_topology
     )
 
 
@@ -89,4 +100,3 @@ def _close_enough(
 def _dirty_guids(signatures: dict[int, SignatureVector]) -> set[str]:
     counter = Counter(sig.guid for sig in signatures.values() if sig.guid)
     return {guid for guid, count in counter.items() if count > 1}
-

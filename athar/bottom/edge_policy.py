@@ -1,4 +1,4 @@
-"""Phase 1 edge classification contract."""
+"""Edge classification contract."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ class RelationshipRule:
     dynamic_domain: bool = False
 
 
-# Machine-readable relationship policy contract for Phase 1.
+# Machine-readable relationship policy contract.
 EDGE_POLICY_TABLE: tuple[RelationshipRule, ...] = (
     RelationshipRule("IfcRelDefinesByProperties", "RelatedObjects", "RelatingPropertyDefinition", EDGE_INCLUDE, DOMAIN_DATA),
     RelationshipRule("IfcRelAssociatesMaterial", "RelatedObjects", "RelatingMaterial", EDGE_INCLUDE, DOMAIN_DATA),

@@ -1,4 +1,4 @@
-"""Unified bottom-up Merkle hashing for Phase 1 signatures."""
+"""Unified bottom-up Merkle hashing for signatures."""
 
 from __future__ import annotations
 

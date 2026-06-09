@@ -1,4 +1,4 @@
-"""Phase 1 greedy assignment."""
+"""Greedy assignment."""
 
 from __future__ import annotations
 
@@ -39,4 +39,3 @@ def greedy_assign(
     unmatched_new = sorted(step_id for step_id in new_signatures if step_id not in used_new)
     matches.sort(key=lambda m: (m.old_step, m.new_step))
     return matches, unmatched_old, unmatched_new
-

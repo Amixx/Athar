@@ -1,4 +1,4 @@
-"""Core data contracts for the Phase 1 bottom layer."""
+"""Core data contracts for the bottom layer."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ class ClassifiedEdge:
 
 @dataclass
 class SignatureVector:
-    """Phase 1 product-level signature vector."""
+    """Product-level signature vector."""
 
     step_id: int
     guid: str | None
@@ -95,4 +95,3 @@ class SignatureBundle:
     signatures: dict[int, SignatureVector]
     diagnostics: ParseDiagnostics
     edge_stats: dict[str, int]
-

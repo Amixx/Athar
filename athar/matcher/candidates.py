@@ -1,4 +1,4 @@
-"""Phase 1 candidate generation."""
+"""Candidate generation."""
 
 from __future__ import annotations
 
@@ -53,6 +53,32 @@ def generate_candidates(
             continue
         new_unmatched_by_class[sig.canonical_class].append(sig)
 
+    # Tier 2 fallback: unique class+topology buckets.
+    # Keep this conservative (1:1 unique only) to avoid broad ambiguous expansion.
+    old_tier2 = _tier2_bucket(old_unmatched)
+    new_tier2 = _tier2_bucket(
+        [sig for sid, sig in new_signatures.items() if sid not in new_has_candidate]
+    )
+    for key, old_ids in old_tier2.items():
+        if len(old_ids) != 1:
+            continue
+        new_ids = new_tier2.get(key, [])
+        if len(new_ids) != 1:
+            continue
+        _insert(
+            candidates,
+            CandidatePair(old_step=old_ids[0], new_step=new_ids[0], reason="tier2_signature"),
+        )
+        old_has_candidate.add(old_ids[0])
+        new_has_candidate.add(new_ids[0])
+
+    old_unmatched = [s for sid, s in old_signatures.items() if sid not in old_has_candidate]
+    new_unmatched_by_class = defaultdict(list)
+    for sid, sig in new_signatures.items():
+        if sid in new_has_candidate:
+            continue
+        new_unmatched_by_class[sig.canonical_class].append(sig)
+
     radius_sq = radius_m * radius_m
     for old_sig in old_unmatched:
         old_centroid = old_sig.centroid
@@ -88,9 +114,20 @@ def _insert(store: dict[tuple[int, int], CandidatePair], candidate: CandidatePai
     if previous is None:
         store[key] = candidate
         return
-    priority = {"guid": 0, "geometry_hash": 1, "spatial_fallback": 2}
+    priority = {"guid": 0, "geometry_hash": 1, "tier2_signature": 2, "spatial_fallback": 3}
     if priority.get(candidate.reason, 99) < priority.get(previous.reason, 99):
         store[key] = candidate
+
+
+def _tier2_bucket(signatures: list[SignatureVector]) -> dict[tuple[str, str], list[int]]:
+    out: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for sig in signatures:
+        if not sig.vh_topology:
+            continue
+        out[(sig.canonical_class, sig.vh_topology)].append(sig.step_id)
+    for ids in out.values():
+        ids.sort()
+    return out
 
 
 def _dist_sq(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
@@ -98,4 +135,3 @@ def _dist_sq(a: tuple[float, float, float], b: tuple[float, float, float]) -> fl
     dy = a[1] - b[1]
     dz = a[2] - b[2]
     return dx * dx + dy * dy + dz * dz
-

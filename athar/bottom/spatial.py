@@ -1,4 +1,4 @@
-"""Placement and lightweight spatial feature extraction for Phase 1."""
+"""Placement and lightweight spatial feature extraction."""
 
 from __future__ import annotations
 

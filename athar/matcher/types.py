@@ -1,4 +1,4 @@
-"""Data contracts for Phase 1 matcher."""
+"""Data contracts for matcher."""
 
 from __future__ import annotations
 
@@ -26,4 +26,3 @@ class MatchedPair:
     new_step: int
     score: float
     reason: str
-

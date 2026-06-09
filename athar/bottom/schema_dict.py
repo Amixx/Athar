@@ -1,4 +1,4 @@
-"""Pinned schema dictionary helpers for Phase 1 parsing."""
+"""Pinned schema dictionary helpers for core parsing."""
 
 from __future__ import annotations
 

@@ -1,2 +1,1 @@
-"""Phase 1 matcher modules."""
-
+"""Matcher modules."""

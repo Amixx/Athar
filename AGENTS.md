@@ -16,8 +16,11 @@ Current runtime path is the engine rewrite (legacy CLI compatibility intentional
 
 - `athar/engine.py` — Orchestrates Bottom + Matcher + Delta layers for CLI/runtime.
 - `athar/bottom/` — New bottom-layer pipeline (`index.py`, `parser.py`, `link_inversion.py`, `edge_policy.py`, `merkle.py`, `wl_gossip.py`, `spatial.py`, `signatures.py`).
-- `athar/matcher/` — Phase 1 candidate generation, confidence scoring, and greedy assignment.
+- `athar/matcher/` — Candidate generation, confidence scoring, and greedy assignment.
+  - Candidate generation now includes a conservative Tier 2 fallback (`tier2_signature`) for unique unmatched `(canonical_class, vh_topology)` buckets before spatial fallback, so data/geometry churn can still recover 1:1 candidates without broad ambiguous fan-out.
 - `athar/delta/report.py` — Per-aspect change report assembly.
+  - Matched items include `change_scope` (`intrinsic|transitive|mixed|none`), conservative `conflict` downgrade metadata for fallback low-confidence transitive/mixed matches, and `data_hash` (`old`/`new` `vh_data`) for quick structured-data change inspection.
+  - Stats include matcher diagnostics for modified items: `modified_match_reasons` and `modified_score_bands` (`high|medium|low`).
 
 Schema policy for this path: support both IFC4 and IFC2X3, but only same-schema comparisons in one run (no IFC2X3↔IFC4 translation).
 Spatial fallback uses world-space centroid/AABB features by transforming collected geometry points with each entity's resolved `ObjectPlacement` matrix chain.
@@ -147,6 +150,11 @@ python -m pytest tests/test_engine_package_boundaries.py -q
 ```
 
 During active development, run only the focused tests relevant to your changes rather than the full suite. Run the full suite before committing.
+
+Large acceptance tier is opt-in via `ATHAR_RUN_LARGE_ACCEPTANCE=1` (see `tests/test_acceptance_large_ifc.py`). Current repo-default corpus paths are:
+- `real-world-test/real-world-spanish-180mb.ifc` (primary large acceptance model)
+- `real-world-test/uni-project-house-50mb.ifc` (geometry-simplified companion)
+Path overrides are supported with `ATHAR_ACCEPTANCE_HOLY_GRAIL_PATH` and `ATHAR_ACCEPTANCE_SIMPLIFIED_PATH`.
 
 ## Dev practices
 
