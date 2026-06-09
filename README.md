@@ -15,6 +15,9 @@ Athar now ships the current engine path as the default CLI flow:
 
 Schema support is **IFC4 and IFC2X3**, with a same-schema requirement per run (cross-schema translation is out of scope).
 Spatial fallback uses world-space centroid/AABB features (geometry points transformed by resolved `ObjectPlacement` matrices), and parser scalar canonicalization preserves numeric string literals like `"0"`/`"1"` as strings.
+Matcher candidate generation includes a conservative Tier 2 signature fallback (`canonical_class + vh_topology`, unique 1:1 buckets only) before spatial fallback.
+Delta items now include `change_scope` (`intrinsic|transitive|mixed|none`), conservative `conflict` downgrade metadata for low-confidence fallback transitive/mixed matches, and `data_hash` (`old/new vh_data`) visibility.
+Report stats include modified-item matcher diagnostics: `modified_match_reasons` and `modified_score_bands` (`high|medium|low`).
 This runtime is intentionally breaking: legacy graph-engine CLI flags are removed from the primary interface.
 
 ## Installation
@@ -94,6 +97,10 @@ See the [sample report](docs/SAMPLE_REPORT.md) for what the output looks like.
 python -m pytest tests/
 python -m pytest tests/test_engine.py -q
 python -m pytest tests/test_engine_contracts.py -q
+python -m pytest tests/test_delta_report.py -q
+python -m pytest tests/test_engine_regression_house_fixtures.py -q
+make test-small
+make test-medium
 ```
 
 Determinism fixtures for low-level output are stored in `tests/fixtures/determinism/`.
@@ -101,6 +108,23 @@ Regenerate them after intentional contract changes with:
 
 ```bash
 python -m scripts.explore.generate_determinism_fixtures
+```
+
+Large IFC acceptance checks are opt-in (so day-to-day unit runs stay fast):
+
+```bash
+ATHAR_RUN_LARGE_ACCEPTANCE=1 python -m pytest tests/test_acceptance_large_ifc.py -q
+make test-large-acceptance
+```
+
+Default acceptance corpus paths:
+- `real-world-test/real-world-spanish-180mb.ifc` (primary "holy grail" model)
+- `real-world-test/uni-project-house-50mb.ifc` (geometry-simplified companion)
+
+Override paths when needed:
+
+```bash
+ATHAR_RUN_LARGE_ACCEPTANCE=1 ATHAR_ACCEPTANCE_HOLY_GRAIL_PATH=/abs/path/a.ifc ATHAR_ACCEPTANCE_SIMPLIFIED_PATH=/abs/path/b.ifc python -m pytest tests/test_acceptance_large_ifc.py -q
 ```
 
 Benchmark baselines (runtime + peak Python memory) for `diff_graphs` and stream modes:
@@ -119,6 +143,13 @@ Run only one metric (recommended during active tuning loops):
 
 ```bash
 python -m scripts.explore.benchmark_diff_engine --case ifchouse:data/BasicHouse.ifc:data/BasicHouse.ifc --metric diff_graphs --warmup 0 --iterations 1 --engine-timings --heartbeat-s 15 --out /tmp/ifchouse-diff-only.json
+```
+
+Holy-grail pair quick targets (173MB university model + simplified companion):
+
+```bash
+make perf-holy-grail-serial
+make perf-holy-grail-parallel
 ```
 
 Profile `prepare_context` in isolation (parse once, context stage only):
@@ -149,6 +180,13 @@ Watch that sidecar in another terminal:
 
 ```bash
 python -m scripts.explore.watch_progress --file /tmp/ifchouse-progress.json --interval-s 2
+```
+
+Background-friendly wrappers:
+
+```bash
+make perf-rewrite-bg
+make perf-rewrite-watch
 ```
 
 Watcher output includes stream item counters and emitted bytes when available.
@@ -244,6 +282,7 @@ All long-running benchmark scripts emit progress logs to stderr (graph/case/back
 
 See [docs/LOW_LEVEL_CONTRACT.md](docs/LOW_LEVEL_CONTRACT.md) for the locked low-level wire/profile contract, and [docs/DETAILS.md](docs/DETAILS.md) for broader comparison logic, folder mode, file metadata, helper scripts, and test data.
 Performance harness notes and outputs live under `docs/perf/`.
+Current execution roadmap lives at `docs/HARDENING_SELECTIVE_PHASE2_PLAN.md`.
 
 ## Engine Reimplementation (WIP)
 

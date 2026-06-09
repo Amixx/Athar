@@ -1,4 +1,4 @@
-"""Simplified WL-style topology gossip for Phase 1."""
+"""Simplified WL-style topology gossip for the core engine."""
 
 from __future__ import annotations
 

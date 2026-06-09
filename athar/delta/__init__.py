@@ -1,2 +1,1 @@
-"""Phase 1 delta reporting."""
-
+"""Delta reporting."""

@@ -1,4 +1,4 @@
-"""Phase 1 signature assembly pipeline."""
+"""Core-engine signature assembly pipeline."""
 
 from __future__ import annotations
 
@@ -46,4 +46,3 @@ def build_signature_bundle(filepath: str) -> SignatureBundle:
         diagnostics=parsed.diagnostics,
         edge_stats=edge_stats(edges),
     )
-

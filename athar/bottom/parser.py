@@ -1,4 +1,4 @@
-"""Schema-aware IFC parser for the Phase 1 bottom layer."""
+"""Schema-aware IFC parser for the bottom layer."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def parse_ifc(filepath: str) -> ParseResult:
 def _assert_supported_schema(schema: str) -> None:
     if not any(schema.startswith(prefix) for prefix in SUPPORTED_SCHEMA_PREFIXES):
         allowed = ", ".join(SUPPORTED_SCHEMA_PREFIXES)
-        raise ValueError(f"Unsupported schema: {schema!r}. Phase 1 supports {allowed}.")
+        raise ValueError(f"Unsupported schema: {schema!r}. Current engine supports {allowed}.")
 
 
 def _extract_entity(ent, *, unit_context: dict[str, Any]) -> ParsedEntity:

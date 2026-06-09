@@ -23,7 +23,7 @@ def diff_files(
     *,
     matcher_policy: dict | None = None,
 ) -> dict:
-    """Diff two IFC files with the Phase 1 architecture."""
+    """Diff two IFC files with the current architecture."""
 
     old_bundle = _load_bundle(old_path)
     if old_path == new_path:

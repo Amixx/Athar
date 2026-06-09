@@ -1,4 +1,4 @@
-"""Phase 1 per-aspect delta report assembly."""
+"""Per-aspect delta report assembly."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ def build_delta_report(
     unmatched_old: list[int],
     unmatched_new: list[int],
 ) -> dict:
-    """Build a structured change report for Phase 1."""
+    """Build a structured change report."""
     old_signatures = old_bundle.signatures
     new_signatures = new_bundle.signatures
 
@@ -26,11 +26,19 @@ def build_delta_report(
         if old_sig is None or new_sig is None:
             continue
         aspects = _aspect_diff(old_sig, new_sig)
+        change_scope = _change_scope(aspects)
+        conflict = _conflict_status(pair.reason, pair.score, change_scope)
         item = {
             "old": _entity_summary(old_sig),
             "new": _entity_summary(new_sig),
             "match": {"score": pair.score, "reason": pair.reason},
             "aspects": aspects,
+            "data_hash": {
+                "old": old_sig.vh_data,
+                "new": new_sig.vh_data,
+            },
+            "change_scope": change_scope,
+            "conflict": conflict,
         }
         if any(value == "changed" for key, value in aspects.items() if key != "placement_delta_mm"):
             modified.append(item)
@@ -60,6 +68,10 @@ def build_delta_report(
             "new_diagnostics": _diagnostic_summary(new_bundle),
             "old_edge_stats": old_bundle.edge_stats,
             "new_edge_stats": new_bundle.edge_stats,
+            "modified_change_scope": _scope_stats(modified),
+            "modified_conflicts": _conflict_stats(modified),
+            "modified_match_reasons": _match_reason_stats(modified),
+            "modified_score_bands": _score_band_stats(modified),
         },
         "added": added,
         "deleted": deleted,
@@ -110,3 +122,74 @@ def _diagnostic_summary(bundle: SignatureBundle) -> dict:
         "cycle_breaks": bundle.diagnostics.cycle_breaks,
         "warnings": list(bundle.diagnostics.warnings),
     }
+
+
+def _change_scope(aspects: dict) -> str:
+    intrinsic_changed = any(
+        aspects.get(name) == "changed"
+        for name in ("geometry", "data", "placement")
+    )
+    transitive_changed = aspects.get("topology") == "changed"
+    if intrinsic_changed and transitive_changed:
+        return "mixed"
+    if intrinsic_changed:
+        return "intrinsic"
+    if transitive_changed:
+        return "transitive"
+    return "none"
+
+
+def _scope_stats(modified: list[dict]) -> dict[str, int]:
+    out = {"intrinsic": 0, "transitive": 0, "mixed": 0}
+    for item in modified:
+        scope = item.get("change_scope")
+        if scope in out:
+            out[scope] += 1
+    return out
+
+
+def _conflict_status(reason: str, score: float, change_scope: str) -> dict[str, str | bool]:
+    downgraded_reasons = {"spatial_fallback", "tier2_signature"}
+    downgraded = (
+        reason in downgraded_reasons
+        and score < 0.75
+        and change_scope in {"mixed", "transitive"}
+    )
+    return {
+        "downgraded": downgraded,
+        "rule": "fallback_low_confidence_transitive_or_mixed" if downgraded else "none",
+    }
+
+
+def _conflict_stats(modified: list[dict]) -> dict[str, int]:
+    downgraded = sum(1 for item in modified if item.get("conflict", {}).get("downgraded") is True)
+    return {
+        "downgraded": downgraded,
+        "normal": max(len(modified) - downgraded, 0),
+    }
+
+
+def _match_reason_stats(modified: list[dict]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for item in modified:
+        reason = item.get("match", {}).get("reason")
+        if not isinstance(reason, str):
+            continue
+        out[reason] = out.get(reason, 0) + 1
+    return dict(sorted(out.items()))
+
+
+def _score_band_stats(modified: list[dict]) -> dict[str, int]:
+    out = {"high": 0, "medium": 0, "low": 0}
+    for item in modified:
+        score = item.get("match", {}).get("score")
+        if not isinstance(score, (int, float)):
+            continue
+        value = float(score)
+        if value >= 0.9:
+            out["high"] += 1
+        elif value >= 0.6:
+            out["medium"] += 1
+        else:
+            out["low"] += 1
+    return out

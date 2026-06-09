@@ -18,3 +18,9 @@ include = ["athar*", "athar_layers*"]
 
 [project.scripts]
 athar = "athar.__main__:main"
+
+[tool.pytest.ini_options]
+markers = [
+  "large_acceptance: opt-in large IFC acceptance coverage",
+  "medium_regression: medium-weight regression checks on house fixtures",
+]

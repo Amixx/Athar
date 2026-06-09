@@ -29,7 +29,7 @@ def main() -> None:
         "--matcher-radius-m",
         type=float,
         default=0.5,
-        help="Spatial fallback radius in meters (Phase 1 default: 0.5m)",
+        help="Spatial fallback radius in meters (default: 0.5m)",
     )
     args = parser.parse_args()
     if not args.old or not args.new:

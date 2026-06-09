@@ -4,6 +4,7 @@ This folder stores reproducible benchmark outputs for the low-level diff engine.
 
 Most recent concrete hotspot analysis:
 
+- `docs/perf/FINDINGS_prepare_context_parallel_seed_wait_2026-04-02.md`
 - `docs/perf/FINDINGS_ifchouse_same_input_2026-03-12.md`
 - `docs/perf/FINDINGS_house_v1_v2_diff_only_2026-03-12.md`
 
@@ -12,7 +13,7 @@ Most recent concrete hotspot analysis:
 Use:
 
 ```bash
-python -m scripts.explore.benchmark_diff_engine --warmup 1 --iterations 2 --out docs/perf/batch11_baseline_YYYY-MM-DD.json
+python -m scripts.explore.benchmark_diff_engine --warmup 0 --iterations 1 --engine-timings --heartbeat-s 20 --out docs/perf/baseline_rewrite_YYYY-MM-DD.json
 ```
 
 During dev loops, run only one metric to avoid triple full-engine runs:
@@ -24,19 +25,19 @@ python -m scripts.explore.benchmark_diff_engine --metric diff_graphs --warmup 0 
 Optional bottleneck breakdown for `diff_graphs` stage timings:
 
 ```bash
-python -m scripts.explore.benchmark_diff_engine --warmup 0 --iterations 1 --engine-timings --out docs/perf/batch11_baseline_YYYY-MM-DD.json
+python -m scripts.explore.benchmark_diff_engine --warmup 0 --iterations 1 --metric diff_graphs --engine-timings --heartbeat-s 20 --out docs/perf/baseline_rewrite_YYYY-MM-DD.json
 ```
 
 Force iteration heartbeats every 15s while long metrics are running:
 
 ```bash
-python -m scripts.explore.benchmark_diff_engine --warmup 0 --iterations 1 --heartbeat-s 15 --out docs/perf/batch11_baseline_YYYY-MM-DD.json
+python -m scripts.explore.benchmark_diff_engine --warmup 0 --iterations 1 --heartbeat-s 20 --out docs/perf/baseline_rewrite_YYYY-MM-DD.json
 ```
 
 Write live progress snapshots to a sidecar JSON file:
 
 ```bash
-python -m scripts.explore.benchmark_diff_engine --warmup 0 --iterations 1 --progress-file /tmp/benchmark-progress.json --out docs/perf/batch11_baseline_YYYY-MM-DD.json
+python -m scripts.explore.benchmark_diff_engine --warmup 0 --iterations 1 --progress-file /tmp/benchmark-progress.json --out docs/perf/baseline_rewrite_YYYY-MM-DD.json
 ```
 
 Watch sidecar progress in a separate terminal:
