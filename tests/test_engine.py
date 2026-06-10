@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import json
-import uuid
-from pathlib import Path
 
-import ifcopenshell
-import ifcopenshell.guid
 import pytest
 
 from athar.bottom.constants import SUPPORTED_SCHEMA_PREFIXES
@@ -16,58 +12,18 @@ from athar.bottom.types import EntityRef, ParseDiagnostics, ParseResult, ParsedE
 from athar.bottom.wl_gossip import compute_topology_hashes
 from athar.engine import _assert_schema_compatible, _guid_collision_count
 from athar.engine import diff_files, stream_diff_files
+from tests.corpus import CORPUS, corpus_path
 
-
-REAL_WORLD = Path(__file__).resolve().parent.parent / "real-world-test"
-FIXTURES = Path(__file__).resolve().parent / "fixtures"
-OLD_IFC = str(REAL_WORLD / "Building-Landscaping-v1.ifc")
-NEW_IFC = str(REAL_WORLD / "Building-Landscaping-v2.ifc")
-IFC2X3_MODEL = str(REAL_WORLD / "Duplex-Architecture.ifc")
-EMPTY_MODEL = str(FIXTURES / "tiny_no_products.ifc")
+OLD_IFC = str(CORPUS["bl_v1"].path)
+NEW_IFC = str(CORPUS["bl_v2"].path)
+EMPTY_MODEL = str(CORPUS["tiny_no_products"].path)
 SECTIONS = ("added", "deleted", "modified", "unchanged")
-_GUID_SCRAMBLE_NAMESPACE = uuid.UUID("f43a7c2b-8fd4-4d2d-9898-8891d75432b2")
 
 
-def _require_real_content(path: str) -> None:
-    with open(path, "rb") as fh:
-        if fh.read(64).startswith(b"version https://git-lfs"):
-            pytest.fail(f"{path} is an unfetched git-lfs pointer; run `git lfs pull`")
-
-
-_require_real_content(OLD_IFC)
-_require_real_content(NEW_IFC)
-_require_real_content(IFC2X3_MODEL)
-
-
-@pytest.fixture(scope="module")
-def guid_scrambled_pair(tmp_path_factory):
-    """(clean, scrambled) copies of NEW_IFC that differ only in GlobalId values.
-
-    Both files go through the same ifcopenshell write path so the GUID rewrite
-    is the only delta between them.
-    """
-    base = tmp_path_factory.mktemp("guid-scramble")
-    clean = str(base / "clean.ifc")
-    scrambled = str(base / "scrambled.ifc")
-    model = ifcopenshell.open(NEW_IFC)
-    model.write(clean)
-    for entity in model:
-        if not hasattr(entity, "GlobalId"):
-            continue
-        guid = entity.GlobalId
-        if isinstance(guid, str) and guid.strip():
-            entity.GlobalId = ifcopenshell.guid.compress(uuid.uuid5(_GUID_SCRAMBLE_NAMESPACE, guid).hex)
-    model.write(scrambled)
-    return clean, scrambled
-
-
-def test_engine_diff_same_file_is_unchanged():
-    report = diff_files(OLD_IFC, OLD_IFC)
-    assert report["stats"]["added"] == 0
-    assert report["stats"]["deleted"] == 0
-    assert report["stats"]["modified"] == 0
-    assert report["stats"]["unchanged"] > 0
-    assert report["canon_version"] == "athar-canon-v1"
+@pytest.fixture(scope="module", autouse=True)
+def _corpus_files_present():
+    for key in ("bl_v1", "bl_v2", "tiny_no_products"):
+        corpus_path(key)
 
 
 def test_engine_diff_detects_changes_between_versions():
@@ -84,43 +40,8 @@ def test_engine_diff_detects_changes_between_versions():
     assert report["stats"]["deleted"] == 1
     assert report["stats"]["modified"] == 7
     assert report["stats"]["unchanged"] == 0
-    assert report["stats"]["modified_match_reasons"] == {"guid": 7}
+    assert report["stats"]["matcher_diagnostics"]["matched_by_tier"] == {"guid": 7, "geometry_hash": 0}
     assert report["stats"]["modified_change_scope"] == {"intrinsic": 0, "transitive": 7, "mixed": 0}
-
-
-def test_engine_report_sections_and_stats_are_consistent():
-    report = diff_files(OLD_IFC, NEW_IFC)
-    stats = report["stats"]
-    for section in SECTIONS:
-        assert stats[section] == len(report[section])
-    assert stats["deleted"] + stats["modified"] + stats["unchanged"] == stats["old_signatures"]
-    assert stats["added"] + stats["modified"] + stats["unchanged"] == stats["new_signatures"]
-    assert stats["dropped_matches"] == 0
-
-
-def test_engine_report_matcher_diagnostics_are_consistent():
-    report = diff_files(OLD_IFC, NEW_IFC)
-    stats = report["stats"]
-    diag = stats["matcher_diagnostics"]
-    assert diag["pools"] == {"old": stats["old_signatures"], "new": stats["new_signatures"]}
-    assert diag["unmatched"] == {"old": stats["deleted"], "new": stats["added"]}
-    assert sum(diag["matched_by_tier"].values()) == stats["modified"] + stats["unchanged"]
-
-
-def test_engine_guid_scramble_alone_yields_zero_diff(guid_scrambled_pair):
-    # Metamorphic invariant: rewriting every GlobalId must not invent any
-    # added/deleted/modified entities; identity is recovered through the
-    # structural tiers without GlobalId evidence.
-    clean, scrambled = guid_scrambled_pair
-    report = diff_files(clean, scrambled)
-    stats = report["stats"]
-    assert stats["added"] == 0
-    assert stats["deleted"] == 0
-    assert stats["modified"] == 0
-    assert stats["unchanged"] == stats["new_signatures"] > 0
-    diag = stats["matcher_diagnostics"]
-    assert diag["matched_by_tier"]["guid"] == 0
-    assert sum(diag["matched_by_tier"].values()) == stats["unchanged"]
 
 
 def test_engine_metamorphic_step_renumbering_is_stable():
@@ -158,17 +79,6 @@ def test_engine_rejects_cross_schema_comparison():
     _assert_schema_compatible("IFC4", "IFC4")
     with pytest.raises(ValueError, match="Schema mismatch"):
         _assert_schema_compatible("IFC2X3", "IFC4")
-
-
-def test_engine_ifc2x3_same_file_is_unchanged():
-    # The Building-Landscaping pair is IFC4; this is the only default-tier
-    # end-to-end run through the IFC2X3 parse path (spatial roots, schema dict).
-    report = diff_files(IFC2X3_MODEL, IFC2X3_MODEL)
-    assert report["schemas"] == {"old": "IFC2X3", "new": "IFC2X3"}
-    assert report["stats"]["added"] == 0
-    assert report["stats"]["deleted"] == 0
-    assert report["stats"]["modified"] == 0
-    assert report["stats"]["unchanged"] > 100
 
 
 def test_engine_model_without_products_yields_empty_report():

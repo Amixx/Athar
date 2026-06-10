@@ -22,9 +22,9 @@ Pure Python. Pipeline: parse → signatures → tiered matching → delta report
   - `wl_gossip.py` — WL-style topology hash `vh_topology` from a self seed (`class|vh_geometry|vh_data`) plus context (k=1) and spatial (k=2) neighbor seeds.
   - `spatial.py` — Resolves `ObjectPlacement` matrix chains; emits world-space quantized placement matrix, centroid, and AABB per product.
   - `signatures.py` — Assembles per-product/spatial `SignatureVector`s into a `SignatureBundle` (signatures + diagnostics + edge stats only; the full parse result is not retained).
-- `athar/matcher/core.py` — Tiered pool-reduction matching (`match_signatures`). Each tier examines only still-unmatched pools and emits disjoint 1:1 pairs; there are no candidate lists, no scoring pass, and no assignment step, so memory stays O(N) and ambiguity is resolved by construction. Tiers, strongest first: unique GlobalId + same class (score 1.0 when the full vector is identical, else 0.9); same-class full signature-vector equality zipped in step order (`geometry_hash`, 0.8); globally unique `(canonical_class, vh_topology)` bucket with proximity sanity (`tier2_signature`, 0.7); class-compatible spatial fallback via exact-centroid zip or uniform-grid nearest neighbour within `radius_m` (`spatial_fallback`, 0.5). Every tier keys on canonical class, so matched pairs never cross classes. Duplicated GlobalIds are never identity evidence — those entities fall through to the structural tiers. The only safety valve is `spatial_probe_limit` (default 128 grid probes per entity, policy key `spatial_probe_limit`): a capped entity is left unmatched rather than matched approximately, surfaced in diagnostics as `spatial.probe_capped`.
-- `athar/delta/report.py` — Per-aspect change report assembly. Sections `added/deleted/modified/unchanged`; matched items carry `match{score,reason}`, per-aspect `changed/unchanged` for `geometry/data/topology/placement` plus `placement_delta_mm`, `data_hash{old,new}`, `change_scope` (`intrinsic|transitive|mixed|none`), and conservative `conflict` downgrade metadata for low-confidence fallback transitive/mixed matches. Stats cover section counts, signature counts, parse diagnostics, edge stats, `modified_change_scope`, `modified_conflicts`, `modified_match_reasons`, `modified_score_bands` (`high|medium|low`), and `dropped_matches`.
-- `athar/__main__.py` — Minimal CLI: `--stream ndjson|chunked_json`, `--chunk-size`, `--matcher-radius-m`. Errors print to stderr and exit 1.
+- `athar/matcher/core.py` — Tiered pool-reduction matching (`match_signatures`, no tuning knobs). Each tier examines only still-unmatched pools and emits disjoint 1:1 pairs; there are no candidate lists, no scoring pass, and no assignment step, so memory stays O(N) and ambiguity is resolved by construction. Tiers, strongest first: unique GlobalId + same class (score 1.0 when the full vector is identical, else 0.9); same-class full signature-vector equality zipped in step order (`geometry_hash`, 0.8). Anything weaker is reported as added+deleted rather than guessed — the 2026-06 corpus survey (`docs/corpus/2026-06-10-corpus-survey.md`) showed the former topology-unique and spatial-nearest fallback tiers never fired on a real revision pair and only produced cross-model container matches. Every tier keys on canonical class, so matched pairs never cross classes. Duplicated GlobalIds are never identity evidence — those entities fall through to the vector tier.
+- `athar/delta/report.py` — Per-aspect change report assembly. Sections `added/deleted/modified/unchanged`; matched items carry `match{score,reason}`, per-aspect `changed/unchanged` for `geometry/data/topology/placement` plus `placement_delta_mm`, `data_hash{old,new}`, and `change_scope` (`intrinsic|transitive|mixed|none`). Stats cover section counts, signature counts, parse diagnostics, edge stats, `modified_change_scope`, and `dropped_matches`. Because `geometry_hash` matches equal full vectors, every `modified` item is by construction a guid match with score 0.9.
+- `athar/__main__.py` — Minimal CLI: `--stream ndjson|chunked_json`, `--chunk-size`. Errors print to stderr and exit 1.
 
 Schema policy: IFC4 and IFC2X3 are both supported, but only same-schema comparisons in one run (no IFC2X3↔IFC4 translation).
 
@@ -41,8 +41,8 @@ Detailed information for these components can be found in [athar_layers/AGENTS.m
 - Layering inside the engine: `athar/bottom/` is self-contained; `athar/matcher/` may depend on `athar/bottom/` types; `athar/delta/` may depend on both; `athar/engine.py` orchestrates all three.
 - Use `ifcopenshell` for all IFC parsing. Do not parse STEP files as text.
 - Keep diffing deterministic and algorithmic — no AI in the diff pipeline itself.
-- Identity is evidence-tiered: unique GlobalIds are the strongest signal, but duplicated GlobalIds must never become identity evidence, and GUID-free recovery (vector/topology/spatial tiers) must stay conservative — 1:1 by construction, no ambiguous fan-out.
-- Matching quality is prioritized over throughput: preserve correct entity alignment (`modified`) rather than collapsing into `added/deleted`; keep cutoffs conservative and use safety valves (`spatial_probe_limit`) only for pathological inputs, surfaced via diagnostics.
+- Identity is evidence-tiered and conservative: unique GlobalIds are the strongest signal, duplicated GlobalIds must never become identity evidence, and GUID-free recovery is limited to full signature-vector equality — 1:1 by construction, no ambiguous fan-out. Weaker evidence (shared topology, spatial proximity) is reported as added+deleted, not matched; do not reintroduce inference tiers without corpus evidence of a real revision pair that needs them.
+- Matching quality is prioritized over throughput: preserve correct entity alignment (`modified`) for evidenced matches rather than collapsing into `added/deleted`, but never invent alignment from weak evidence.
 - Output structured JSON. Human-readable summaries are a presentation concern, not a diff concern.
 - No deep B-rep geometry comparison. Signatures hash geometry-domain subgraphs and compare placement matrices/spatial features only.
 - Prefer a repo-local `.venv` for development. Verified local workflow is `make dev-setup` then `make test`.
@@ -55,7 +55,6 @@ Detailed information for these components can be found in [athar_layers/AGENTS.m
 python -m athar old.ifc new.ifc                          # raw JSON diff
 python -m athar old.ifc new.ifc --stream ndjson          # NDJSON records
 python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
-python -m athar old.ifc new.ifc --matcher-radius-m 0.5   # spatial fallback radius
 ```
 
 ### Full Tool (`athar_layers`)
@@ -67,31 +66,43 @@ Currently disabled pending rewiring to the current engine.
 - `scripts/inspect_ifc.py` — Print summary stats for an IFC file.
 - `scripts/inspect_ifc_identity.py` — Show project name/GlobalId and header timestamp.
 - `scripts/inspect_guid_overlap.py` — Show entity GUID overlap matrix between files.
-- `scripts/explore/` — Exploratory/investigative scripts (entity/relationship/pset inspectors).
+- `scripts/explore/` — Exploratory/investigative scripts (entity/relationship/pset inspectors; `corpus_survey.py` regenerates the corpus survey JSON behind `docs/corpus/`).
 
 ## Testing
 
 ```bash
-make test                                        # full default suite (~3s)
-python -m pytest tests/test_matcher_core.py -q   # focused: matcher tiers
-python -m pytest tests/test_engine.py -q         # focused: engine end-to-end
-make test-large-acceptance                       # opt-in large IFC acceptance
+make test                                          # full default suite (~10s)
+python -m pytest tests/test_matcher_core.py -q     # focused: matcher tiers
+python -m pytest tests/test_engine.py -q           # focused: engine end-to-end
+python -m pytest tests/test_corpus_invariants.py -q  # focused: corpus invariants
+make test-large-acceptance                         # opt-in large IFC acceptance
 ```
 
-The default suite is fast because engine end-to-end tests run on small real
-fixtures: the `real-world-test/Building-Landscaping-v1/v2.ifc` IFC4 pair
-(~1.2MB each), `real-world-test/Duplex-Architecture.ifc` (2.3MB IFC2X3 — the
-only default-tier run through the IFC2X3 parse path), and
-`tests/fixtures/tiny_no_products.ifc` (empty-model edge case), plus tiny
-synthetic inputs. There are no multi-minute fixtures in the default path. The
-GUID-scramble metamorphic test generates its own scrambled variant of the small
-pair at test time, and the determinism test re-runs the full pipeline with the
-bundle cache cleared and asserts byte-identical output.
+The corpus registry lives in `tests/corpus.py`: repo LFS files (fail loudly on
+unfetched pointers) plus an optional external corpus (default
+`../vscode-ifc/test-files`, override `ATHAR_EXTERNAL_CORPUS_DIR`; absent files
+skip). It also provides the shared report-invariant assertions (accounting,
+1:1 matching, class safety, score/reason consistency, change-scope
+consistency) used by both tiers.
 
-Large acceptance tier is opt-in via `ATHAR_RUN_LARGE_ACCEPTANCE=1` (see `tests/test_acceptance_large_ifc.py`). Current repo-default corpus paths are:
-- `real-world-test/real-world-spanish-180mb.ifc` (primary large acceptance model)
-- `real-world-test/uni-project-house-50mb.ifc` (smaller unrelated companion model)
-Path overrides: `ATHAR_ACCEPTANCE_HOLY_GRAIL_PATH`, `ATHAR_ACCEPTANCE_SIMPLIFIED_PATH`. Optional per-test wall-clock bound: `ATHAR_ACCEPTANCE_TIMEOUT_S` (seconds).
+The default tier (`tests/test_corpus_invariants.py` plus the engine/matcher/
+report tests) runs invariants over every small corpus file (≤2.4MB: the
+Building-Landscaping v0→v3 IFC4 revision chain, Duplex-Architecture IFC2X3,
+small external samples, `tests/fixtures/tiny_no_products.ifc`): same-file zero
+diff, revision-pair invariants, GUID-scramble metamorphics, generated
+duplicate-GUID and dangling-ref variants, cross-schema rejection. There are no
+multi-minute fixtures in the default path; the determinism test re-runs the
+full pipeline with the bundle cache cleared and asserts byte-identical output.
+
+The large acceptance tier is opt-in via `ATHAR_RUN_LARGE_ACCEPTANCE=1` (see
+`tests/test_acceptance_large_ifc.py`): same-file invariants over the
+medium/large corpus (8MB–182MB), the real `AdvancedProject.ifc` → `adv proj
+changed.ifc` 44MB revision pair, discipline pairs (Duplex, Revit), unrelated
+pairs (`real-world-spanish-180mb.ifc` ↔ `uni-project-house-50mb.ifc`,
+`BasicHouse` ↔ `AdvancedProject`), and a 44MB GUID-scramble. Missing files
+skip individually. Optional per-test wall-clock bound:
+`ATHAR_ACCEPTANCE_TIMEOUT_S` (seconds). Corpus facts (sizes, schemas,
+signature counts, tier distributions, runtimes): `docs/corpus/`.
 
 During active development, run only the focused tests relevant to your changes rather than the full suite. Run the full suite before committing.
 
@@ -99,5 +110,5 @@ During active development, run only the focused tests relevant to your changes r
 
 - Don't write throwaway scripts. Save exploratory ones in `scripts/explore/`.
 - **Preserve knowledge during feature work.** Update README.md and AGENTS.md with what was built, why, and domain insights learned.
-- When a perf investigation yields concrete bottlenecks or measured stage timings, save a concise findings note under `docs/perf/` (facts only: command/context, key numbers, hotspots, and chosen follow-up actions). Notes under `docs/perf/` are dated historical records; `docs/perf/STATUS.md` states what is still current.
+- When a perf investigation yields concrete bottlenecks or measured stage timings, save a concise findings note under `docs/perf/` (facts only: command/context, key numbers, hotspots, and chosen follow-up actions). Notes under `docs/perf/` are dated historical records; `docs/perf/STATUS.md` states what is still current. Corpus measurements (file inventory, pair shapes, tier distributions) follow the same pattern under `docs/corpus/`.
 - Don't state obvious operational facts to the user (for example, that an already-running process won't pick up new code until restarted).

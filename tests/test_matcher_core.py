@@ -1,5 +1,3 @@
-import pytest
-
 from athar.bottom.types import SignatureVector
 from athar.matcher.core import match_signatures
 
@@ -159,7 +157,7 @@ def test_identical_vectors_with_different_classes_never_match():
     assert unmatched_old == [1] and unmatched_new == [10]
 
 
-def test_vector_zip_leftovers_fall_through_to_weaker_tiers():
+def test_vector_zip_leftovers_stay_unmatched():
     shared = dict(geom="g", data="d", topo="t", centroid=(0.0, 0.0, 0.0))
     old = {1: _sig(1, **shared), 2: _sig(2, **shared)}
     new = {10: _sig(10, **shared)}
@@ -170,137 +168,32 @@ def test_vector_zip_leftovers_fall_through_to_weaker_tiers():
     assert unmatched_old == [2]
 
 
-# --- tier 3: unique (class, topology) bucket ---
+# --- weaker evidence never matches (conservative added+deleted) ---
+#
+# The 2026-06 corpus survey showed topology-only and proximity-only matching
+# never fired on a real revision pair and only paired entities across models;
+# those tiers were removed. These scenarios must now stay unmatched.
 
 
-def test_unique_class_topology_bucket_matches_with_proximity_sanity():
+def test_shared_topology_alone_never_matches():
     old = {1: _sig(1, geom="g-old", data="d-old", topo="t-shared", centroid=(0.0, 0.0, 0.0))}
     new = {10: _sig(10, geom="g-new", data="d-new", topo="t-shared", centroid=(0.2, 0.0, 0.0))}
 
-    matches, _, _, _ = match_signatures(old, new)
-
-    item = _by_pair(matches)[(1, 10)]
-    assert item.reason == "tier2_signature"
-    assert item.score == 0.7
-
-
-def test_unique_class_topology_bucket_rejects_far_apart_pairs():
-    old = {1: _sig(1, geom="g-old", data="d-old", topo="t-shared", centroid=(0.0, 0.0, 0.0))}
-    new = {10: _sig(10, geom="g-new", data="d-new", topo="t-shared", centroid=(10.0, 0.0, 0.0))}
-
-    matches, unmatched_old, unmatched_new, _ = match_signatures(old, new, radius_m=0.5)
+    matches, unmatched_old, unmatched_new, _ = match_signatures(old, new)
 
     assert matches == []
     assert unmatched_old == [1] and unmatched_new == [10]
 
 
-def test_unique_class_topology_bucket_matches_when_both_centroids_missing():
-    old = {1: _sig(1, geom="g-old", data="d-old", topo="t-shared", centroid=None)}
-    new = {10: _sig(10, geom="g-new", data="d-new", topo="t-shared", centroid=None)}
+def test_shared_position_alone_never_matches():
+    shared_centroid = (5.0, 5.0, 5.0)
+    old = {1: _sig(1, geom="g1", data="d1", topo="t1", centroid=shared_centroid)}
+    new = {10: _sig(10, geom="g2", data="d2", topo="t2", centroid=shared_centroid)}
 
-    matches, _, _, _ = match_signatures(old, new)
-
-    assert _by_pair(matches)[(1, 10)].score == 0.7
-
-
-def test_unique_class_topology_bucket_rejects_asymmetric_centroid_evidence():
-    old = {1: _sig(1, geom="g-old", data="d-old", topo="t-shared", centroid=None)}
-    new = {10: _sig(10, geom="g-new", data="d-new", topo="t-shared", centroid=(0.0, 0.0, 0.0))}
-
-    matches, _, _, _ = match_signatures(old, new)
+    matches, unmatched_old, unmatched_new, _ = match_signatures(old, new)
 
     assert matches == []
-
-
-def test_ambiguous_class_topology_bucket_is_skipped_and_resolved_spatially():
-    old = {
-        1: _sig(1, geom="g1", data="d1", topo="t-shared", centroid=(0.0, 0.0, 0.0)),
-        2: _sig(2, geom="g2", data="d2", topo="t-shared", centroid=(10.0, 0.0, 0.0)),
-    }
-    new = {10: _sig(10, geom="g3", data="d3", topo="t-shared", centroid=(0.1, 0.0, 0.0))}
-
-    matches, unmatched_old, _, _ = match_signatures(old, new, radius_m=0.5)
-
-    item = _by_pair(matches)[(1, 10)]
-    assert item.reason == "spatial_fallback"
-    assert item.score == 0.5
-    assert unmatched_old == [2]
-
-
-# --- tier 4: spatial fallback ---
-
-
-def test_spatial_fallback_prefers_nearest_not_lowest_step_id():
-    old = {
-        1: _sig(1, geom="g1", data="d1", topo="t1", centroid=(0.4, 0.0, 0.0)),
-        2: _sig(2, geom="g2", data="d2", topo="t2", centroid=(0.1, 0.0, 0.0)),
-    }
-    new = {10: _sig(10, geom="g3", data="d3", topo="t3", centroid=(0.0, 0.0, 0.0))}
-
-    matches, unmatched_old, _, _ = match_signatures(old, new, radius_m=0.5)
-
-    assert set(_by_pair(matches)) == {(2, 10)}
-    assert unmatched_old == [1]
-
-
-def test_spatial_fallback_is_class_compatible():
-    old = {1: _sig(1, klass="IfcBeam", geom="g1", data="d1", topo="t1", centroid=(0.0, 0.0, 0.0))}
-    new = {10: _sig(10, klass="IfcWall", geom="g2", data="d2", topo="t2", centroid=(0.0, 0.0, 0.0))}
-
-    matches, _, _, _ = match_signatures(old, new)
-
-    assert matches == []
-
-
-def test_spatial_fallback_zips_equal_positions_without_pair_blowup():
-    n = 200
-    old = {i: _sig(i, geom=f"g{i}", data=f"d{i}", topo=f"t{i}", centroid=(5.0, 5.0, 5.0)) for i in range(1, n + 1)}
-    new = {
-        i + 1000: _sig(i + 1000, geom=f"G{i}", data=f"D{i}", topo=f"T{i}", centroid=(5.0, 5.0, 5.0))
-        for i in range(1, n + 1)
-    }
-
-    matches, unmatched_old, unmatched_new, diag = match_signatures(old, new)
-
-    assert len(matches) == n
-    assert diag["spatial"]["position_zip"] == n
-    assert diag["spatial"]["probe_capped"] == 0
-    assert unmatched_old == [] and unmatched_new == []
-
-
-def test_spatial_probe_cap_declines_match_instead_of_approximating():
-    old = {1: _sig(1, geom="g0", data="d0", topo="t0", centroid=(0.0, 0.0, 0.0))}
-    new = {
-        # distinct positions inside one radius cell; the global nearest (14)
-        # has the highest step id so a capped probe cannot see it
-        10: _sig(10, geom="ga", data="da", topo="ta", centroid=(0.10, 0.0, 0.0)),
-        11: _sig(11, geom="gb", data="db", topo="tb", centroid=(0.20, 0.0, 0.0)),
-        12: _sig(12, geom="gc", data="dc", topo="tc", centroid=(0.30, 0.0, 0.0)),
-        14: _sig(14, geom="gd", data="dd", topo="td", centroid=(0.01, 0.0, 0.0)),
-    }
-
-    capped, unmatched_old, unmatched_new, capped_diag = match_signatures(
-        old, new, radius_m=0.5, probe_limit=2
-    )
-    full, _, _, full_diag = match_signatures(old, new, radius_m=0.5)
-
-    # a capped scan cannot prove nearestness, so it must not emit a match at all
-    assert capped == []
-    assert unmatched_old == [1]
-    assert unmatched_new == [10, 11, 12, 14]
-    assert capped_diag["spatial"]["probe_capped"] == 1
-    assert capped_diag["matched_by_tier"]["spatial_fallback"] == 0
-    assert set(_by_pair(full)) == {(1, 14)}
-    assert full_diag["spatial"]["probe_capped"] == 0
-
-
-def test_spatial_fallback_requires_centroids_within_radius():
-    old = {1: _sig(1, geom="g1", data="d1", topo="t1", centroid=(0.0, 0.0, 0.0))}
-    new = {10: _sig(10, geom="g2", data="d2", topo="t2", centroid=(2.0, 0.0, 0.0))}
-
-    matches, _, _, _ = match_signatures(old, new, radius_m=0.5)
-
-    assert matches == []
+    assert unmatched_old == [1] and unmatched_new == [10]
 
 
 # --- whole-matcher invariants ---
@@ -351,6 +244,9 @@ def test_match_results_are_deterministic_under_input_dict_order():
     assert first[0] == second[0]
     assert first[1] == second[1]
     assert first[2] == second[2]
+    # the changed beam carries no guid/vector evidence, so it stays unmatched
+    assert first[1] == [3]
+    assert first[2] == [30]
 
 
 def test_diagnostics_account_for_every_entity():
@@ -370,10 +266,3 @@ def test_diagnostics_account_for_every_entity():
     assert diag["pools"] == {"old": 3, "new": 2}
     assert len(matches) + len(unmatched_old) == diag["pools"]["old"]
     assert len(matches) + len(unmatched_new) == diag["pools"]["new"]
-
-
-def test_match_signatures_rejects_invalid_parameters():
-    with pytest.raises(ValueError):
-        match_signatures({}, {}, radius_m=0.0)
-    with pytest.raises(ValueError):
-        match_signatures({}, {}, probe_limit=0)

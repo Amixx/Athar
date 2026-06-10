@@ -1,31 +1,26 @@
+"""Opt-in acceptance coverage over the medium/large real-world IFC corpus.
+
+Set ATHAR_RUN_LARGE_ACCEPTANCE=1 to run. Files that are absent or unfetched
+LFS pointers skip individually, so partial corpora still give partial signal.
+Optional per-test wall-clock bound: ATHAR_ACCEPTANCE_TIMEOUT_S (seconds).
+
+Assertions are invariants and qualitative pair shapes (revision pairs stay
+matched, disjoint pairs stay unmatched), never golden counts.
+"""
+
 from __future__ import annotations
 
 import os
 import signal
-from pathlib import Path
+import uuid
 
 import pytest
 
 from athar.engine import diff_files
-
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
+from tests.corpus import acceptance_path, assert_report_invariants, assert_zero_diff
 
 _RUN_LARGE = os.getenv("ATHAR_RUN_LARGE_ACCEPTANCE", "0") == "1"
 _TIMEOUT_S = int(os.getenv("ATHAR_ACCEPTANCE_TIMEOUT_S", "0"))
-_HOLY_GRAIL = Path(
-    os.getenv(
-        "ATHAR_ACCEPTANCE_HOLY_GRAIL_PATH",
-        str(REPO_ROOT / "real-world-test" / "real-world-spanish-180mb.ifc"),
-    )
-)
-_SIMPLIFIED = Path(
-    os.getenv(
-        "ATHAR_ACCEPTANCE_SIMPLIFIED_PATH",
-        str(REPO_ROOT / "real-world-test" / "uni-project-house-50mb.ifc"),
-    )
-)
-
 
 pytestmark = [
     pytest.mark.skipif(
@@ -35,14 +30,30 @@ pytestmark = [
     pytest.mark.large_acceptance,
 ]
 
+# Medium/large corpus files, ascending size. Small files run in the default
+# tier (test_corpus_invariants.py).
+LARGE_FILES = (
+    "duplex_mech",
+    "revit_arc",
+    "duplex_mep",
+    "revit_mep",
+    "advanced_project",
+    "adv_changed",
+    "basic_house",
+    "uni_house",
+    "real_world_big",
+    "spanish",
+)
 
-def _require(path: Path) -> None:
-    if not path.exists():
-        pytest.skip(f"missing acceptance IFC: {path}")
-    with path.open("rb") as fh:
-        head = fh.read(64)
-    if head.startswith(b"version https://git-lfs"):
-        pytest.skip(f"acceptance IFC is an unfetched git-lfs pointer: {path}")
+DISCIPLINE_PAIRS = (
+    ("duplex_arch", "duplex_mech"),
+    ("revit_arc", "revit_mep"),
+)
+
+UNRELATED_PAIRS = (
+    ("basic_house", "advanced_project"),
+    ("spanish", "uni_house"),
+)
 
 
 @pytest.fixture(autouse=True)
@@ -64,50 +75,82 @@ def _bounded_runtime():
         signal.signal(signal.SIGALRM, previous)
 
 
-def _assert_stats_consistent(report: dict) -> None:
-    stats = report["stats"]
-    for section in ("added", "deleted", "modified", "unchanged"):
-        assert stats[section] == len(report[section])
-    assert stats["deleted"] + stats["modified"] + stats["unchanged"] == stats["old_signatures"]
-    assert stats["added"] + stats["modified"] + stats["unchanged"] == stats["new_signatures"]
-    assert stats["dropped_matches"] == 0
-    diag = stats["matcher_diagnostics"]
-    assert diag["pools"] == {"old": stats["old_signatures"], "new": stats["new_signatures"]}
-    assert diag["unmatched"] == {"old": stats["deleted"], "new": stats["added"]}
-    assert sum(diag["matched_by_tier"].values()) == stats["modified"] + stats["unchanged"]
-
-
-def test_large_ifc_holy_grail_same_file_is_unchanged():
-    _require(_HOLY_GRAIL)
-    src = str(_HOLY_GRAIL)
-    report = diff_files(src, src)
-    _assert_stats_consistent(report)
-    assert report["stats"]["added"] == 0
-    assert report["stats"]["deleted"] == 0
-    assert report["stats"]["modified"] == 0
-    # Non-vacuity floor: a ~180MB model must yield a substantial signature
-    # population, otherwise the parse silently lost the model.
+@pytest.mark.parametrize("key", LARGE_FILES)
+def test_same_file_diff_is_clean(key):
+    path = acceptance_path(key)
+    report = diff_files(path, path)
+    assert_report_invariants(report)
+    assert_zero_diff(report)
+    # Non-vacuity floor: these models must yield substantial signature
+    # populations, otherwise the parse silently lost the model.
     assert report["stats"]["unchanged"] > 100
-    assert report["stats"]["matcher_diagnostics"]["spatial"]["probe_capped"] == 0
 
 
-def test_large_ifc_holy_grail_vs_simplified_completes_with_consistent_stats():
-    # Cross-project stress shape: two unrelated models. The value here is that
-    # the diff completes within bounds, stays internally consistent, and the
-    # conservative tiers do not hallucinate broad cross-project matches.
-    _require(_HOLY_GRAIL)
-    _require(_SIMPLIFIED)
-    report = diff_files(str(_HOLY_GRAIL), str(_SIMPLIFIED))
-    _assert_stats_consistent(report)
-
+def test_revision_pair_stays_matched():
+    # Real authoring-tool revision of the same 44MB project: identity must be
+    # carried by GlobalIds, and edits must surface as modifications rather
+    # than added/deleted churn.
+    report = diff_files(acceptance_path("advanced_project"), acceptance_path("adv_changed"))
+    assert_report_invariants(report)
     stats = report["stats"]
-    assert report["engine"] == "athar"
-    assert report["schemas"]["old"] in {"IFC4", "IFC2X3"}
-    assert report["schemas"]["new"] in {"IFC4", "IFC2X3"}
+    matched = stats["modified"] + stats["unchanged"]
+    smaller_side = min(stats["old_signatures"], stats["new_signatures"])
+    assert matched >= smaller_side // 2
+    diag = stats["matcher_diagnostics"]
+    assert diag["matched_by_tier"]["guid"] >= matched * 9 // 10
+
+
+@pytest.mark.parametrize("old_key,new_key", DISCIPLINE_PAIRS)
+def test_discipline_pair_is_mostly_disjoint(old_key, new_key):
+    # Same project, different disciplines: the models describe different
+    # elements, so conservative tiers must not manufacture broad matches.
+    report = diff_files(acceptance_path(old_key), acceptance_path(new_key))
+    assert_report_invariants(report)
+    stats = report["stats"]
+    assert stats["deleted"] >= stats["old_signatures"] // 2
+    assert stats["added"] >= stats["new_signatures"] // 2
+
+
+@pytest.mark.parametrize("old_key,new_key", UNRELATED_PAIRS)
+def test_unrelated_pair_stays_unmatched(old_key, new_key):
+    # Cross-project stress shape: unrelated models share no GlobalIds; the
+    # guid tier must stay silent and most of both sides must stay unmatched.
+    report = diff_files(acceptance_path(old_key), acceptance_path(new_key))
+    assert_report_invariants(report)
+    stats = report["stats"]
     assert stats["old_signatures"] > 100
     assert stats["new_signatures"] > 100
-    # Unrelated projects share no GlobalIds; the guid tier must stay silent
-    # and most of both sides must remain unmatched.
     assert stats["matcher_diagnostics"]["matched_by_tier"]["guid"] == 0
     assert stats["deleted"] >= stats["old_signatures"] // 2
     assert stats["added"] >= stats["new_signatures"] // 2
+
+
+def test_guid_scramble_at_scale_recovers_identity(tmp_path_factory):
+    # Metamorphic invariant at 44MB: rewriting every GlobalId must not invent
+    # any added/deleted/modified entities; structural tiers recover identity.
+    import ifcopenshell
+    import ifcopenshell.guid
+
+    src = acceptance_path("advanced_project")
+    namespace = uuid.UUID("f43a7c2b-8fd4-4d2d-9898-8891d75432b2")
+    base = tmp_path_factory.mktemp("guid-scramble-large")
+    clean = str(base / "clean.ifc")
+    scrambled = str(base / "scrambled.ifc")
+    model = ifcopenshell.open(src)
+    model.write(clean)
+    for entity in model:
+        if not hasattr(entity, "GlobalId"):
+            continue
+        guid = entity.GlobalId
+        if isinstance(guid, str) and guid.strip():
+            entity.GlobalId = ifcopenshell.guid.compress(uuid.uuid5(namespace, guid).hex)
+    model.write(scrambled)
+
+    report = diff_files(clean, scrambled)
+    assert_report_invariants(report)
+    stats = report["stats"]
+    assert stats["added"] == 0
+    assert stats["deleted"] == 0
+    assert stats["modified"] == 0
+    assert stats["unchanged"] == stats["new_signatures"] > 100
+    assert stats["matcher_diagnostics"]["matched_by_tier"]["guid"] == 0

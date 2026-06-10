@@ -1,0 +1,3388 @@
+{
+  "errors": [],
+  "files": {
+    "adv_changed": {
+      "build_seconds": 68.6,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 3859,
+        "include:data": 22372,
+        "include:geometry": 648368,
+        "include:placement": 20588,
+        "include:spatial": 1681
+      },
+      "guid_collisions": 0,
+      "key": "adv_changed",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/Athar/real-world-test/adv proj changed.ifc",
+      "schema": "IFC2X3",
+      "signatures": 2360,
+      "size_mb": 43.075,
+      "top_classes": {
+        "IfcBuildingElementProxy": 358,
+        "IfcDistributionPort": 139,
+        "IfcDoor": 126,
+        "IfcFlowTerminal": 49,
+        "IfcFurnishingElement": 407,
+        "IfcMember": 83,
+        "IfcOpeningElement": 427,
+        "IfcRailing": 19,
+        "IfcSite": 18,
+        "IfcSlab": 42,
+        "IfcWall": 386,
+        "IfcWindow": 263
+      }
+    },
+    "advanced_project": {
+      "build_seconds": 82.75,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 3872,
+        "include:data": 22437,
+        "include:geometry": 648492,
+        "include:placement": 19892,
+        "include:spatial": 1686
+      },
+      "guid_collisions": 0,
+      "key": "advanced_project",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/Athar/real-world-test/AdvancedProject.ifc",
+      "schema": "IFC2X3",
+      "signatures": 2365,
+      "size_mb": 44.337,
+      "top_classes": {
+        "IfcBuildingElementProxy": 358,
+        "IfcDistributionPort": 139,
+        "IfcDoor": 126,
+        "IfcFlowTerminal": 49,
+        "IfcFurnishingElement": 407,
+        "IfcMember": 83,
+        "IfcOpeningElement": 427,
+        "IfcRailing": 19,
+        "IfcSite": 18,
+        "IfcSlab": 43,
+        "IfcWall": 390,
+        "IfcWindow": 263
+      }
+    },
+    "basic_house": {
+      "build_seconds": 98.33,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 217,
+        "include:data": 1424,
+        "include:geometry": 872224,
+        "include:placement": 1583,
+        "include:spatial": 128
+      },
+      "guid_collisions": 0,
+      "key": "basic_house",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/Athar/data/BasicHouse.ifc",
+      "schema": "IFC2X3",
+      "signatures": 177,
+      "size_mb": 52.703,
+      "top_classes": {
+        "IfcBuilding": 1,
+        "IfcBuildingElementProxy": 4,
+        "IfcBuildingStorey": 2,
+        "IfcDistributionPort": 19,
+        "IfcDoor": 8,
+        "IfcFlowTerminal": 7,
+        "IfcFurnishingElement": 71,
+        "IfcOpeningElement": 28,
+        "IfcSite": 1,
+        "IfcSlab": 3,
+        "IfcWall": 13,
+        "IfcWindow": 19
+      }
+    },
+    "bl_v0": {
+      "build_seconds": 0.51,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 6,
+        "include:data": 7,
+        "include:geometry": 36,
+        "include:placement": 53,
+        "include:spatial": 9
+      },
+      "guid_collisions": 0,
+      "key": "bl_v0",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/Athar/real-world-test/Building-Landscaping-v0-original.ifc",
+      "schema": "IFC4",
+      "signatures": 9,
+      "size_mb": 1.468,
+      "top_classes": {
+        "IfcBuildingElementProxy": 3,
+        "IfcGeographicElement": 4,
+        "IfcSite": 2
+      }
+    },
+    "bl_v1": {
+      "build_seconds": 0.42,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 5,
+        "include:data": 6,
+        "include:geometry": 31,
+        "include:placement": 47,
+        "include:spatial": 8
+      },
+      "guid_collisions": 0,
+      "key": "bl_v1",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/Athar/real-world-test/Building-Landscaping-v1.ifc",
+      "schema": "IFC4",
+      "signatures": 8,
+      "size_mb": 1.204,
+      "top_classes": {
+        "IfcBuildingElementProxy": 2,
+        "IfcGeographicElement": 4,
+        "IfcSite": 2
+      }
+    },
+    "bl_v2": {
+      "build_seconds": 0.46,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 4,
+        "include:data": 5,
+        "include:geometry": 26,
+        "include:placement": 41,
+        "include:spatial": 7
+      },
+      "guid_collisions": 0,
+      "key": "bl_v2",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/Athar/real-world-test/Building-Landscaping-v2.ifc",
+      "schema": "IFC4",
+      "signatures": 7,
+      "size_mb": 1.202,
+      "top_classes": {
+        "IfcBuildingElementProxy": 1,
+        "IfcGeographicElement": 4,
+        "IfcSite": 2
+      }
+    },
+    "bl_v3": {
+      "build_seconds": 0.49,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 11,
+        "include:data": 12,
+        "include:geometry": 68,
+        "include:placement": 64,
+        "include:spatial": 9
+      },
+      "guid_collisions": 0,
+      "key": "bl_v3",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/Athar/real-world-test/Building-Landscaping-v3.ifc",
+      "schema": "IFC4",
+      "signatures": 9,
+      "size_mb": 1.21,
+      "top_classes": {
+        "IfcGeographicElement": 4,
+        "IfcSite": 2,
+        "IfcWall": 3
+      }
+    },
+    "building_arch": {
+      "build_seconds": 0.11,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 16,
+        "include:data": 33,
+        "include:geometry": 94,
+        "include:placement": 135,
+        "include:spatial": 20
+      },
+      "guid_collisions": 0,
+      "key": "building_arch",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/vscode-ifc/test-files/000.225635MB__Building-Architecture.ifc",
+      "schema": "IFC4",
+      "signatures": 22,
+      "size_mb": 0.226,
+      "top_classes": {
+        "IfcBuilding": 1,
+        "IfcBuildingElementProxy": 5,
+        "IfcBuildingStorey": 1,
+        "IfcChimney": 1,
+        "IfcFurniture": 1,
+        "IfcRoof": 1,
+        "IfcSite": 2,
+        "IfcSlab": 3,
+        "IfcSpace": 2,
+        "IfcSpatialZone": 1,
+        "IfcWall": 4
+      }
+    },
+    "cube_brep": {
+      "build_seconds": 0.02,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "include:geometry": 85,
+        "include:placement": 17,
+        "include:spatial": 2
+      },
+      "guid_collisions": 0,
+      "key": "cube_brep",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/vscode-ifc/test-files/000.010611MB__Ifc4_CubeAdvancedBrep.ifc",
+      "schema": "IFC4",
+      "signatures": 2,
+      "size_mb": 0.011,
+      "top_classes": {
+        "IfcBuilding": 1,
+        "IfcBuildingElementProxy": 1
+      }
+    },
+    "duplex_arch": {
+      "build_seconds": 2.72,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 331,
+        "include:data": 2449,
+        "include:geometry": 26103,
+        "include:placement": 4089,
+        "include:spatial": 234
+      },
+      "guid_collisions": 0,
+      "key": "duplex_arch",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/Athar/real-world-test/Duplex-Architecture.ifc",
+      "schema": "IFC2X3",
+      "signatures": 295,
+      "size_mb": 2.381,
+      "top_classes": {
+        "IfcBeam": 8,
+        "IfcBuildingStorey": 4,
+        "IfcCovering": 13,
+        "IfcDoor": 14,
+        "IfcFooting": 7,
+        "IfcFurnishingElement": 61,
+        "IfcMember": 4,
+        "IfcOpeningElement": 50,
+        "IfcSlab": 21,
+        "IfcSpace": 21,
+        "IfcWall": 57,
+        "IfcWindow": 24
+      }
+    },
+    "duplex_mech": {
+      "build_seconds": 9.8,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 487,
+        "include:data": 5181,
+        "include:geometry": 125419,
+        "include:placement": 4028,
+        "include:spatial": 529
+      },
+      "guid_collisions": 0,
+      "key": "duplex_mech",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/vscode-ifc/test-files/008.781887MB__Ifc2x3_Duplex_Mechanical.ifc",
+      "schema": "IFC2X3",
+      "signatures": 529,
+      "size_mb": 8.782,
+      "top_classes": {
+        "IfcBuilding": 1,
+        "IfcBuildingStorey": 3,
+        "IfcEnergyConversionDevice": 22,
+        "IfcFlowController": 8,
+        "IfcFlowFitting": 207,
+        "IfcFlowMovingDevice": 4,
+        "IfcFlowSegment": 246,
+        "IfcSite": 1,
+        "IfcSpace": 37
+      }
+    },
+    "duplex_mep": {
+      "build_seconds": 21.78,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 926,
+        "include:data": 9744,
+        "include:geometry": 247980,
+        "include:placement": 7574,
+        "include:spatial": 973
+      },
+      "guid_collisions": 0,
+      "key": "duplex_mep",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/vscode-ifc/test-files/017.871432MB__Ifc2x3_Duplex_MEP.ifc",
+      "schema": "IFC2X3",
+      "signatures": 973,
+      "size_mb": 17.871,
+      "top_classes": {
+        "IfcBuilding": 1,
+        "IfcBuildingStorey": 3,
+        "IfcDistributionControlElement": 2,
+        "IfcEnergyConversionDevice": 16,
+        "IfcFlowController": 14,
+        "IfcFlowFitting": 358,
+        "IfcFlowMovingDevice": 4,
+        "IfcFlowSegment": 427,
+        "IfcFlowTerminal": 105,
+        "IfcSite": 1,
+        "IfcSpace": 42
+      }
+    },
+    "real_world_big": {
+      "build_seconds": 954.87,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 4871,
+        "include:data": 16681,
+        "include:geometry": 2696534,
+        "include:placement": 52995,
+        "include:spatial": 3601
+      },
+      "guid_collisions": 0,
+      "key": "real_world_big",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/vscode-ifc/test-files/168.047573MB__real-world-big.ifc",
+      "schema": "IFC2X3",
+      "signatures": 4680,
+      "size_mb": 168.048,
+      "top_classes": {
+        "IfcBuildingElementProxy": 398,
+        "IfcDistributionPort": 373,
+        "IfcDoor": 128,
+        "IfcFlowTerminal": 412,
+        "IfcFurnishingElement": 1021,
+        "IfcMember": 85,
+        "IfcOpeningElement": 457,
+        "IfcRailing": 92,
+        "IfcSlab": 312,
+        "IfcSpace": 90,
+        "IfcWall": 967,
+        "IfcWindow": 74
+      }
+    },
+    "revit_arc": {
+      "build_seconds": 17.64,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 491,
+        "include:data": 1997,
+        "include:geometry": 8386,
+        "include:placement": 5468,
+        "include:spatial": 265
+      },
+      "guid_collisions": 0,
+      "key": "revit_arc",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/vscode-ifc/test-files/013.646137MB__Ifc4_Revit_ARC.ifc",
+      "schema": "IFC4",
+      "signatures": 560,
+      "size_mb": 13.646,
+      "top_classes": {
+        "IfcBuildingElementProxy": 66,
+        "IfcDistributionPort": 60,
+        "IfcDoor": 16,
+        "IfcFurniture": 32,
+        "IfcLightFixture": 10,
+        "IfcMember": 144,
+        "IfcOpeningElement": 35,
+        "IfcPlate": 44,
+        "IfcRailing": 10,
+        "IfcSlab": 35,
+        "IfcWall": 47,
+        "IfcWindow": 17
+      }
+    },
+    "revit_mep": {
+      "build_seconds": 34.13,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 7171,
+        "include:data": 20975,
+        "include:geometry": 70089,
+        "include:placement": 110732,
+        "include:spatial": 4877
+      },
+      "guid_collisions": 0,
+      "key": "revit_mep",
+      "missing_centroid": 55,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/vscode-ifc/test-files/029.165277MB__Ifc4_Revit_MEP.ifc",
+      "schema": "IFC4",
+      "signatures": 15639,
+      "size_mb": 29.165,
+      "top_classes": {
+        "IfcAirTerminal": 309,
+        "IfcBuildingElementProxy": 654,
+        "IfcColumn": 135,
+        "IfcDistributionPort": 8515,
+        "IfcDuctFitting": 935,
+        "IfcDuctSegment": 837,
+        "IfcLightFixture": 410,
+        "IfcMember": 1450,
+        "IfcPipeFitting": 535,
+        "IfcPipeSegment": 491,
+        "IfcPlate": 629,
+        "IfcSpace": 163
+      }
+    },
+    "sample_house_roof": {
+      "build_seconds": 0.08,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "include:data": 40,
+        "include:geometry": 964,
+        "include:placement": 23,
+        "include:spatial": 5
+      },
+      "guid_collisions": 0,
+      "key": "sample_house_roof",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/vscode-ifc/test-files/000.063019MB__Ifc4_SampleHouse_1_Roof.ifc",
+      "schema": "IFC4",
+      "signatures": 5,
+      "size_mb": 0.063,
+      "top_classes": {
+        "IfcBuilding": 1,
+        "IfcBuildingStorey": 1,
+        "IfcRoof": 1,
+        "IfcSite": 1,
+        "IfcSlab": 1
+      }
+    },
+    "spanish": {
+      "build_seconds": 968.79,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 43473,
+        "include:data": 430271,
+        "include:geometry": 672455,
+        "include:placement": 441722,
+        "include:spatial": 841
+      },
+      "guid_collisions": 0,
+      "key": "spanish",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/Athar/real-world-test/real-world-spanish-180mb.ifc",
+      "schema": "IFC2X3",
+      "signatures": 44389,
+      "size_mb": 181.849,
+      "top_classes": {
+        "IfcBeam": 201,
+        "IfcBuildingElementPart": 1342,
+        "IfcBuildingElementProxy": 26,
+        "IfcColumn": 158,
+        "IfcCovering": 16120,
+        "IfcDoor": 57,
+        "IfcMechanicalFastener": 6024,
+        "IfcMember": 18939,
+        "IfcOpeningElement": 91,
+        "IfcPlate": 1112,
+        "IfcSlab": 64,
+        "IfcWall": 155
+      }
+    },
+    "tiny_no_products": {
+      "build_seconds": 0.02,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "include:geometry": 2,
+        "include:placement": 1
+      },
+      "guid_collisions": 0,
+      "key": "tiny_no_products",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/Athar/tests/fixtures/tiny_no_products.ifc",
+      "schema": "IFC4",
+      "signatures": 0,
+      "size_mb": 0.001,
+      "top_classes": {}
+    },
+    "uni_house": {
+      "build_seconds": 125.83,
+      "diagnostics": {
+        "cycle_breaks": 0,
+        "dangling_refs": 0,
+        "warnings": 0
+      },
+      "edge_stats": {
+        "context:topology": 7902,
+        "include:data": 18906,
+        "include:geometry": 886435,
+        "include:placement": 57968,
+        "include:spatial": 2854
+      },
+      "guid_collisions": 0,
+      "key": "uni_house",
+      "missing_centroid": 0,
+      "missing_guid": 0,
+      "missing_topology": 0,
+      "path": "/Users/imantsliepins/Personal/Athar/real-world-test/uni-project-house-50mb.ifc",
+      "schema": "IFC2X3",
+      "signatures": 6385,
+      "size_mb": 55.868,
+      "top_classes": {
+        "IfcBuildingElementProxy": 632,
+        "IfcCovering": 99,
+        "IfcCurtainWall": 142,
+        "IfcDistributionPort": 226,
+        "IfcDoor": 104,
+        "IfcFurnishingElement": 316,
+        "IfcMember": 2316,
+        "IfcOpeningElement": 471,
+        "IfcPlate": 979,
+        "IfcSlab": 235,
+        "IfcSpace": 77,
+        "IfcWall": 583
+      }
+    }
+  },
+  "generated_at": "2026-06-10 00:20:47",
+  "pairs": [
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 0,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {},
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "tiny_no_products",
+      "old": "tiny_no_products",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 0
+      },
+      "signatures": {
+        "new": 0,
+        "old": 0
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 2,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 2
+          },
+          "count": 2,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "cube_brep",
+      "old": "cube_brep",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 2
+      },
+      "signatures": {
+        "new": 2,
+        "old": 2
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 5,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 5
+          },
+          "count": 5,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "sample_house_roof",
+      "old": "sample_house_roof",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 5
+      },
+      "signatures": {
+        "new": 5,
+        "old": 5
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 22,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 22
+          },
+          "count": 22,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "building_arch",
+      "old": "building_arch",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 22
+      },
+      "signatures": {
+        "new": 22,
+        "old": 22
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 9,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 9
+          },
+          "count": 9,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "bl_v0",
+      "old": "bl_v0",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 9
+      },
+      "signatures": {
+        "new": 9,
+        "old": 9
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 8,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 8
+          },
+          "count": 8,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "bl_v1",
+      "old": "bl_v1",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 8
+      },
+      "signatures": {
+        "new": 8,
+        "old": 8
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 7,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 7
+          },
+          "count": 7,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "bl_v2",
+      "old": "bl_v2",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 7
+      },
+      "signatures": {
+        "new": 7,
+        "old": 7
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 9,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 9
+          },
+          "count": 9,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "bl_v3",
+      "old": "bl_v3",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 9
+      },
+      "signatures": {
+        "new": 9,
+        "old": 9
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {
+          "IfcBuildingElementProxy": 1
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "revision",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 8,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "intrinsic": 2,
+            "none": 4,
+            "transitive": 2
+          },
+          "count": 8,
+          "max_abs_placement_delta_mm": 9489012.613,
+          "placement_changed": 2
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 2,
+        "mixed": 0,
+        "transitive": 2
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 4
+      },
+      "modified_match_reasons": {
+        "guid": 4
+      },
+      "modified_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "intrinsic": 2,
+            "transitive": 2
+          },
+          "count": 4,
+          "max_abs_placement_delta_mm": 9489012.613,
+          "placement_changed": 2
+        }
+      },
+      "modified_score_bands": {
+        "high": 4,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "bl_v1",
+      "old": "bl_v0",
+      "sections": {
+        "added": 0,
+        "deleted": 1,
+        "modified": 4,
+        "unchanged": 4
+      },
+      "signatures": {
+        "new": 8,
+        "old": 9
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {
+          "IfcBuildingElementProxy": 1
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "revision",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 7,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "transitive": 7
+          },
+          "count": 7,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 7
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 7
+      },
+      "modified_match_reasons": {
+        "guid": 7
+      },
+      "modified_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "transitive": 7
+          },
+          "count": 7,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_score_bands": {
+        "high": 7,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "bl_v2",
+      "old": "bl_v1",
+      "sections": {
+        "added": 0,
+        "deleted": 1,
+        "modified": 7,
+        "unchanged": 0
+      },
+      "signatures": {
+        "new": 7,
+        "old": 8
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {
+          "IfcWall": 3
+        },
+        "deleted": {
+          "IfcBuildingElementProxy": 1
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "revision",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 6,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "mixed": 1,
+            "transitive": 5
+          },
+          "count": 6,
+          "max_abs_placement_delta_mm": 9237604.856,
+          "placement_changed": 1
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 1,
+        "transitive": 5
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 6
+      },
+      "modified_match_reasons": {
+        "guid": 6
+      },
+      "modified_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "mixed": 1,
+            "transitive": 5
+          },
+          "count": 6,
+          "max_abs_placement_delta_mm": 9237604.856,
+          "placement_changed": 1
+        }
+      },
+      "modified_score_bands": {
+        "high": 6,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "bl_v3",
+      "old": "bl_v2",
+      "sections": {
+        "added": 3,
+        "deleted": 1,
+        "modified": 6,
+        "unchanged": 0
+      },
+      "signatures": {
+        "new": 9,
+        "old": 7
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {
+          "IfcWall": 3
+        },
+        "deleted": {
+          "IfcBuildingElementProxy": 3
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "revision",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 6,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "mixed": 1,
+            "transitive": 5
+          },
+          "count": 6,
+          "max_abs_placement_delta_mm": 13218301.976,
+          "placement_changed": 1
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 1,
+        "transitive": 5
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 6
+      },
+      "modified_match_reasons": {
+        "guid": 6
+      },
+      "modified_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "mixed": 1,
+            "transitive": 5
+          },
+          "count": 6,
+          "max_abs_placement_delta_mm": 13218301.976,
+          "placement_changed": 1
+        }
+      },
+      "modified_score_bands": {
+        "high": 6,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "bl_v3",
+      "old": "bl_v0",
+      "sections": {
+        "added": 3,
+        "deleted": 3,
+        "modified": 6,
+        "unchanged": 0
+      },
+      "signatures": {
+        "new": 9,
+        "old": 9
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {
+          "IfcBuildingElementProxy": 1,
+          "IfcGeographicElement": 4
+        },
+        "deleted": {
+          "IfcBuilding": 1,
+          "IfcBuildingElementProxy": 3,
+          "IfcBuildingStorey": 1,
+          "IfcChimney": 1,
+          "IfcFurniture": 1,
+          "IfcSlab": 3,
+          "IfcSpace": 2,
+          "IfcWall": 4
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "discipline",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 4,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 1,
+            "transitive": 3
+          },
+          "count": 4,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 3
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 3
+      },
+      "modified_match_reasons": {
+        "guid": 3
+      },
+      "modified_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "transitive": 3
+          },
+          "count": 3,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_score_bands": {
+        "high": 3,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "bl_v0",
+      "old": "building_arch",
+      "sections": {
+        "added": 5,
+        "deleted": 18,
+        "modified": 3,
+        "unchanged": 1
+      },
+      "signatures": {
+        "new": 9,
+        "old": 22
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {
+          "IfcBuildingStorey": 1,
+          "IfcRoof": 1,
+          "IfcSite": 1,
+          "IfcSlab": 1
+        },
+        "deleted": {
+          "IfcBuildingElementProxy": 1
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "unrelated",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 0,
+        "spatial_fallback": 1,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "spatial_fallback": {
+          "change_scope": {
+            "mixed": 1
+          },
+          "count": 1,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 1,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 1,
+        "normal": 0
+      },
+      "modified_match_reasons": {
+        "spatial_fallback": 1
+      },
+      "modified_reason_detail": {
+        "spatial_fallback": {
+          "change_scope": {
+            "mixed": 1
+          },
+          "count": 1,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_score_bands": {
+        "high": 0,
+        "low": 1,
+        "medium": 0
+      },
+      "new": "sample_house_roof",
+      "old": "cube_brep",
+      "sections": {
+        "added": 4,
+        "deleted": 1,
+        "modified": 1,
+        "unchanged": 0
+      },
+      "signatures": {
+        "new": 5,
+        "old": 2
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 1,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {
+          "IfcBuilding": 1,
+          "IfcBuildingElementProxy": 5,
+          "IfcBuildingStorey": 1,
+          "IfcChimney": 1,
+          "IfcFurniture": 1,
+          "IfcSlab": 3,
+          "IfcSpace": 2,
+          "IfcWall": 4
+        },
+        "deleted": {
+          "IfcBuilding": 1,
+          "IfcBuildingStorey": 1,
+          "IfcRoof": 1,
+          "IfcSlab": 1
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "unrelated",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 0,
+        "spatial_fallback": 1,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "spatial_fallback": {
+          "change_scope": {
+            "mixed": 1
+          },
+          "count": 1,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 1,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 1,
+        "normal": 0
+      },
+      "modified_match_reasons": {
+        "spatial_fallback": 1
+      },
+      "modified_reason_detail": {
+        "spatial_fallback": {
+          "change_scope": {
+            "mixed": 1
+          },
+          "count": 1,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_score_bands": {
+        "high": 0,
+        "low": 1,
+        "medium": 0
+      },
+      "new": "building_arch",
+      "old": "sample_house_roof",
+      "sections": {
+        "added": 21,
+        "deleted": 4,
+        "modified": 1,
+        "unchanged": 0
+      },
+      "signatures": {
+        "new": 22,
+        "old": 5
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 1,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.99,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "guid_scramble",
+      "matched_by_tier": {
+        "geometry_hash": 7,
+        "guid": 0,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "geometry_hash": {
+          "change_scope": {
+            "none": 7
+          },
+          "count": 7,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "bl_v2(scrambled)",
+      "old": "bl_v2",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 7
+      },
+      "signatures": {
+        "new": 7,
+        "old": 7
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.19,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "guid_scramble",
+      "matched_by_tier": {
+        "geometry_hash": 5,
+        "guid": 0,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "geometry_hash": {
+          "change_scope": {
+            "none": 5
+          },
+          "count": 5,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "sample_house_roof(scrambled)",
+      "old": "sample_house_roof",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 5
+      },
+      "signatures": {
+        "new": 5,
+        "old": 5
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 560,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 560
+          },
+          "count": 560,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "revit_arc",
+      "old": "revit_arc",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 560
+      },
+      "signatures": {
+        "new": 560,
+        "old": 560
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.13,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 15639,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 15639
+          },
+          "count": 15639,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "revit_mep",
+      "old": "revit_mep",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 15639
+      },
+      "signatures": {
+        "new": 15639,
+        "old": 15639
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {
+          "IfcBuildingElementProxy": 654,
+          "IfcDistributionPort": 8515,
+          "IfcDuctFitting": 935,
+          "IfcDuctSegment": 837,
+          "IfcMember": 1450,
+          "IfcPipeFitting": 535,
+          "IfcPipeSegment": 491,
+          "IfcPlate": 629
+        },
+        "deleted": {
+          "IfcBuildingElementProxy": 66,
+          "IfcDistributionPort": 60,
+          "IfcFurniture": 32,
+          "IfcMember": 144,
+          "IfcOpeningElement": 35,
+          "IfcPlate": 44,
+          "IfcSlab": 35,
+          "IfcWall": 47
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.11,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "discipline",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 0,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {},
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "revit_mep",
+      "old": "revit_arc",
+      "sections": {
+        "added": 15639,
+        "deleted": 560,
+        "modified": 0,
+        "unchanged": 0
+      },
+      "signatures": {
+        "new": 15639,
+        "old": 560
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 25.72,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "guid_scramble",
+      "matched_by_tier": {
+        "geometry_hash": 560,
+        "guid": 0,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "geometry_hash": {
+          "change_scope": {
+            "none": 560
+          },
+          "count": 560,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "revit_arc(scrambled)",
+      "old": "revit_arc",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 560
+      },
+      "signatures": {
+        "new": 560,
+        "old": 560
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.04,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 295,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 295
+          },
+          "count": 295,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "duplex_arch",
+      "old": "duplex_arch",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 295
+      },
+      "signatures": {
+        "new": 295,
+        "old": 295
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 529,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 529
+          },
+          "count": 529,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "duplex_mech",
+      "old": "duplex_mech",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 529
+      },
+      "signatures": {
+        "new": 529,
+        "old": 529
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.01,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 973,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 973
+          },
+          "count": 973,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "duplex_mep",
+      "old": "duplex_mep",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 973
+      },
+      "signatures": {
+        "new": 973,
+        "old": 973
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {
+          "IfcEnergyConversionDevice": 22,
+          "IfcFlowController": 8,
+          "IfcFlowFitting": 207,
+          "IfcFlowMovingDevice": 4,
+          "IfcFlowSegment": 246,
+          "IfcSpace": 20
+        },
+        "deleted": {
+          "IfcBeam": 8,
+          "IfcCovering": 13,
+          "IfcDoor": 14,
+          "IfcFurnishingElement": 61,
+          "IfcOpeningElement": 50,
+          "IfcSlab": 21,
+          "IfcWall": 57,
+          "IfcWindow": 24
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "discipline",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 0,
+        "spatial_fallback": 22,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "spatial_fallback": {
+          "change_scope": {
+            "mixed": 21,
+            "transitive": 1
+          },
+          "count": 22,
+          "max_abs_placement_delta_mm": 19.0,
+          "placement_changed": 2
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 21,
+        "transitive": 1
+      },
+      "modified_conflicts": {
+        "downgraded": 22,
+        "normal": 0
+      },
+      "modified_match_reasons": {
+        "spatial_fallback": 22
+      },
+      "modified_reason_detail": {
+        "spatial_fallback": {
+          "change_scope": {
+            "mixed": 21,
+            "transitive": 1
+          },
+          "count": 22,
+          "max_abs_placement_delta_mm": 19.0,
+          "placement_changed": 2
+        }
+      },
+      "modified_score_bands": {
+        "high": 0,
+        "low": 22,
+        "medium": 0
+      },
+      "new": "duplex_mech",
+      "old": "duplex_arch",
+      "sections": {
+        "added": 507,
+        "deleted": 273,
+        "modified": 22,
+        "unchanged": 0
+      },
+      "signatures": {
+        "new": 529,
+        "old": 295
+      },
+      "spatial": {
+        "nearest": 6,
+        "position_zip": 16,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {
+          "IfcDistributionControlElement": 2,
+          "IfcEnergyConversionDevice": 1,
+          "IfcFlowController": 6,
+          "IfcFlowFitting": 203,
+          "IfcFlowSegment": 268,
+          "IfcFlowTerminal": 105,
+          "IfcSpace": 14
+        },
+        "deleted": {
+          "IfcEnergyConversionDevice": 7,
+          "IfcFlowFitting": 52,
+          "IfcFlowSegment": 87,
+          "IfcSpace": 9
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.01,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "discipline",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 132,
+        "spatial_fallback": 242,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "mixed": 130,
+            "transitive": 2
+          },
+          "count": 132,
+          "max_abs_placement_delta_mm": 1171.7,
+          "placement_changed": 51
+        },
+        "spatial_fallback": {
+          "change_scope": {
+            "mixed": 241,
+            "transitive": 1
+          },
+          "count": 242,
+          "max_abs_placement_delta_mm": 418.764,
+          "placement_changed": 98
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 371,
+        "transitive": 3
+      },
+      "modified_conflicts": {
+        "downgraded": 242,
+        "normal": 132
+      },
+      "modified_match_reasons": {
+        "guid": 132,
+        "spatial_fallback": 242
+      },
+      "modified_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "mixed": 130,
+            "transitive": 2
+          },
+          "count": 132,
+          "max_abs_placement_delta_mm": 1171.7,
+          "placement_changed": 51
+        },
+        "spatial_fallback": {
+          "change_scope": {
+            "mixed": 241,
+            "transitive": 1
+          },
+          "count": 242,
+          "max_abs_placement_delta_mm": 418.764,
+          "placement_changed": 98
+        }
+      },
+      "modified_score_bands": {
+        "high": 132,
+        "low": 242,
+        "medium": 0
+      },
+      "new": "duplex_mep",
+      "old": "duplex_mech",
+      "sections": {
+        "added": 599,
+        "deleted": 155,
+        "modified": 374,
+        "unchanged": 0
+      },
+      "signatures": {
+        "new": 973,
+        "old": 529
+      },
+      "spatial": {
+        "nearest": 102,
+        "position_zip": 140,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {
+          "IfcDistributionControlElement": 2,
+          "IfcEnergyConversionDevice": 16,
+          "IfcFlowController": 14,
+          "IfcFlowFitting": 358,
+          "IfcFlowMovingDevice": 4,
+          "IfcFlowSegment": 427,
+          "IfcFlowTerminal": 105,
+          "IfcSpace": 25
+        },
+        "deleted": {
+          "IfcBeam": 8,
+          "IfcCovering": 13,
+          "IfcDoor": 14,
+          "IfcFurnishingElement": 61,
+          "IfcOpeningElement": 50,
+          "IfcSlab": 21,
+          "IfcWall": 57,
+          "IfcWindow": 24
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.0,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "discipline",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 0,
+        "spatial_fallback": 22,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "spatial_fallback": {
+          "change_scope": {
+            "mixed": 20,
+            "transitive": 2
+          },
+          "count": 22,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 20,
+        "transitive": 2
+      },
+      "modified_conflicts": {
+        "downgraded": 22,
+        "normal": 0
+      },
+      "modified_match_reasons": {
+        "spatial_fallback": 22
+      },
+      "modified_reason_detail": {
+        "spatial_fallback": {
+          "change_scope": {
+            "mixed": 20,
+            "transitive": 2
+          },
+          "count": 22,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_score_bands": {
+        "high": 0,
+        "low": 22,
+        "medium": 0
+      },
+      "new": "duplex_mep",
+      "old": "duplex_arch",
+      "sections": {
+        "added": 951,
+        "deleted": 273,
+        "modified": 22,
+        "unchanged": 0
+      },
+      "signatures": {
+        "new": 973,
+        "old": 295
+      },
+      "spatial": {
+        "nearest": 2,
+        "position_zip": 20,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 4.78,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "guid_scramble",
+      "matched_by_tier": {
+        "geometry_hash": 295,
+        "guid": 0,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "geometry_hash": {
+          "change_scope": {
+            "none": 295
+          },
+          "count": 295,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "duplex_arch(scrambled)",
+      "old": "duplex_arch",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 295
+      },
+      "signatures": {
+        "new": 295,
+        "old": 295
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.05,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 2365,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 2365
+          },
+          "count": 2365,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "advanced_project",
+      "old": "advanced_project",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 2365
+      },
+      "signatures": {
+        "new": 2365,
+        "old": 2365
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.02,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 2360,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 2360
+          },
+          "count": 2360,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "adv_changed",
+      "old": "adv_changed",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 2360
+      },
+      "signatures": {
+        "new": 2360,
+        "old": 2360
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.03,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 177,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 177
+          },
+          "count": 177,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "basic_house",
+      "old": "basic_house",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 177
+      },
+      "signatures": {
+        "new": 177,
+        "old": 177
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {
+          "IfcSlab": 1,
+          "IfcWall": 4
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.07,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "revision",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 2360,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "intrinsic": 674,
+            "mixed": 1431,
+            "none": 31,
+            "transitive": 224
+          },
+          "count": 2360,
+          "max_abs_placement_delta_mm": 299330589.606,
+          "placement_changed": 2105
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 674,
+        "mixed": 1431,
+        "transitive": 224
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 2329
+      },
+      "modified_match_reasons": {
+        "guid": 2329
+      },
+      "modified_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "intrinsic": 674,
+            "mixed": 1431,
+            "transitive": 224
+          },
+          "count": 2329,
+          "max_abs_placement_delta_mm": 299330589.606,
+          "placement_changed": 2105
+        }
+      },
+      "modified_score_bands": {
+        "high": 2329,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "adv_changed",
+      "old": "advanced_project",
+      "sections": {
+        "added": 0,
+        "deleted": 5,
+        "modified": 2329,
+        "unchanged": 31
+      },
+      "signatures": {
+        "new": 2360,
+        "old": 2365
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {
+          "IfcBuildingElementProxy": 358,
+          "IfcDistributionPort": 139,
+          "IfcDoor": 126,
+          "IfcFurnishingElement": 407,
+          "IfcMember": 83,
+          "IfcOpeningElement": 427,
+          "IfcWall": 390,
+          "IfcWindow": 263
+        },
+        "deleted": {
+          "IfcBuildingElementProxy": 4,
+          "IfcDistributionPort": 19,
+          "IfcDoor": 8,
+          "IfcFlowTerminal": 7,
+          "IfcFurnishingElement": 71,
+          "IfcOpeningElement": 28,
+          "IfcWall": 13,
+          "IfcWindow": 19
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.02,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "unrelated",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 0,
+        "spatial_fallback": 3,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "spatial_fallback": {
+          "change_scope": {
+            "mixed": 3
+          },
+          "count": 3,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 3,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 3,
+        "normal": 0
+      },
+      "modified_match_reasons": {
+        "spatial_fallback": 3
+      },
+      "modified_reason_detail": {
+        "spatial_fallback": {
+          "change_scope": {
+            "mixed": 3
+          },
+          "count": 3,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_score_bands": {
+        "high": 0,
+        "low": 3,
+        "medium": 0
+      },
+      "new": "advanced_project",
+      "old": "basic_house",
+      "sections": {
+        "added": 2362,
+        "deleted": 174,
+        "modified": 3,
+        "unchanged": 0
+      },
+      "signatures": {
+        "new": 2365,
+        "old": 177
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 3,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 0.12,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 6385,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 6385
+          },
+          "count": 6385,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "uni_house",
+      "old": "uni_house",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 6385
+      },
+      "signatures": {
+        "new": 6385,
+        "old": 6385
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 1.24,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 44389,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 44389
+          },
+          "count": 44389,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "spanish",
+      "old": "spanish",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 44389
+      },
+      "signatures": {
+        "new": 44389,
+        "old": 44389
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {},
+        "deleted": {}
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 2.09,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "same_file",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 4680,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {
+        "guid": {
+          "change_scope": {
+            "none": 4680
+          },
+          "count": 4680,
+          "max_abs_placement_delta_mm": 0.0,
+          "placement_changed": 0
+        }
+      },
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "real_world_big",
+      "old": "real_world_big",
+      "sections": {
+        "added": 0,
+        "deleted": 0,
+        "modified": 0,
+        "unchanged": 4680
+      },
+      "signatures": {
+        "new": 4680,
+        "old": 4680
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    },
+    {
+      "added_deleted_top_classes": {
+        "added": {
+          "IfcBuildingElementProxy": 632,
+          "IfcDistributionPort": 226,
+          "IfcFurnishingElement": 316,
+          "IfcMember": 2316,
+          "IfcOpeningElement": 471,
+          "IfcPlate": 979,
+          "IfcSlab": 235,
+          "IfcWall": 583
+        },
+        "deleted": {
+          "IfcBeam": 201,
+          "IfcBuildingElementPart": 1342,
+          "IfcColumn": 158,
+          "IfcCovering": 16120,
+          "IfcMechanicalFastener": 6024,
+          "IfcMember": 18939,
+          "IfcPlate": 1112,
+          "IfcWall": 155
+        }
+      },
+      "cross_class_matches": 0,
+      "diff_seconds": 1.31,
+      "duplicate_guids": {
+        "new": 0,
+        "old": 0
+      },
+      "guid_collisions": {
+        "new": 0,
+        "old": 0
+      },
+      "kind": "unrelated",
+      "matched_by_tier": {
+        "geometry_hash": 0,
+        "guid": 0,
+        "spatial_fallback": 0,
+        "tier2_signature": 0
+      },
+      "matched_reason_detail": {},
+      "modified_change_scope": {
+        "intrinsic": 0,
+        "mixed": 0,
+        "transitive": 0
+      },
+      "modified_conflicts": {
+        "downgraded": 0,
+        "normal": 0
+      },
+      "modified_match_reasons": {},
+      "modified_reason_detail": {},
+      "modified_score_bands": {
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "new": "uni_house",
+      "old": "spanish",
+      "sections": {
+        "added": 6385,
+        "deleted": 44389,
+        "modified": 0,
+        "unchanged": 0
+      },
+      "signatures": {
+        "new": 6385,
+        "old": 44389
+      },
+      "spatial": {
+        "nearest": 0,
+        "position_zip": 0,
+        "probe_capped": 0
+      }
+    }
+  ],
+  "total_seconds": 2431.2
+}

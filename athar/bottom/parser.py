@@ -29,6 +29,7 @@ _AREA_MEASURES = {"IFCAREAMEASURE"}
 _VOLUME_MEASURES = {"IFCVOLUMEMEASURE"}
 _DEFAULT_SCALE = 1_000_000
 _DIRECTION_SCALE = 100_000
+_MAX_TYPE_CHAIN_HOPS = 32
 _NULL_TOKEN = "\x00"
 _DERIVED_TOKEN = "\x01"
 
@@ -121,7 +122,10 @@ def _canonicalize_value(
         return {"kind": "derived", "token": _DERIVED_TOKEN}
 
     base_type = _unwrap_named_type(attr_type)
-    measure_type = _measure_type_from_attr_type(base_type)
+    # Measure detection must start from the original (outermost) attr type:
+    # the measure name lives on the named-type chain that _unwrap_named_type
+    # walks past on its way down to the underlying simple type.
+    measure_type = _measure_type_from_attr_type(attr_type)
 
     if _is_select_type(base_type):
         branch_name = _select_branch_name(value)
@@ -372,19 +376,20 @@ def _wrapper_value(value: Any) -> Any:
 
 
 def _unwrap_named_type(attr_type):
+    # Hop-capped walk, no id()-based cycle detection: declared_type() mints a
+    # transient SWIG proxy per call, so freed-and-recycled heap addresses made
+    # id() collide with dead nodes and broke the walk nondeterministically.
+    # EXPRESS defined-type chains are acyclic and short; the cap is a guard.
     current = attr_type
-    seen: set[int] = set()
-    while hasattr(current, "declared_type"):
+    for _ in range(_MAX_TYPE_CHAIN_HOPS):
+        if not hasattr(current, "declared_type"):
+            break
         try:
             next_type = current.declared_type()
         except Exception:
             break
         if next_type is None or next_type is current:
             break
-        marker = id(next_type)
-        if marker in seen:
-            break
-        seen.add(marker)
         current = next_type
     return current
 
@@ -427,8 +432,7 @@ def _measure_type_from_attr_type(attr_type) -> str | None:
         return None
 
     current = attr_type
-    seen: set[int] = set()
-    while current is not None:
+    for _ in range(_MAX_TYPE_CHAIN_HOPS):
         name = _safe_type_name(current)
         if isinstance(name, str) and name.upper().endswith("MEASURE"):
             return name
@@ -440,10 +444,6 @@ def _measure_type_from_attr_type(attr_type) -> str | None:
             break
         if next_type is None or next_type is current:
             break
-        marker = id(next_type)
-        if marker in seen:
-            break
-        seen.add(marker)
         current = next_type
     return None
 

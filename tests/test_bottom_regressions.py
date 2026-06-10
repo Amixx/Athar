@@ -161,6 +161,41 @@ def test_string_scalar_canonicalization_preserves_numeric_literals() -> None:
     }
 
 
+def test_measure_detection_is_deterministic_and_drives_unit_conversion() -> None:
+    # Regression: the type-chain walkers used id()-based cycle detection over
+    # transient SWIG proxies; recycled heap addresses produced phantom cycles,
+    # so measure detection (and thus mm->m conversion) flipped randomly between
+    # repeated extractions of the same entity. Also guards that detection runs
+    # from the outermost attr type, where the *Measure name actually lives.
+    import ifcopenshell.ifcopenshell_wrapper as wrapper
+
+    from athar.bottom.parser import _canonicalize_value, _measure_type_from_attr_type
+
+    for schema_name in ("IFC2X3", "IFC4"):
+        schema = wrapper.schema_by_name(schema_name)
+        decl = schema.declaration_by_name("IfcExtrudedAreaSolid")
+        attr = {a.name(): a for a in decl.all_attributes()}["Depth"]
+
+        outcomes = {_measure_type_from_attr_type(attr.type_of_attribute()) for _ in range(5000)}
+        assert outcomes == {"IfcPositiveLengthMeasure"}
+
+        unit_context = {"unit_factors": {"LENGTHUNIT": 0.001}}
+        quantized = {
+            _canonicalize_value(
+                source_step=1,
+                source_type="IfcExtrudedAreaSolid",
+                value=3000.0,
+                attr_type=attr.type_of_attribute(),
+                attr_name="Depth",
+                path="Depth",
+                refs=[],
+                unit_context=unit_context,
+            )["value"]
+            for _ in range(500)
+        }
+        assert quantized == {3_000_000}
+
+
 def test_spatial_entity_detection_accepts_ifc2x3_spatial_structure_elements() -> None:
     assert _is_spatial_entity(_FakeIfcEntity({"IfcSpatialElement"}))
     assert _is_spatial_entity(_FakeIfcEntity({"IfcSpatialStructureElement"}))

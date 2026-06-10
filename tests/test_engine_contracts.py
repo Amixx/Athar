@@ -1,28 +1,21 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from athar.bottom.constants import CANON_VERSION
 from athar.bottom.edge_policy import EDGE_POLICY_TABLE
 from athar.bottom.signatures import build_signature_bundle
 from athar.engine import diff_files
+from tests.corpus import CORPUS, corpus_path
+
+OLD_IFC = str(CORPUS["bl_v1"].path)
+NEW_IFC = str(CORPUS["bl_v2"].path)
 
 
-REAL_WORLD = Path(__file__).resolve().parent.parent / "real-world-test"
-OLD_IFC = str(REAL_WORLD / "Building-Landscaping-v1.ifc")
-NEW_IFC = str(REAL_WORLD / "Building-Landscaping-v2.ifc")
-
-
-def _require_real_content(path: str) -> None:
-    with open(path, "rb") as fh:
-        if fh.read(64).startswith(b"version https://git-lfs"):
-            pytest.fail(f"{path} is an unfetched git-lfs pointer; run `git lfs pull`")
-
-
-_require_real_content(OLD_IFC)
-_require_real_content(NEW_IFC)
+@pytest.fixture(scope="module", autouse=True)
+def _corpus_files_present():
+    corpus_path("bl_v1")
+    corpus_path("bl_v2")
 
 
 def test_edge_policy_table_contains_required_engine_relationships():

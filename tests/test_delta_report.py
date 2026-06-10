@@ -98,12 +98,6 @@ def test_build_delta_report_splits_modified_vs_unchanged_and_computes_placement_
         "transitive": 0,
         "mixed": 0,
     }
-    assert report["stats"]["modified_match_reasons"] == {"guid": 2}
-    assert report["stats"]["modified_score_bands"] == {
-        "high": 2,
-        "medium": 0,
-        "low": 0,
-    }
 
 
 def test_build_delta_report_sorts_added_deleted_and_includes_diagnostics_summary():
@@ -206,9 +200,6 @@ def test_build_delta_report_stats_counts_are_internally_consistent():
     assert stats["deleted"] + stats["modified"] + stats["unchanged"] == stats["old_signatures"]
     assert stats["added"] + stats["modified"] + stats["unchanged"] == stats["new_signatures"]
     assert sum(stats["modified_change_scope"].values()) == stats["modified"]
-    assert sum(stats["modified_conflicts"].values()) == stats["modified"]
-    assert sum(stats["modified_score_bands"].values()) == stats["modified"]
-    assert sum(stats["modified_match_reasons"].values()) == stats["modified"]
 
 
 def test_build_delta_report_sets_placement_delta_none_when_matrices_are_missing_or_short():
@@ -279,67 +270,29 @@ def test_build_delta_report_change_scope_classifies_transitive_and_mixed():
     }
 
 
-def test_build_delta_report_downgrades_low_confidence_fallback_for_transitive_changes():
+def test_build_delta_report_match_items_carry_only_score_reason_and_aspects():
+    # The former per-item conflict block and the modified_match_reasons /
+    # modified_score_bands / modified_conflicts stats were removed as
+    # degenerate (see docs/corpus/2026-06-10-corpus-survey.md).
     old_bundle = _bundle(
         schema="IFC4",
-        signatures={1: _signature(1, guid="A", vh_geometry="g", vh_data="d", vh_topology="t-old")},
+        signatures={1: _signature(1, guid="A", vh_geometry="g-old")},
     )
     new_bundle = _bundle(
         schema="IFC4",
-        signatures={10: _signature(10, guid="B", vh_geometry="g", vh_data="d", vh_topology="t-new")},
+        signatures={10: _signature(10, guid="A", vh_geometry="g-new")},
     )
 
     report = build_delta_report(
         old_bundle,
         new_bundle,
-        matches=[MatchedPair(old_step=1, new_step=10, score=0.70, reason="tier2_signature")],
+        matches=[MatchedPair(old_step=1, new_step=10, score=0.9, reason="guid")],
         unmatched_old=[],
         unmatched_new=[],
     )
 
     item = report["modified"][0]
-    assert item["change_scope"] == "transitive"
-    assert item["conflict"] == {
-        "downgraded": True,
-        "rule": "fallback_low_confidence_transitive_or_mixed",
-    }
-    assert report["stats"]["modified_conflicts"] == {"downgraded": 1, "normal": 0}
-    assert report["stats"]["modified_match_reasons"] == {"tier2_signature": 1}
-    assert report["stats"]["modified_score_bands"] == {
-        "high": 0,
-        "medium": 1,
-        "low": 0,
-    }
-
-
-def test_build_delta_report_keeps_normal_conflict_for_high_confidence_or_intrinsic():
-    old_bundle = _bundle(
-        schema="IFC4",
-        signatures={1: _signature(1, guid="A", vh_geometry="g-old", vh_data="d", vh_topology="t")},
-    )
-    new_bundle = _bundle(
-        schema="IFC4",
-        signatures={10: _signature(10, guid="B", vh_geometry="g-new", vh_data="d", vh_topology="t")},
-    )
-
-    report = build_delta_report(
-        old_bundle,
-        new_bundle,
-        matches=[MatchedPair(old_step=1, new_step=10, score=0.70, reason="tier2_signature")],
-        unmatched_old=[],
-        unmatched_new=[],
-    )
-
-    item = report["modified"][0]
-    assert item["change_scope"] == "intrinsic"
-    assert item["conflict"] == {
-        "downgraded": False,
-        "rule": "none",
-    }
-    assert report["stats"]["modified_conflicts"] == {"downgraded": 0, "normal": 1}
-    assert report["stats"]["modified_match_reasons"] == {"tier2_signature": 1}
-    assert report["stats"]["modified_score_bands"] == {
-        "high": 0,
-        "medium": 1,
-        "low": 0,
-    }
+    assert set(item) == {"old", "new", "match", "aspects", "data_hash", "change_scope"}
+    assert item["match"] == {"score": 0.9, "reason": "guid"}
+    for stat in ("modified_match_reasons", "modified_score_bands", "modified_conflicts"):
+        assert stat not in report["stats"]
