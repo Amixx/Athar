@@ -25,7 +25,8 @@ Pure Python. Pipeline: parse → signatures → tiered matching → delta report
   - `signatures.py` — Assembles per-product/spatial `SignatureVector`s into a `SignatureBundle` (signatures + diagnostics + edge stats only; the full parse result is not retained).
 - `athar/matcher/core.py` — Tiered pool-reduction matching (`match_signatures`, no tuning knobs). Each tier examines only still-unmatched pools and emits disjoint 1:1 pairs; there are no candidate lists, no scoring pass, and no assignment step, so memory stays O(N) and ambiguity is resolved by construction. Tiers, strongest first: unique GlobalId + same class (score 1.0 when the full vector is identical, else 0.9); same-class full signature-vector equality zipped in step order (`geometry_hash`, 0.8). Anything weaker is reported as added+deleted rather than guessed — the 2026-06 corpus survey (`docs/corpus/2026-06-10-corpus-survey.md`) showed the former topology-unique and spatial-nearest fallback tiers never fired on a real revision pair and only produced cross-model container matches. Every tier keys on canonical class, so matched pairs never cross classes. Duplicated GlobalIds are never identity evidence — those entities fall through to the vector tier.
 - `athar/delta/report.py` — Per-aspect change report assembly. Sections `added/deleted/modified/unchanged`; matched items carry `match{score,reason}`, per-aspect `changed/unchanged` for `geometry/data/topology/placement` plus `placement_delta_mm`, `data_hash{old,new}`, and `change_scope` (`intrinsic|transitive|mixed|none`). Stats cover section counts, signature counts, parse diagnostics, edge stats, `modified_change_scope`, and `dropped_matches`. Because `geometry_hash` matches equal full vectors, every `modified` item is by construction a guid match with score 0.9.
-- `athar/__main__.py` — Minimal CLI: `--stream ndjson|chunked_json`, `--chunk-size`. Errors print to stderr and exit 1.
+- `athar/check.py` — CI-platform-agnostic policy gates over existing Athar JSON reports (or a fresh report from `athar check old.ifc new.ifc --policy ...`). Policies are JSON-only and intentionally limited to report-visible signals: schema equality, section counts, class-specific counts, modified change scopes, aspect changes, site placement changes, and placement delta budgets. Exit `2` means policy violations; exit `1` means execution/configuration error. Fine-grained property-name gates need future report detail beyond the current data hash.
+- `athar/__main__.py` — Minimal CLI: raw diff output, `--stream ndjson|chunked_json`, `--chunk-size`, and `check` policy gates. Errors print to stderr and exit 1.
 
 ### Git Integration (`athar_git/`)
 
@@ -72,6 +73,8 @@ Schema policy: IFC4 and IFC2X3 are both supported, but only same-schema comparis
 
 ```bash
 python -m athar old.ifc new.ifc                          # raw JSON diff
+python -m athar check old.ifc new.ifc --policy policy.json # CI policy gate; exits 2 on violations
+python -m athar check --report report.json --policy policy.json
 python -m athar old.ifc new.ifc --stream ndjson          # NDJSON records
 python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
 athar git install                                        # configure .ifc diff driver in this repo

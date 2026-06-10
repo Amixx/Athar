@@ -1,4 +1,5 @@
 import sys
+import json
 
 import pytest
 
@@ -75,3 +76,55 @@ def test_cli_rejects_removed_timings_flag(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["athar", "old.ifc", "new.ifc", "--timings"])
     with pytest.raises(SystemExit):
         main_mod.main()
+
+
+def test_cli_check_existing_report_passes(tmp_path, capsys):
+    report_path = tmp_path / "report.json"
+    policy_path = tmp_path / "policy.json"
+    report_path.write_text(
+        json.dumps({"schemas": {"old": "IFC4", "new": "IFC4"}, "stats": {"deleted": 0}, "deleted": []}),
+        encoding="utf-8",
+    )
+    policy_path.write_text(json.dumps({"max_deleted": 0}), encoding="utf-8")
+
+    code = main_mod._run_check(["--report", str(report_path), "--policy", str(policy_path)])
+
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert out["ok"] is True
+
+
+def test_cli_check_existing_report_fails_policy(tmp_path, capsys):
+    report_path = tmp_path / "report.json"
+    policy_path = tmp_path / "policy.json"
+    report_path.write_text(
+        json.dumps({"schemas": {"old": "IFC4", "new": "IFC4"}, "stats": {"deleted": 1}, "deleted": [{}]}),
+        encoding="utf-8",
+    )
+    policy_path.write_text(json.dumps({"max_deleted": 0}), encoding="utf-8")
+
+    code = main_mod._run_check(["--report", str(report_path), "--policy", str(policy_path)])
+
+    out = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert out["ok"] is False
+    assert out["violations"][0]["code"] == "deleted_limit"
+
+
+def test_cli_check_diffs_files_when_no_report(monkeypatch, tmp_path, capsys):
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps({"max_deleted": 0}), encoding="utf-8")
+    called = {}
+
+    def fake_diff_files(old, new):
+        called["args"] = (old, new)
+        return {"schemas": {"old": "IFC4", "new": "IFC4"}, "stats": {"deleted": 0}}
+
+    monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
+
+    code = main_mod._run_check(["old.ifc", "new.ifc", "--policy", str(policy_path)])
+
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert out["ok"] is True
+    assert called["args"] == ("old.ifc", "new.ifc")

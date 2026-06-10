@@ -63,12 +63,56 @@ make test
 # Two-file diff (JSON output)
 python -m athar old.ifc new.ifc
 
+# CI policy gate over a fresh diff; exits 2 on policy violations
+python -m athar check old.ifc new.ifc --policy athar-policy.json
+
+# CI policy gate over an existing JSON report
+python -m athar check --report report.json --policy athar-policy.json
+
 # Stream output as NDJSON records (header, one record per entity, end with stats)
 python -m athar old.ifc new.ifc --stream ndjson
 
 # Stream output as chunked JSON
 python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
 ```
+
+### CI Policy Gates
+
+`athar check` evaluates an Athar JSON report against a small JSON policy and
+prints structured JSON: `{ "ok": bool, "violations": [...], "summary": ... }`.
+It exits `0` when the policy passes, `2` when the diff is valid but violates
+policy, and `1` for execution/configuration errors.
+
+Example policy:
+
+```json
+{
+  "forbid_schema_change": true,
+  "max_deleted": 0,
+  "max_deleted_by_class": {
+    "IfcWall": 0
+  },
+  "max_modified_change_scope": {
+    "intrinsic": 10,
+    "mixed": 0
+  },
+  "forbid_site_placement_change": true,
+  "max_placement_delta_mm": 50,
+  "max_placement_delta_mm_by_class": {
+    "IfcSite": 0
+  },
+  "forbid_aspect_changes": {
+    "data": ["IfcWall"],
+    "placement": "*"
+  }
+}
+```
+
+The gate is report-driven and CI-platform-agnostic. Current policies can only
+inspect signals present in the report: schema equality, section counts,
+class-specific counts, modified change scopes, changed aspects, and placement
+translation deltas. Fine-grained checks such as “property `FireRating` was
+removed” require future report detail beyond the current data hash.
 
 ### Git IFC Diff Driver
 
