@@ -139,3 +139,5 @@ internal-docs/
 
 # Local external IFC corpus cache; manifests/docs may live in git, raw datasets do not.
 corpus-data/
+
+.claude
