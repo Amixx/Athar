@@ -216,7 +216,9 @@ implemented).
 
 ## Documentation
 
-Architecture and conventions live in [AGENTS.md](AGENTS.md). Dated performance
+Agent-facing architecture and conventions are split by ownership: start at
+[AGENTS.md](AGENTS.md), then follow the nearest subdirectory `AGENTS.md` for
+core engine, Git integration, tests, docs, and scripts. Dated performance
 findings live under `docs/perf/`, with `docs/perf/STATUS.md` stating what is
 still current. Corpus survey findings live under `docs/corpus/`.
 
