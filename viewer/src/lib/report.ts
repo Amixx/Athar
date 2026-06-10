@@ -64,6 +64,33 @@ function record(side: Side, summary: EntitySummary, section: Section, pair?: Mat
   }
 }
 
+export interface ClassRow {
+  klass: string
+  added: number
+  deleted: number
+  modified: number
+}
+
+/** Per-class change rollup for the summary panel, busiest classes first. */
+export function classBreakdown(report: AtharReport, limit = 8): ClassRow[] {
+  const rows = new Map<string, ClassRow>()
+  const bump = (klass: string, key: 'added' | 'deleted' | 'modified') => {
+    let row = rows.get(klass)
+    if (!row) rows.set(klass, (row = { klass, added: 0, deleted: 0, modified: 0 }))
+    row[key] += 1
+  }
+  for (const summary of report.added) bump(summary.class, 'added')
+  for (const summary of report.deleted) bump(summary.class, 'deleted')
+  for (const item of report.modified) bump(item.new.class, 'modified')
+  return [...rows.values()]
+    .sort(
+      (a, b) =>
+        b.added + b.deleted + b.modified - (a.added + a.deleted + a.modified) ||
+        a.klass.localeCompare(b.klass),
+    )
+    .slice(0, limit)
+}
+
 export function buildDiffIndex(report: AtharReport): DiffIndex {
   const oldMap = new Map<number, EntityRecord>()
   const newMap = new Map<number, EntityRecord>()
