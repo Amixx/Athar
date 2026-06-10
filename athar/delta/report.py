@@ -28,8 +28,6 @@ def build_delta_report(
             dropped_matches += 1
             continue
         aspects = _aspect_diff(old_sig, new_sig)
-        change_scope = _change_scope(aspects)
-        conflict = _conflict_status(pair.reason, pair.score, change_scope)
         item = {
             "old": _entity_summary(old_sig),
             "new": _entity_summary(new_sig),
@@ -39,8 +37,7 @@ def build_delta_report(
                 "old": old_sig.vh_data,
                 "new": new_sig.vh_data,
             },
-            "change_scope": change_scope,
-            "conflict": conflict,
+            "change_scope": _change_scope(aspects),
         }
         if any(value == "changed" for key, value in aspects.items() if key != "placement_delta_mm"):
             modified.append(item)
@@ -71,9 +68,6 @@ def build_delta_report(
             "old_edge_stats": old_bundle.edge_stats,
             "new_edge_stats": new_bundle.edge_stats,
             "modified_change_scope": _scope_stats(modified),
-            "modified_conflicts": _conflict_stats(modified),
-            "modified_match_reasons": _match_reason_stats(modified),
-            "modified_score_bands": _score_band_stats(modified),
             "dropped_matches": dropped_matches,
         },
         "added": added,
@@ -148,51 +142,4 @@ def _scope_stats(modified: list[dict]) -> dict[str, int]:
         scope = item.get("change_scope")
         if scope in out:
             out[scope] += 1
-    return out
-
-
-def _conflict_status(reason: str, score: float, change_scope: str) -> dict[str, str | bool]:
-    downgraded_reasons = {"spatial_fallback", "tier2_signature"}
-    downgraded = (
-        reason in downgraded_reasons
-        and score < 0.75
-        and change_scope in {"mixed", "transitive"}
-    )
-    return {
-        "downgraded": downgraded,
-        "rule": "fallback_low_confidence_transitive_or_mixed" if downgraded else "none",
-    }
-
-
-def _conflict_stats(modified: list[dict]) -> dict[str, int]:
-    downgraded = sum(1 for item in modified if item.get("conflict", {}).get("downgraded") is True)
-    return {
-        "downgraded": downgraded,
-        "normal": max(len(modified) - downgraded, 0),
-    }
-
-
-def _match_reason_stats(modified: list[dict]) -> dict[str, int]:
-    out: dict[str, int] = {}
-    for item in modified:
-        reason = item.get("match", {}).get("reason")
-        if not isinstance(reason, str):
-            continue
-        out[reason] = out.get(reason, 0) + 1
-    return dict(sorted(out.items()))
-
-
-def _score_band_stats(modified: list[dict]) -> dict[str, int]:
-    out = {"high": 0, "medium": 0, "low": 0}
-    for item in modified:
-        score = item.get("match", {}).get("score")
-        if not isinstance(score, (int, float)):
-            continue
-        value = float(score)
-        if value >= 0.9:
-            out["high"] += 1
-        elif value >= 0.6:
-            out["medium"] += 1
-        else:
-            out["low"] += 1
     return out

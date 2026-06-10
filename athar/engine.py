@@ -7,20 +7,15 @@ import os
 from collections import Counter
 from typing import Iterator
 
-from athar.bottom.constants import CANON_VERSION, DEFAULT_MATCH_RADIUS_M
+from athar.bottom.constants import CANON_VERSION
 from athar.bottom.signatures import build_signature_bundle
 from athar.delta.report import build_delta_report
-from athar.matcher.core import DEFAULT_SPATIAL_PROBE_LIMIT, match_signatures
+from athar.matcher.core import match_signatures
 
 _BUNDLE_CACHE: dict[tuple[str, int, int], object] = {}
 
 
-def diff_files(
-    old_path: str,
-    new_path: str,
-    *,
-    matcher_policy: dict | None = None,
-) -> dict:
+def diff_files(old_path: str, new_path: str) -> dict:
     """Diff two IFC files with the current architecture."""
 
     old_bundle = _load_bundle(old_path)
@@ -33,8 +28,6 @@ def diff_files(
     matches, unmatched_old, unmatched_new, matcher_diagnostics = match_signatures(
         old_bundle.signatures,
         new_bundle.signatures,
-        radius_m=_matcher_radius_from_policy(matcher_policy),
-        probe_limit=_probe_limit_from_policy(matcher_policy),
     )
     report = build_delta_report(old_bundle, new_bundle, matches, unmatched_old, unmatched_new)
     report["stats"]["guid_collisions"] = {
@@ -50,16 +43,11 @@ def stream_diff_files(
     old_path: str,
     new_path: str,
     *,
-    matcher_policy: dict | None = None,
     mode: str = "ndjson",
     chunk_size: int = 1000,
 ) -> Iterator[str]:
     """Stream diff output as NDJSON or chunked JSON."""
-    report = diff_files(
-        old_path,
-        new_path,
-        matcher_policy=matcher_policy,
-    )
+    report = diff_files(old_path, new_path)
     if mode == "ndjson":
         yield from _stream_ndjson(report)
         return
@@ -90,28 +78,6 @@ def _stream_chunked_json(report: dict, *, chunk_size: int) -> Iterator[str]:
 def _assert_schema_compatible(old_schema: str, new_schema: str) -> None:
     if old_schema != new_schema:
         raise ValueError(f"Schema mismatch: {old_schema} vs {new_schema}")
-
-
-def _matcher_radius_from_policy(policy: dict | None) -> float:
-    if not isinstance(policy, dict):
-        return DEFAULT_MATCH_RADIUS_M
-    raw = policy.get("spatial_radius_m")
-    if raw is None:
-        return DEFAULT_MATCH_RADIUS_M
-    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw <= 0:
-        raise ValueError(f"matcher_policy.spatial_radius_m must be a positive number, got {raw!r}")
-    return float(raw)
-
-
-def _probe_limit_from_policy(policy: dict | None) -> int:
-    if not isinstance(policy, dict):
-        return DEFAULT_SPATIAL_PROBE_LIMIT
-    raw = policy.get("spatial_probe_limit")
-    if raw is None:
-        return DEFAULT_SPATIAL_PROBE_LIMIT
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
-        raise ValueError(f"matcher_policy.spatial_probe_limit must be a positive int, got {raw!r}")
-    return raw
 
 
 def _guid_collision_count(signatures) -> int:

@@ -25,34 +25,22 @@ def main() -> None:
         default=1000,
         help="Chunk size for --stream chunked_json",
     )
-    parser.add_argument(
-        "--matcher-radius-m",
-        type=float,
-        default=0.5,
-        help="Spatial fallback radius in meters (default: 0.5m)",
-    )
     args = parser.parse_args()
     if not args.old or not args.new:
         parser.error("the following arguments are required: old, new")
 
-    matcher_policy = {"spatial_radius_m": args.matcher_radius_m}
     try:
         if args.stream != "none":
             for line in stream_diff_files(
                 args.old,
                 args.new,
-                matcher_policy=matcher_policy,
                 mode=args.stream,
                 chunk_size=args.chunk_size,
             ):
                 print(line)
             return
 
-        result = diff_files(
-            args.old,
-            args.new,
-            matcher_policy=matcher_policy,
-        )
+        result = diff_files(args.old, args.new)
         json.dump(result, sys.stdout, indent=2)
         print()
     except Exception as exc:  # pragma: no cover - CLI error path

@@ -1,4 +1,5 @@
-PYTHON ?= python
+# Prefer the repo-local .venv; override with `make PYTHON=...` or an activated env.
+PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .PHONY: help dev-setup test test-large-acceptance
 
