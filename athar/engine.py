@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections import Counter
+from datetime import datetime, timezone
+from importlib import metadata
+from pathlib import Path
 from typing import Iterator
 
 from athar.bottom.constants import CANON_VERSION
@@ -16,7 +20,7 @@ from athar.matcher.core import match_signatures
 _BUNDLE_CACHE: dict[tuple[str, int, int], object] = {}
 
 
-def diff_files(old_path: str, new_path: str) -> dict:
+def diff_files(old_path: str, new_path: str, *, generated_at: str | None = None) -> dict:
     """Diff two IFC files with the current architecture."""
 
     old_bundle = _load_bundle(old_path)
@@ -24,10 +28,15 @@ def diff_files(old_path: str, new_path: str) -> dict:
         new_bundle = old_bundle
     else:
         new_bundle = _load_bundle(new_path)
-    return diff_bundles(old_bundle, new_bundle)
+    return diff_bundles(old_bundle, new_bundle, generated_at=generated_at)
 
 
-def diff_bundles(old_bundle: SignatureBundle, new_bundle: SignatureBundle) -> dict:
+def diff_bundles(
+    old_bundle: SignatureBundle,
+    new_bundle: SignatureBundle,
+    *,
+    generated_at: str | None = None,
+) -> dict:
     """Diff two pre-built signature bundles."""
 
     _assert_schema_compatible(old_bundle.schema, new_bundle.schema)
@@ -43,6 +52,7 @@ def diff_bundles(old_bundle: SignatureBundle, new_bundle: SignatureBundle) -> di
     }
     report["stats"]["matcher_diagnostics"] = matcher_diagnostics
     report["canon_version"] = CANON_VERSION
+    report["audit"] = _audit_metadata(old_bundle, new_bundle, generated_at=generated_at)
     return report
 
 
@@ -52,9 +62,10 @@ def stream_diff_files(
     *,
     mode: str = "ndjson",
     chunk_size: int = 1000,
+    generated_at: str | None = None,
 ) -> Iterator[str]:
     """Stream diff output as NDJSON or chunked JSON."""
-    report = diff_files(old_path, new_path)
+    report = diff_files(old_path, new_path, generated_at=generated_at)
     if mode == "ndjson":
         yield from _stream_ndjson(report)
         return
@@ -65,7 +76,15 @@ def stream_diff_files(
 
 
 def _stream_ndjson(report: dict) -> Iterator[str]:
-    yield json.dumps({"record_type": "header", "engine": report.get("engine"), "canon_version": report.get("canon_version")})
+    yield json.dumps(
+        {
+            "record_type": "header",
+            "engine": report.get("engine"),
+            "canon_version": report.get("canon_version"),
+            "audit": report.get("audit"),
+        },
+        sort_keys=True,
+    )
     for section in ("added", "deleted", "modified", "unchanged"):
         for item in report.get(section, []):
             yield json.dumps({"record_type": section, "item": item}, sort_keys=True)
@@ -73,7 +92,15 @@ def _stream_ndjson(report: dict) -> Iterator[str]:
 
 
 def _stream_chunked_json(report: dict, *, chunk_size: int) -> Iterator[str]:
-    yield json.dumps({"chunk_type": "header", "engine": report.get("engine"), "canon_version": report.get("canon_version")})
+    yield json.dumps(
+        {
+            "chunk_type": "header",
+            "engine": report.get("engine"),
+            "canon_version": report.get("canon_version"),
+            "audit": report.get("audit"),
+        },
+        sort_keys=True,
+    )
     for section in ("added", "deleted", "modified", "unchanged"):
         rows = report.get(section, [])
         for i in range(0, len(rows), chunk_size):
@@ -104,3 +131,81 @@ def _load_bundle(path: str):
         oldest = next(iter(_BUNDLE_CACHE))
         _BUNDLE_CACHE.pop(oldest, None)
     return bundle
+
+
+def generated_at_now_utc() -> str:
+    """Return an archive timestamp for callers that opt into non-determinism."""
+
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _audit_metadata(
+    old_bundle: SignatureBundle,
+    new_bundle: SignatureBundle,
+    *,
+    generated_at: str | None,
+) -> dict:
+    audit = {
+        "report_schema_version": 1,
+        "producer": {
+            "name": "athar",
+            "version": _package_version(),
+            "canon_version": CANON_VERSION,
+        },
+        "inputs": {
+            "old": _input_metadata(old_bundle),
+            "new": _input_metadata(new_bundle),
+        },
+    }
+    if generated_at is not None:
+        audit["generated_at"] = generated_at
+    return audit
+
+
+def _input_metadata(bundle: SignatureBundle) -> dict:
+    metadata = {
+        "path": bundle.filepath,
+        "schema": bundle.schema,
+    }
+    try:
+        stat = os.stat(bundle.filepath)
+    except OSError:
+        return metadata
+    metadata["size_bytes"] = stat.st_size
+    metadata["sha256"] = _file_sha256(bundle.filepath)
+    return metadata
+
+
+def _file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _package_version() -> str:
+    try:
+        return metadata.version("athar")
+    except metadata.PackageNotFoundError:
+        return _pyproject_version()
+
+
+def _pyproject_version() -> str:
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    try:
+        lines = pyproject.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return "unknown"
+    in_project = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "[project]":
+            in_project = True
+            continue
+        if in_project and stripped.startswith("["):
+            return "unknown"
+        if in_project and stripped.startswith("version"):
+            _, _, value = stripped.partition("=")
+            return value.strip().strip('"') or "unknown"
+    return "unknown"

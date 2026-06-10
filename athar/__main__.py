@@ -6,7 +6,7 @@ import argparse
 import json
 import sys
 
-from athar.engine import diff_files, stream_diff_files
+from athar.engine import diff_files, generated_at_now_utc, stream_diff_files
 
 
 def main() -> None:
@@ -35,23 +35,30 @@ def main() -> None:
         default=1000,
         help="Chunk size for --stream chunked_json",
     )
+    parser.add_argument(
+        "--generated-at",
+        metavar="TIMESTAMP|now",
+        help="Embed an audit timestamp; use 'now' for the current UTC time",
+    )
     args = parser.parse_args()
 
     if not args.old or not args.new:
         parser.error("the following arguments are required: old, new")
 
     try:
+        generated_at = _generated_at_arg(args.generated_at)
         if args.stream != "none":
             for line in stream_diff_files(
                 args.old,
                 args.new,
                 mode=args.stream,
                 chunk_size=args.chunk_size,
+                generated_at=generated_at,
             ):
                 print(line)
             return
 
-        result = diff_files(args.old, args.new)
+        result = diff_files(args.old, args.new, generated_at=generated_at)
         json.dump(result, sys.stdout, indent=2)
         print()
     except Exception as exc:  # pragma: no cover - CLI error path
@@ -93,6 +100,16 @@ def _run_check(argv: list[str]) -> int:
     except Exception as exc:  # pragma: no cover - CLI error path
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+
+
+def _generated_at_arg(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if value == "now":
+        return generated_at_now_utc()
+    if not value.strip():
+        raise ValueError("--generated-at must not be empty")
+    return value
 
 
 if __name__ == "__main__":
