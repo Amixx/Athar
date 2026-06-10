@@ -10,6 +10,13 @@ from athar.engine import diff_files, stream_diff_files
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "git":
+        from athar_git.cli import build_git_parser, run_git_command
+
+        git_parser = build_git_parser()
+        args = git_parser.parse_args(sys.argv[2:])
+        sys.exit(run_git_command(args))
+
     parser = argparse.ArgumentParser(prog="athar-core")
     parser.add_argument("old", nargs="?", help="Path to old IFC file")
     parser.add_argument("new", nargs="?", help="Path to new IFC file")
@@ -26,6 +33,7 @@ def main() -> None:
         help="Chunk size for --stream chunked_json",
     )
     args = parser.parse_args()
+
     if not args.old or not args.new:
         parser.error("the following arguments are required: old, new")
 

@@ -33,6 +33,7 @@ class ParsedEntity:
     refs: list[EntityRef]
     is_product: bool
     is_spatial: bool
+    name: str | None = None
 
 
 @dataclass
@@ -83,6 +84,7 @@ class SignatureVector:
     centroid: tuple[float, float, float] | None
     aabb: tuple[float, float, float, float, float, float] | None
     canon_version: str
+    name: str | None = None
 
 
 @dataclass
