@@ -62,6 +62,8 @@ CORPUS: dict[str, CorpusFile] = {
         _repo("bl_v2", "real-world-test/Building-Landscaping-v2.ifc", "IFC4"),
         _repo("bl_v3", "real-world-test/Building-Landscaping-v3.ifc", "IFC4"),
         _repo("duplex_arch", "real-world-test/Duplex-Architecture.ifc", "IFC2X3"),
+        _repo("gni_190", "corpus/gni-bim-sample/2025_BIMfundamentals/model_190.ifc", "IFC4"),
+        _repo("gni_9", "corpus/gni-bim-sample/2025_BIMfundamentals/model_9.ifc", "IFC4"),
         # medium/large (opt-in acceptance tier)
         _external("duplex_mech", "008.781887MB__Ifc2x3_Duplex_Mechanical.ifc", "IFC2X3"),
         _external("revit_arc", "013.646137MB__Ifc4_Revit_ARC.ifc", "IFC4"),

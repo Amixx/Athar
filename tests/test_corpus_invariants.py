@@ -27,6 +27,8 @@ SMALL_FILES = (
     "bl_v2",
     "bl_v3",
     "duplex_arch",
+    "gni_190",
+    "gni_9",
 )
 
 REVISION_PAIRS = (

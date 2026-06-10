@@ -18,6 +18,10 @@ DOMAIN_TOPOLOGY = "topology"
 DOMAIN_PLACEMENT = "placement"
 
 _PLACEMENT_ATTRS = {"ObjectPlacement", "PlacementRelTo", "RelativePlacement", "Location", "Axis", "RefDirection"}
+# Property/quantity trees hang off psets via plain attribute refs, not IfcRel*
+# relationships; without these the data Merkle stops at the pset shell and
+# property *value* edits never reach vh_data.
+_DATA_ATTR_HINTS = {"HasProperties", "Quantities", "HasQuantities", "HasPropertySets"}
 _GEOMETRY_ATTR_HINTS = {
     "Representation",
     "Representations",
@@ -125,6 +129,8 @@ def _classify_direct_refs(entity: ParsedEntity) -> list[ClassifiedEdge]:
 def _classify_direct_ref(ref: EntityRef) -> tuple[str, str]:
     if ref.attr_name in _PLACEMENT_ATTRS:
         return EDGE_INCLUDE, DOMAIN_PLACEMENT
+    if ref.attr_name in _DATA_ATTR_HINTS:
+        return EDGE_INCLUDE, DOMAIN_DATA
     if ref.attr_name in _GEOMETRY_ATTR_HINTS:
         return EDGE_INCLUDE, DOMAIN_GEOMETRY
     if ref.target_type.startswith(_GEOMETRY_TARGET_PREFIXES):
