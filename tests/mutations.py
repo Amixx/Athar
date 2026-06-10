@@ -63,6 +63,10 @@ class Mutation:
     expected_delta_mm: float | None = None
     # duplicate_guid only: the GlobalId the victim was overwritten with.
     partner_guid: str | None = None
+    # edit_type_pset_value only: GlobalIds of the products inheriting the
+    # edited type pset. Each must land in expected_victim_section with
+    # expected_victim_aspects; the type entity itself carries no signature.
+    affected_guids: tuple[str, ...] = ()
 
 
 def scramble_guids(model: ifcopenshell.file) -> Mutation:
@@ -194,6 +198,44 @@ def edit_pset_value(model: ifcopenshell.file) -> Mutation:
     )
 
 
+def edit_type_pset_value(model: ifcopenshell.file) -> Mutation:
+    """Rewrite one leaf value in a type object's exclusive property set.
+
+    Truth: the edited value is inherited by every occurrence linked to the
+    type via IfcRelDefinesByType, so the effective data of exactly those
+    products changed. A correct report adds/deletes nothing and shows each
+    occurrence as modified (matched by GlobalId) with data changed and
+    geometry/placement unchanged; the type object itself carries no signature,
+    so the occurrences are where the change must surface. No claim is made
+    about topology (the WL self-seed legitimately absorbs the data change),
+    and anything outside the occurrence set may only change transitively.
+    """
+    type_obj, prop, occurrences = _pick_exclusive_type_property(model)
+    nominal = prop.NominalValue
+    value = nominal.wrappedValue
+    if isinstance(value, bool):
+        new_value = not value
+    elif isinstance(value, str):
+        new_value = value + " [athar-edited]"
+    else:
+        # A whole-unit bump can never be absorbed by canonical quantization
+        # (the smallest scale in play is 1e3 after unit conversion).
+        new_value = value + 1
+    prop.NominalValue = model.create_entity(nominal.is_a(), new_value)
+    return Mutation(
+        operation="edit_type_pset_value",
+        victim_guid=type_obj.GlobalId,
+        victim_type=type_obj.is_a(),
+        expected_victim_section="modified",
+        expected_victim_aspects={
+            "geometry": "unchanged",
+            "data": "changed",
+            "placement": "unchanged",
+        },
+        affected_guids=tuple(sorted(occ.GlobalId for occ in occurrences)),
+    )
+
+
 def rename_product(model: ifcopenshell.file) -> Mutation:
     """Rewrite one product's Name attribute.
 
@@ -288,6 +330,44 @@ def _pick_exclusive_string_property(model: ifcopenshell.file):
             ):
                 return product, prop
     raise AssertionError("seed has no exclusive single-product pset with a string property")
+
+
+def _pick_exclusive_type_property(model: ifcopenshell.file):
+    """First type object (step order) with an exclusively-owned editable leaf.
+
+    Exclusivity mirrors _pick_exclusive_string_property: the pset is referenced
+    only by the type and the property only by the pset, so the edit is provably
+    a single-type edit. Every linked occurrence must be a uniquely-identified
+    product so the manifest can demand a GlobalId match for each. String, bool,
+    and numeric leaves are all editable: real seeds share bool/string property
+    instances across dozens of psets, so the only exclusive leaf may well be a
+    numeric one.
+    """
+    counts = _product_guid_counts(model)
+    for type_obj in sorted(model.by_type("IfcTypeObject"), key=lambda entity: entity.id()):
+        occurrences = []
+        for rel in model.get_inverse(type_obj):
+            if rel.is_a("IfcRelDefinesByType") and rel.RelatingType == type_obj:
+                occurrences.extend(rel.RelatedObjects or ())
+        if not occurrences or not all(
+            occ.is_a("IfcProduct") and counts[occ.GlobalId] == 1 for occ in occurrences
+        ):
+            continue
+        for pset in type_obj.HasPropertySets or ():
+            if not pset.is_a("IfcPropertySet"):
+                continue
+            if len(model.get_inverse(pset)) != 1:
+                continue
+            for prop in pset.HasProperties or ():
+                if (
+                    prop.is_a("IfcPropertySingleValue")
+                    and prop.NominalValue is not None
+                    and isinstance(prop.NominalValue.wrappedValue, (str, bool, int, float))
+                    and prop.NominalValue.wrappedValue != ""
+                    and len(model.get_inverse(prop)) == 1
+                ):
+                    return type_obj, prop, occurrences
+    raise AssertionError("seed has no type object with an exclusive editable pset property and product occurrences")
 
 
 def _is_spatial(entity) -> bool:

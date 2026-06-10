@@ -89,7 +89,8 @@ metamorphic
 GUID-scramble tests that prove identity recovery without GlobalId evidence.
 It also generates known-edit semantic scenarios from real seeds (GUID
 scramble, moving one product by a known vector, deleting a leaf product,
-editing a pset value, renaming, duplicating a GUID) in temp dirs and asserts
+editing a pset value, editing a type-level pset value inherited by its
+occurrences, renaming, duplicating a GUID) in temp dirs and asserts
 the report against expectations derived from the constructed edit itself,
 never from blessing engine output. Small files from the optional external
 corpus (default `../vscode-ifc/test-files`, override via
