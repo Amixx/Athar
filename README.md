@@ -76,7 +76,7 @@ reports) is temporarily disabled while it is rewired to the current engine.
 ## Testing
 
 ```bash
-make test                    # full default suite (~10 seconds)
+make test                    # full default suite (~20 seconds)
 make test-large-acceptance   # opt-in large IFC acceptance checks
 ```
 
@@ -84,9 +84,14 @@ The default suite runs corpus-wide invariant tests (same-file zero diff,
 stats accounting, no cross-class matches, duplicate-GUID and dangling-ref
 behavior, schema policy) over every small real IFC in the corpus — the
 Building-Landscaping v0→v3 revision chain, the IFC2X3 Duplex architecture
-model, and small external samples — plus metamorphic GUID-scramble tests that
-prove identity recovery without GlobalId evidence. Small files from the
-optional external corpus (default `../vscode-ifc/test-files`, override via
+model, two GNI Revit samples, and small external samples — plus metamorphic
+GUID-scramble tests that prove identity recovery without GlobalId evidence.
+It also generates known-edit semantic scenarios from real seeds (GUID
+scramble, moving one product by a known vector, deleting a leaf product,
+editing a pset value, renaming, duplicating a GUID) in temp dirs and asserts
+the report against expectations derived from the constructed edit itself,
+never from blessing engine output. Small files from the optional external
+corpus (default `../vscode-ifc/test-files`, override via
 `ATHAR_EXTERNAL_CORPUS_DIR`) skip when absent.
 
 Large acceptance checks are opt-in so day-to-day runs stay fast:

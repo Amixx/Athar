@@ -17,7 +17,7 @@ Pure Python. Pipeline: parse → signatures → tiered matching → delta report
   - `index.py` — Byte-offset STEP index for random-access diagnostics.
   - `parser.py` — Schema-aware parse via ifcopenshell into `ParsedEntity` records with canonicalized scalar attributes (unit-normalized quantized lengths, numeric string literals like `"0"`/`"1"` preserved as strings, NFC text). Spatial tagging supports both IFC4 (`IfcSpatialElement`) and IFC2X3 (`IfcSpatialStructureElement`) roots.
   - `link_inversion.py` — Reverse-reference maps for parsed entities.
-  - `edge_policy.py` — Declarative edge classification table (relationship → include/context, geometry/data/placement/spatial domain).
+  - `edge_policy.py` — Declarative edge classification table (relationship → include/context, geometry/data/placement/spatial domain). Property/quantity subtrees (`HasProperties`, `Quantities`, `HasQuantities`, `HasPropertySets`) are include/data edges so property *values* reach `vh_data` (canon v2 — before that the data Merkle stopped at the pset shell and value edits were invisible); other generic non-geometry refs stay ignored.
   - `merkle.py` — Bottom-up sha256 Merkle hashing over domain subgraphs. Produces location-independent `vh_geometry` (placement excluded, so repeated identical components share it across locations) and `vh_data`. GlobalId and OwnerHistory never enter any hash.
   - `wl_gossip.py` — WL-style topology hash `vh_topology` from a self seed (`class|vh_geometry|vh_data`) plus context (k=1) and spatial (k=2) neighbor seeds.
   - `spatial.py` — Resolves `ObjectPlacement` matrix chains; emits world-space quantized placement matrix, centroid, and AABB per product.
@@ -71,7 +71,7 @@ Currently disabled pending rewiring to the current engine.
 ## Testing
 
 ```bash
-make test                                          # full default suite (~10s)
+make test                                          # full default suite (~20s)
 python -m pytest tests/test_matcher_core.py -q     # focused: matcher tiers
 python -m pytest tests/test_engine.py -q           # focused: engine end-to-end
 python -m pytest tests/test_corpus_invariants.py -q  # focused: corpus invariants
@@ -88,11 +88,23 @@ consistency) used by both tiers.
 The default tier (`tests/test_corpus_invariants.py` plus the engine/matcher/
 report tests) runs invariants over every small corpus file (≤2.4MB: the
 Building-Landscaping v0→v3 IFC4 revision chain, Duplex-Architecture IFC2X3,
-small external samples, `tests/fixtures/tiny_no_products.ifc`): same-file zero
-diff, revision-pair invariants, GUID-scramble metamorphics, generated
-duplicate-GUID and dangling-ref variants, cross-schema rejection. There are no
-multi-minute fixtures in the default path; the determinism test re-runs the
-full pipeline with the bundle cache cleared and asserts byte-identical output.
+two GNI Revit IFC4 samples under `corpus/gni-bim-sample/`, small external
+samples, `tests/fixtures/tiny_no_products.ifc`): same-file zero diff,
+revision-pair invariants, GUID-scramble metamorphics, generated
+duplicate-GUID and dangling-ref variants, cross-schema rejection.
+
+`tests/test_semantic_scenarios.py` adds known-edit semantic scenarios on top:
+`tests/mutations.py` applies one constructed edit to a real seed (GUID
+scramble, single-product move by a known vector, leaf-product delete, pset
+value edit, rename, duplicated GUID) and returns a `Mutation` manifest whose
+expectations (victim section, aspect states, `placement_delta_mm` norm) are
+derived from the edit itself — never from blessing engine output. Pairs are
+generated in pytest tmp dirs through one shared ifcopenshell write path, so
+the constructed edit is the only delta; victim pickers only select exclusive
+(unshared) placements/psets/properties so each mutation is provably a
+single-entity edit. There are no multi-minute fixtures in the default path;
+the determinism test re-runs the full pipeline with the bundle cache cleared
+and asserts byte-identical output.
 
 The large acceptance tier is opt-in via `ATHAR_RUN_LARGE_ACCEPTANCE=1` (see
 `tests/test_acceptance_large_ifc.py`): same-file invariants over the
