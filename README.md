@@ -35,7 +35,12 @@ The delta report classifies every entity as `added`, `deleted`, `modified`, or
 `unchanged`, with per-aspect detail (`geometry/data/topology/placement`,
 `placement_delta_mm`), `change_scope` (`intrinsic` = the entity itself changed,
 `transitive` = only its neighborhood changed, `mixed`), and matcher
-diagnostics (per-tier match counts, duplicate-GUID counts).
+diagnostics (per-tier match counts, duplicate-GUID counts). Reports also carry
+an `audit` block with producer/canon metadata plus old/new input provenance:
+path, schema, byte size, and sha256. That makes the raw JSON suitable for
+archiving as milestone evidence even before a visual viewer or PDF/HTML export
+exists. Default output stays byte-deterministic; pass `--generated-at now` or
+an explicit timestamp when an archived copy should embed a generation time.
 
 Schema support: **IFC4 and IFC2X3**, same-schema comparisons only (no
 IFC2X3↔IFC4 translation).
@@ -62,6 +67,9 @@ make test
 ```bash
 # Two-file diff (JSON output)
 python -m athar old.ifc new.ifc
+
+# Include an audit generation timestamp for an archived report
+python -m athar old.ifc new.ifc --generated-at now
 
 # CI policy gate over a fresh diff; exits 2 on policy violations
 python -m athar check old.ifc new.ifc --policy athar-policy.json

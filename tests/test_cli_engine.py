@@ -22,6 +22,23 @@ def test_cli_calls_engine_diff_files(monkeypatch, capsys):
     assert called["args"] == ("old.ifc", "new.ifc")
 
 
+def test_cli_passes_generated_at_timestamp(monkeypatch, capsys):
+    called = {}
+
+    def fake_diff_files(old, new, **kwargs):
+        called["args"] = (old, new)
+        called["kwargs"] = kwargs
+        return {"ok": True}
+
+    monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
+    monkeypatch.setattr(sys, "argv", ["athar", "old.ifc", "new.ifc", "--generated-at", "2026-06-10T19:00:00Z"])
+
+    main_mod.main()
+    _ = capsys.readouterr().out
+    assert called["args"] == ("old.ifc", "new.ifc")
+    assert called["kwargs"] == {"generated_at": "2026-06-10T19:00:00Z"}
+
+
 def test_cli_streams_ndjson(monkeypatch, capsys):
     called = {}
 
@@ -38,6 +55,24 @@ def test_cli_streams_ndjson(monkeypatch, capsys):
     assert "{\"record_type\":\"header\"}" in out
     assert "{\"record_type\":\"end\"}" in out
     assert called["stream"] == ("old.ifc", "new.ifc", "ndjson", 1000)
+
+
+def test_cli_stream_passes_generated_at_now(monkeypatch, capsys):
+    called = {}
+
+    def fake_stream_files(old, new, mode, chunk_size, **kwargs):
+        called["stream"] = (old, new, mode, chunk_size)
+        called["kwargs"] = kwargs
+        return iter(["{\"record_type\":\"header\"}", "{\"record_type\":\"end\"}"])
+
+    monkeypatch.setattr(main_mod, "stream_diff_files", fake_stream_files)
+    monkeypatch.setattr(main_mod, "generated_at_now_utc", lambda: "2026-06-10T19:00:00Z")
+    monkeypatch.setattr(sys, "argv", ["athar", "old.ifc", "new.ifc", "--stream", "ndjson", "--generated-at", "now"])
+
+    main_mod.main()
+    _ = capsys.readouterr().out
+    assert called["stream"] == ("old.ifc", "new.ifc", "ndjson", 1000)
+    assert called["kwargs"] == {"generated_at": "2026-06-10T19:00:00Z"}
 
 
 def test_cli_stream_chunk_size(monkeypatch, capsys):

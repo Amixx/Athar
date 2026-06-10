@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 import pytest
 
 from athar.bottom.constants import CANON_VERSION
@@ -49,3 +52,34 @@ def test_signature_bundle_stamps_canon_version():
 def test_diff_report_stamps_canon_version():
     report = diff_files(OLD_IFC, NEW_IFC)
     assert report["canon_version"] == CANON_VERSION
+
+
+def test_diff_report_includes_audit_input_provenance():
+    report = diff_files(OLD_IFC, NEW_IFC)
+
+    assert report["audit"]["report_schema_version"] == 1
+    assert report["audit"]["producer"]["name"] == "athar"
+    assert report["audit"]["producer"]["version"] == "0.1.0"
+    assert report["audit"]["producer"]["canon_version"] == CANON_VERSION
+    assert "generated_at" not in report["audit"]
+
+    old_input = report["audit"]["inputs"]["old"]
+    assert old_input == {
+        "path": OLD_IFC,
+        "schema": "IFC4",
+        "size_bytes": Path(corpus_path("bl_v1")).stat().st_size,
+        "sha256": _sha256(OLD_IFC),
+    }
+
+
+def test_diff_report_can_embed_archive_timestamp_when_requested():
+    report = diff_files(OLD_IFC, NEW_IFC, generated_at="2026-06-10T19:00:00Z")
+    assert report["audit"]["generated_at"] == "2026-06-10T19:00:00Z"
+
+
+def _sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

@@ -127,6 +127,7 @@ def test_engine_stream_ndjson_matches_report():
     assert header["record_type"] == "header"
     assert header["engine"] == "athar"
     assert header["canon_version"] == report["canon_version"]
+    assert header["audit"] == report["audit"]
     assert end["record_type"] == "end"
     assert end["stats"] == report["stats"]
 
@@ -143,6 +144,7 @@ def test_engine_stream_chunked_json_matches_report():
 
     header, end = chunks[0], chunks[-1]
     assert header["chunk_type"] == "header"
+    assert header["audit"] == report["audit"]
     assert end["chunk_type"] == "end"
     assert end["stats"] == report["stats"]
 
