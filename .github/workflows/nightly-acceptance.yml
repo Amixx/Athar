@@ -1,0 +1,66 @@
+name: Nightly large IFC acceptance
+
+# The large acceptance tier (tests/test_acceptance_large_ifc.py) parses the
+# multi-hundred-MB corpus and is far too slow for normal development runs, so
+# it is env-gated off locally and runs here on a nightly schedule instead.
+# Corpus files that are absent (e.g. the optional external corpus) skip
+# individually, so this run covers the repo-LFS corpus.
+
+on:
+  schedule:
+    - cron: "23 2 * * *" # 02:23 UTC nightly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-acceptance
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - name: Checkout (LFS pointers only)
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      # LFS bandwidth is metered (~650MB corpus vs 1GB/month free), so the
+      # object store is cached across runs and the nightly cadence keeps the
+      # cache warm; `git lfs pull` only downloads objects missing from it.
+      - name: Compute LFS objects cache key
+        run: git lfs ls-files -l | cut -d' ' -f1 | sort > .lfs-assets-id
+
+      - name: Restore LFS object cache
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-assets-id') }}
+          restore-keys: lfs-
+
+      - name: Fetch LFS content
+        run: |
+          git lfs install --local
+          git lfs pull
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pytest ifcopenshell
+
+      - name: Fast default suite (smoke gate)
+        run: python -m pytest tests/ -q
+
+      - name: Large acceptance suite
+        env:
+          ATHAR_RUN_LARGE_ACCEPTANCE: "1"
+          # Per-test wall-clock bound; the 182MB model parse alone can take
+          # ~30-60 min on a standard runner.
+          ATHAR_ACCEPTANCE_TIMEOUT_S: "5400"
+        run: python -m pytest tests/test_acceptance_large_ifc.py -q --durations=20
