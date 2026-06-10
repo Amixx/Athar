@@ -83,12 +83,14 @@ unfetched pointers) plus an optional external corpus (default
 `../vscode-ifc/test-files`, override `ATHAR_EXTERNAL_CORPUS_DIR`; absent files
 skip). It also provides the shared report-invariant assertions (accounting,
 1:1 matching, class safety, score/reason consistency, change-scope
-consistency) used by both tiers.
+consistency) used by both tiers. Every tier asserts invariants and
+expectations derived from the inputs (mutation manifests, pair kinds) — never
+exact whole-report JSON goldens.
 
 The default tier (`tests/test_corpus_invariants.py` plus the engine/matcher/
 report tests) runs invariants over every small corpus file (≤2.4MB: the
 Building-Landscaping v0→v3 IFC4 revision chain, Duplex-Architecture IFC2X3,
-two GNI Revit IFC4 samples under `corpus/gni-bim-sample/`, small external
+two GNI BIM Fundamentals IFC4 samples under `corpus/gni-bim-sample/`, small external
 samples, `tests/fixtures/tiny_no_products.ifc`): same-file zero diff,
 revision-pair invariants, GUID-scramble metamorphics, generated
 duplicate-GUID and dangling-ref variants, cross-schema rejection.
@@ -115,6 +117,18 @@ pairs (`real-world-spanish-180mb.ifc` ↔ `uni-project-house-50mb.ifc`,
 skip individually. Optional per-test wall-clock bound:
 `ATHAR_ACCEPTANCE_TIMEOUT_S` (seconds). Corpus facts (sizes, schemas,
 signature counts, tier distributions, runtimes): `docs/corpus/`.
+
+Corpus files too big for the repo (even via LFS) will be described by a
+checked-in manifest instead of stored: the design (stable file ids, sha256
+integrity, tier/subset tags, case kinds, skip-vs-fail policy) is in
+`docs/corpus/REMOTE_CORPUS_MANIFEST.md`; no download infrastructure exists
+yet. Tracked GNI seeds in `corpus/gni-bim-sample/` (11 independent 2025 BIM
+Fundamentals models, 5 architecture/structure 2026 BIM Projects pairs; see
+its `NOTICE.md` for attribution) are the precedent and the first survey
+targets. Known semantic-coverage gap (future work): a type-level/inherited
+property-set mutation scenario via `IfcTypeObject.HasPropertySets` /
+`IfcRelDefinesByType` — `tests/mutations.py` currently edits only
+occurrence-level psets.
 
 During active development, run only the focused tests relevant to your changes rather than the full suite. Run the full suite before committing.
 

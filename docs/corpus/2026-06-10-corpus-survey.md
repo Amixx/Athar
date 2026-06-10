@@ -1,9 +1,14 @@
 # Corpus survey — 2026-06-10
 
-Facts gathered by `scripts/explore/corpus_survey.py` against the engine as of
-commit `bb4d58c` (tiers: guid / geometry_hash / tier2_signature /
-spatial_fallback). Raw output: `2026-06-10-corpus-survey.json` (regenerable).
-This survey motivated the matcher simplification recorded at the end.
+**Historical record.** Facts gathered by `scripts/explore/corpus_survey.py`
+against the *pre-simplification* engine as of commit `bb4d58c` (tiers: guid /
+geometry_hash / tier2_signature / spatial_fallback). Raw output:
+`2026-06-10-corpus-survey.json` (same vintage). This survey motivated the
+matcher simplification recorded at the end; the current engine has only the
+guid and geometry_hash tiers, so the fallback-tier columns below cannot recur.
+The survey script has since gained the `corpus/gni-bim-sample/` files (11
+independent 2025 BIM Fundamentals models, 5 architecture/structure 2026 BIM
+Projects pairs); no post-simplification survey has been generated yet.
 
 ## Inventory
 
