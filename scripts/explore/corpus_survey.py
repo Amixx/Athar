@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """Survey the IFC corpus: per-file signature stats and per-pair matcher behavior.
 
-Walks the known corpus roots (repo `real-world-test/`, `data/`, `tests/fixtures/`,
-plus the external `../vscode-ifc/test-files`), builds a signature bundle per
-unique file, runs a curated set of diff pairs (same-file, revision, discipline,
-unrelated, guid-scramble), and writes one JSON document with sizes, schemas,
-signature counts, class histograms, tier distributions, change scopes, and
-stage timings. Feeds the corpus findings note and tier-evaluation decisions.
+Walks the known corpus roots (repo `real-world-test/`, `data/`,
+`tests/fixtures/`, `corpus/gni-bim-sample/`, plus the external
+`../vscode-ifc/test-files`), builds a signature bundle per unique file, runs a
+curated set of diff pairs (same-file, revision, discipline, unrelated,
+guid-scramble), and writes one JSON document with sizes, schemas, signature
+counts, class histograms, tier distributions, change scopes, and stage
+timings. Feeds the dated corpus findings notes under `docs/corpus/` and
+tier-evaluation decisions.
+
+Matching has exactly two tiers (`guid`, `geometry_hash`); the survey reports
+their distribution as-is. There are no fallback/capped/low-confidence fields —
+the former spatial/topology fallback tiers were deleted after the 2026-06-10
+survey showed they only manufactured cross-model matches.
 
 Usage:
     python scripts/explore/corpus_survey.py [--out PATH] [--skip-large] [--include-bad]
@@ -35,6 +42,23 @@ from athar.engine import diff_files  # noqa: E402
 EXTERNAL_ROOT = Path(
     os.getenv("ATHAR_EXTERNAL_CORPUS_DIR", str(REPO_ROOT.parent / "vscode-ifc" / "test-files"))
 )
+
+GNI_ROOT = REPO_ROOT / "corpus" / "gni-bim-sample"
+
+
+def _gni_2025(key: str, name: str) -> tuple[str, dict]:
+    return key, {
+        "path": GNI_ROOT / "2025_BIMfundamentals" / name,
+        "tags": ["gni", "2025-fundamentals"],
+    }
+
+
+def _gni_2026(key: str, name: str, discipline: str) -> tuple[str, dict]:
+    return key, {
+        "path": GNI_ROOT / "2026_BIMprojects" / name,
+        "tags": ["gni", "2026-projects", discipline],
+    }
+
 
 # key -> (path, expected_schema, aliases). Aliases are byte-identical (or
 # near-identical) copies that exist elsewhere; only the primary path is parsed.
@@ -85,6 +109,30 @@ CORPUS: dict[str, dict] = {
         "large": True,
         "bad": True,  # one entity ref mangled into a dangling #29999...; parse may fail
     },
+    # GNI-BIM sample (tracked LFS; attribution in corpus/gni-bim-sample/NOTICE.md).
+    # 2025 BIM Fundamentals: independent student models, ascending size.
+    **dict(
+        _gni_2025(key, name)
+        for key, name in (
+            ("gni_190", "model_190.ifc"),
+            ("gni_9", "model_9.ifc"),
+            ("gni_50", "model_50.ifc"),
+            ("gni_62", "model_62.ifc"),
+            ("gni_149", "model_149.ifc"),
+            ("gni_18", "model_18.ifc"),
+            ("gni_115", "model_115.ifc"),
+            ("gni_89", "model_89.ifc"),
+            ("gni_169", "model_169.ifc"),
+            ("gni_77", "model_77.ifc"),  # 22MB
+            ("gni_68", "model_68.ifc"),  # 45MB
+        )
+    ),
+    # 2026 BIM Projects: same-building architecture + structure pairs.
+    **dict(
+        _gni_2026(f"gni_p{n}_{short}", f"model_{n}_{disc}.ifc", discipline)
+        for n in (0, 3, 5, 7, 8)
+        for short, disc, discipline in (("arc", "arc", "architecture"), ("str", "structure", "structure"))
+    ),
 }
 
 # Groups are processed in order; the bundle cache is cleared after each group
@@ -139,6 +187,28 @@ GROUPS: list[dict] = [
         ],
         "scrambles": [],
     },
+    {
+        # 11 independent student models; no two are the same project, so the
+        # only honest pair kinds are same-file (implicit) and unrelated.
+        "name": "gni_2025_fundamentals",
+        "files": [
+            "gni_190", "gni_9", "gni_50", "gni_62", "gni_149", "gni_18",
+            "gni_115", "gni_89", "gni_169", "gni_77", "gni_68",
+        ],
+        "pairs": [
+            ("unrelated", "gni_190", "gni_9"),
+            ("unrelated", "gni_50", "gni_62"),
+        ],
+        "scrambles": ["gni_190"],
+    },
+    {
+        # Same-building architecture + structure exports: discipline pairs,
+        # not revisions — expect mostly-disjoint content, no broad matching.
+        "name": "gni_2026_pairs",
+        "files": [f"gni_p{n}_{short}" for n in (0, 3, 5, 7, 8) for short in ("arc", "str")],
+        "pairs": [("discipline", f"gni_p{n}_arc", f"gni_p{n}_str") for n in (0, 3, 5, 7, 8)],
+        "scrambles": [],
+    },
 ]
 
 _SCRAMBLE_NAMESPACE = uuid.UUID("f43a7c2b-8fd4-4d2d-9898-8891d75432b2")
@@ -163,6 +233,7 @@ def file_stats(key: str, path: Path, bundle, seconds: float) -> dict:
     return {
         "key": key,
         "path": str(path),
+        "tags": CORPUS[key].get("tags", []),
         "size_mb": round(path.stat().st_size / 1e6, 3),
         "schema": bundle.schema,
         "build_seconds": round(seconds, 2),
@@ -216,6 +287,7 @@ def pair_stats(kind: str, old_key: str, new_key: str, report: dict, seconds: flo
         "kind": kind,
         "old": old_key,
         "new": new_key,
+        "schemas": report["schemas"],  # equal by policy on any successful diff
         "diff_seconds": round(seconds, 2),
         "sections": {k: stats[k] for k in ("added", "deleted", "modified", "unchanged")},
         "signatures": {"old": stats["old_signatures"], "new": stats["new_signatures"]},
@@ -228,12 +300,6 @@ def pair_stats(kind: str, old_key: str, new_key: str, report: dict, seconds: flo
         "modified_reason_detail": _reason_aggregates(report["modified"]),
         "added_deleted_top_classes": sections_top,
     }
-    # Stats that existed before the 2026-06 matcher simplification; kept
-    # optional so the script runs against either engine generation.
-    for legacy in ("spatial", "modified_match_reasons", "modified_score_bands", "modified_conflicts"):
-        value = stats["matcher_diagnostics"].get(legacy) if legacy == "spatial" else stats.get(legacy)
-        if value is not None:
-            entry[legacy] = value
     return entry
 
 

@@ -84,7 +84,8 @@ The default suite runs corpus-wide invariant tests (same-file zero diff,
 stats accounting, no cross-class matches, duplicate-GUID and dangling-ref
 behavior, schema policy) over every small real IFC in the corpus — the
 Building-Landscaping v0→v3 revision chain, the IFC2X3 Duplex architecture
-model, two GNI Revit samples, and small external samples — plus metamorphic
+model, two GNI BIM Fundamentals samples, and small external samples — plus
+metamorphic
 GUID-scramble tests that prove identity recovery without GlobalId evidence.
 It also generates known-edit semantic scenarios from real seeds (GUID
 scramble, moving one product by a known vector, deleting a leaf product,
@@ -104,6 +105,12 @@ The acceptance tier covers the medium/large corpus (8MB–182MB; same-file
 invariants, a real 44MB revision pair, discipline pairs, unrelated pairs, and
 a GUID-scramble at scale). Files that are missing or unfetched LFS pointers
 skip individually. Bound wall-clock per test via `ATHAR_ACCEPTANCE_TIMEOUT_S`.
+
+At every tier, tests assert structural invariants and expectations derived
+from the inputs themselves — never exact whole-report JSON goldens. Corpus
+files too big for the repo will be described by a checked-in manifest rather
+than stored (design: `docs/corpus/REMOTE_CORPUS_MANIFEST.md`; not yet
+implemented).
 
 ## Documentation
 
