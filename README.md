@@ -70,6 +70,37 @@ python -m athar old.ifc new.ifc --stream ndjson
 python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
 ```
 
+### Git IFC Diff Driver
+
+Athar can be installed as a Git diff driver for `.ifc` files. The driver uses
+the same semantic engine, renders a deterministic terminal summary, and caches
+signature bundles on disk by Git blob id (falling back to a content hash for
+working-tree files).
+
+```bash
+# Configure the current repository and add .gitattributes guidance
+athar git install
+
+# Manual terminal rendering without Git plumbing
+athar git diff old.ifc new.ifc
+```
+
+`athar git install` sets `diff.athar.command` to
+`athar git diff --external` and appends:
+
+```gitattributes
+*.ifc diff=athar -merge
+```
+
+The `-merge` marker is intentional. IFC is STEP text, but Git's default text
+merge can silently splice two exported models into a corrupt file with
+duplicate or dangling STEP ids. Athar provides semantic diffing; it does not
+attempt semantic merge.
+
+The persistent signature cache is versioned and deterministic, but v1 does not
+evict old entries. Set `ATHAR_CACHE_DIR` to isolate or periodically clear a
+large repository's cache.
+
 The `athar_layers` package (human-readable summaries, folder mode, Markdown
 reports) is temporarily disabled while it is rewired to the current engine.
 
