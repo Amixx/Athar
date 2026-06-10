@@ -70,7 +70,16 @@ EDGE_POLICY_TABLE: tuple[RelationshipRule, ...] = (
     RelationshipRule("IfcRelFillsElement", "RelatingOpeningElement", "RelatedBuildingElement", EDGE_CONTEXT, DOMAIN_TOPOLOGY, bidirectional=True),
     RelationshipRule("IfcRelConnectsPathElements", "RelatingElement", "RelatedElement", EDGE_CONTEXT, DOMAIN_TOPOLOGY, bidirectional=True),
     RelationshipRule("IfcRelConnectsElements", "RelatingElement", "RelatedElement", EDGE_CONTEXT, DOMAIN_TOPOLOGY, bidirectional=True),
+    # Type linkage carries two meanings, hence two rules. As context/topology
+    # it shapes the occurrence's neighborhood gossip. As include/data it pulls
+    # the type's data Merkle (scalar attrs, HasPropertySets subtree, type-level
+    # material) into each occurrence's vh_data: type objects carry no
+    # signatures of their own, so inherited property values are attributed to
+    # the occurrences whose effective data they define (canon v3 — before
+    # that, a type-level pset edit was only a transitive topology ripple and
+    # the value change itself was invisible).
     RelationshipRule("IfcRelDefinesByType", "RelatedObjects", "RelatingType", EDGE_CONTEXT, DOMAIN_TOPOLOGY),
+    RelationshipRule("IfcRelDefinesByType", "RelatedObjects", "RelatingType", EDGE_INCLUDE, DOMAIN_DATA),
 )
 _RULES_BY_REL: dict[str, tuple[RelationshipRule, ...]] = defaultdict(tuple)
 for _rule in EDGE_POLICY_TABLE:

@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from athar.bottom.edge_policy import DOMAIN_GEOMETRY, DOMAIN_PLACEMENT, EDGE_INCLUDE
+from athar.bottom.edge_policy import (
+    DOMAIN_DATA,
+    DOMAIN_GEOMETRY,
+    DOMAIN_PLACEMENT,
+    DOMAIN_TOPOLOGY,
+    EDGE_CONTEXT,
+    EDGE_INCLUDE,
+    build_edge_set,
+)
 from athar.bottom.parser import _canonicalize_scalar, _is_spatial_entity
 from athar.bottom.spatial import build_spatial_features
 from athar.bottom.types import ClassifiedEdge, EntityRef, ParseDiagnostics, ParseResult, ParsedEntity
@@ -194,6 +202,51 @@ def test_measure_detection_is_deterministic_and_drives_unit_conversion() -> None
             for _ in range(500)
         }
         assert quantized == {3_000_000}
+
+
+def test_rel_defines_by_type_projects_context_and_data_edges() -> None:
+    # Type linkage is both neighborhood context and inherited data: the
+    # include/data edge is what carries type-level pset values into the
+    # occurrence's vh_data (the type object itself has no signature).
+    def _ref(attr_name: str, target_step: int, target_type: str) -> EntityRef:
+        return EntityRef(
+            source_step=3,
+            target_step=target_step,
+            source_type="IfcRelDefinesByType",
+            target_type=target_type,
+            attr_name=attr_name,
+            path=f"/{attr_name}",
+        )
+
+    parse_result = ParseResult(
+        filepath="toy.ifc",
+        schema="IFC4",
+        index={},
+        entities={
+            1: ParsedEntity(1, "IfcWall", "IfcWall", "WALL-1", {}, [], True, False),
+            2: ParsedEntity(2, "IfcWallType", "IfcWallType", "TYPE-1", {}, [], False, False),
+            3: ParsedEntity(
+                3,
+                "IfcRelDefinesByType",
+                "IfcRelDefinesByType",
+                "REL-1",
+                {},
+                [_ref("RelatedObjects", 1, "IfcWall"), _ref("RelatingType", 2, "IfcWallType")],
+                False,
+                False,
+            ),
+        },
+        incoming_refs={},
+        unit_context={},
+        diagnostics=ParseDiagnostics(),
+    )
+
+    projected = [
+        (edge.classification, edge.domain)
+        for edge in build_edge_set(parse_result)
+        if edge.label == "IfcRelDefinesByType" and edge.source_step == 1 and edge.target_step == 2
+    ]
+    assert sorted(projected) == [(EDGE_CONTEXT, DOMAIN_TOPOLOGY), (EDGE_INCLUDE, DOMAIN_DATA)]
 
 
 def test_spatial_entity_detection_accepts_ifc2x3_spatial_structure_elements() -> None:

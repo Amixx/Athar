@@ -96,6 +96,28 @@ def test_pset_value_edit_is_a_data_change_on_that_product(scenario_seed):
     _assert_single_product_data_edit(diff_files(baseline, mutated), mutation)
 
 
+def test_type_pset_value_edit_is_inherited_data_change_on_occurrences(scenario_seed):
+    baseline, mutate = scenario_seed
+    mutated, mutation = mutate(mutations.edit_type_pset_value)
+    report = diff_files(baseline, mutated)
+    assert_report_invariants(report)
+    assert report["stats"]["added"] == 0
+    assert report["stats"]["deleted"] == 0
+    # Truth: the type object has no signature of its own — the edited value is
+    # inherited, so it must surface as a data change on exactly the linked
+    # occurrences, each matched by GlobalId.
+    affected = set(mutation.affected_guids)
+    victims = [item for item in report["modified"] if item["old"]["guid"] in affected]
+    assert sorted(item["old"]["guid"] for item in victims) == sorted(mutation.affected_guids)
+    for item in victims:
+        assert item["match"]["reason"] == "guid"
+        _assert_aspects(item, mutation.expected_victim_aspects)
+        assert item["data_hash"]["old"] != item["data_hash"]["new"]
+    for other in report["modified"]:
+        if other["old"]["guid"] not in affected:
+            assert other["change_scope"] == "transitive", other
+
+
 def test_rename_is_a_data_change_on_that_product(scenario_seed):
     baseline, mutate = scenario_seed
     mutated, mutation = mutate(mutations.rename_product)

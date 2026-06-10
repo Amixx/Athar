@@ -17,7 +17,7 @@ Pure Python. Pipeline: parse → signatures → tiered matching → delta report
   - `index.py` — Byte-offset STEP index for random-access diagnostics.
   - `parser.py` — Schema-aware parse via ifcopenshell into `ParsedEntity` records with canonicalized scalar attributes (unit-normalized quantized lengths, numeric string literals like `"0"`/`"1"` preserved as strings, NFC text). Spatial tagging supports both IFC4 (`IfcSpatialElement`) and IFC2X3 (`IfcSpatialStructureElement`) roots.
   - `link_inversion.py` — Reverse-reference maps for parsed entities.
-  - `edge_policy.py` — Declarative edge classification table (relationship → include/context, geometry/data/placement/spatial domain). Property/quantity subtrees (`HasProperties`, `Quantities`, `HasQuantities`, `HasPropertySets`) are include/data edges so property *values* reach `vh_data` (canon v2 — before that the data Merkle stopped at the pset shell and value edits were invisible); other generic non-geometry refs stay ignored.
+  - `edge_policy.py` — Declarative edge classification table (relationship → include/context, geometry/data/placement/spatial domain). Property/quantity subtrees (`HasProperties`, `Quantities`, `HasQuantities`, `HasPropertySets`) are include/data edges so property *values* reach `vh_data` (canon v2 — before that the data Merkle stopped at the pset shell and value edits were invisible). `IfcRelDefinesByType` is both context/topology and include/data (occurrence → type): type objects carry no signatures, so type-level pset values are attributed to each occurrence's `vh_data` (canon v3 — before that a type pset edit was only a transitive topology ripple). Other generic non-geometry refs stay ignored.
   - `merkle.py` — Bottom-up sha256 Merkle hashing over domain subgraphs. Produces location-independent `vh_geometry` (placement excluded, so repeated identical components share it across locations) and `vh_data`. GlobalId and OwnerHistory never enter any hash.
   - `wl_gossip.py` — WL-style topology hash `vh_topology` from a self seed (`class|vh_geometry|vh_data`) plus context (k=1) and spatial (k=2) neighbor seeds.
   - `spatial.py` — Resolves `ObjectPlacement` matrix chains; emits world-space quantized placement matrix, centroid, and AABB per product.
@@ -98,7 +98,8 @@ duplicate-GUID and dangling-ref variants, cross-schema rejection.
 `tests/test_semantic_scenarios.py` adds known-edit semantic scenarios on top:
 `tests/mutations.py` applies one constructed edit to a real seed (GUID
 scramble, single-product move by a known vector, leaf-product delete, pset
-value edit, rename, duplicated GUID) and returns a `Mutation` manifest whose
+value edit, type-level pset value edit, rename, duplicated GUID) and returns
+a `Mutation` manifest whose
 expectations (victim section, aspect states, `placement_delta_mm` norm) are
 derived from the edit itself — never from blessing engine output. Pairs are
 generated in pytest tmp dirs through one shared ifcopenshell write path, so
@@ -125,10 +126,10 @@ integrity, tier/subset tags, case kinds, skip-vs-fail policy) is in
 yet. Tracked GNI seeds in `corpus/gni-bim-sample/` (11 independent 2025 BIM
 Fundamentals models, 5 architecture/structure 2026 BIM Projects pairs; see
 its `NOTICE.md` for attribution) are the precedent and the first survey
-targets. Known semantic-coverage gap (future work): a type-level/inherited
-property-set mutation scenario via `IfcTypeObject.HasPropertySets` /
-`IfcRelDefinesByType` — `tests/mutations.py` currently edits only
-occurrence-level psets.
+targets. Type-level/inherited psets are covered: `edit_type_pset_value` edits
+one exclusive leaf in an `IfcTypeObject.HasPropertySets` pset and the
+manifest demands a data change on every `IfcRelDefinesByType` occurrence
+(the type object itself carries no signature).
 
 During active development, run only the focused tests relevant to your changes rather than the full suite. Run the full suite before committing.
 
