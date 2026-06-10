@@ -10,9 +10,10 @@ import pytest
 import athar.__main__ as main_mod
 import athar_git.cache as cache_mod
 import athar_git.cli as cli_mod
+import athar_git.pr_bot as pr_bot
 from athar.bottom.constants import CANON_VERSION
 from athar.bottom.types import ParseDiagnostics, SignatureBundle
-from athar_git.render import render_text_report
+from athar_git.render import render_markdown_report, render_text_report
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TINY_IFC = REPO_ROOT / "tests" / "fixtures" / "tiny_no_products.ifc"
@@ -86,6 +87,109 @@ def test_render_text_report_caps_changed_items():
     assert "+ IfcWall #1" in rendered
     assert "+ IfcWall #2" not in rendered
     assert "... and 1 more added" in rendered
+
+
+def test_render_markdown_report_wraps_changed_entities():
+    report = {
+        "schemas": {"old": "IFC4", "new": "IFC4"},
+        "stats": {"added": 1, "deleted": 0, "modified": 0, "unchanged": 2, "old_signatures": 2, "new_signatures": 3},
+        "added": [{"class": "IfcWall", "step_id": 1, "guid": None}],
+        "deleted": [],
+        "modified": [],
+    }
+
+    rendered = render_markdown_report(report)
+
+    assert "| Added | Deleted | Modified | Unchanged | Old signatures | New signatures |" in rendered
+    assert "| 1 | 0 | 0 | 2 | 2 | 3 |" in rendered
+    assert "<details>" in rendered
+    assert "+ IfcWall #1" in rendered
+
+
+def test_pr_bot_discovers_modified_renamed_added_and_deleted_ifc(monkeypatch):
+    payload = "\0".join(
+        [
+            "M",
+            "a.ifc",
+            "R100",
+            "old.ifc",
+            "new.ifc",
+            "A",
+            "added.IFC",
+            "D",
+            "gone.ifc",
+            "M",
+            "notes.txt",
+            "",
+        ]
+    ).encode("utf-8")
+    monkeypatch.setattr(pr_bot, "_git", lambda args: payload)
+
+    changes = pr_bot.discover_ifc_changes("base", "head")
+
+    assert changes == [
+        pr_bot.IfcChange(status="M", old_path="a.ifc", new_path="a.ifc"),
+        pr_bot.IfcChange(status="R100", old_path="old.ifc", new_path="new.ifc"),
+        pr_bot.IfcChange(status="A", old_path=None, new_path="added.IFC"),
+        pr_bot.IfcChange(status="D", old_path="gone.ifc", new_path=None),
+    ]
+
+
+def test_pr_bot_render_comment_uses_semantic_report_and_file_level_notes(monkeypatch, tmp_path):
+    report = {
+        "schemas": {"old": "IFC4", "new": "IFC4"},
+        "stats": {"added": 0, "deleted": 0, "modified": 0, "unchanged": 1, "old_signatures": 1, "new_signatures": 1},
+        "added": [],
+        "deleted": [],
+        "modified": [],
+    }
+    seen = []
+    monkeypatch.setattr(
+        pr_bot,
+        "_diff_git_paths",
+        lambda base, head, *, old_path, new_path, cache_dir: seen.append((base, head, old_path, new_path, cache_dir))
+        or report,
+    )
+    policy = tmp_path / "policy.json"
+    policy.write_text('{"ok": false, "violations": [{}, {}]}', encoding="utf-8")
+
+    body = pr_bot.render_pr_comment(
+        [
+            pr_bot.IfcChange(status="M", old_path="model.ifc", new_path="model.ifc"),
+            pr_bot.IfcChange(status="A", old_path=None, new_path="added.ifc"),
+        ],
+        base="a" * 40,
+        head="b" * 40,
+        cache_dir="/tmp/cache",
+        max_files=10,
+        max_items=5,
+        policy_result_path=str(policy),
+    )
+
+    assert pr_bot.COMMENT_MARKER in body
+    assert "Policy gate: `fail` (2 violation(s))" in body
+    assert "### `model.ifc`" in body
+    assert "No semantic entity changes." in body
+    assert "File added (`A`)." in body
+    assert seen == [("a" * 40, "b" * 40, "model.ifc", "model.ifc", "/tmp/cache")]
+
+
+def test_pr_bot_github_client_updates_existing_marker_comment():
+    calls = []
+
+    class FakeClient(pr_bot.GitHubClient):
+        def _request(self, method, path, payload=None):
+            calls.append((method, path, payload))
+            if method == "GET":
+                return [{"id": 123, "body": "old\n" + pr_bot.COMMENT_MARKER}]
+            return {"ok": True}
+
+    FakeClient(repo="owner/repo", token="token").upsert_issue_comment(7, "new body")
+
+    assert calls == [
+        ("GET", "/repos/owner/repo/issues/7/comments", None),
+        ("PATCH", "/repos/owner/repo/issues/comments/123", {"body": "new body"}),
+    ]
 
 
 def test_persistent_cache_reuses_blob_key(tmp_path, monkeypatch):

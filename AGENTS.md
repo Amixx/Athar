@@ -50,6 +50,15 @@ core engine, but the core engine does not depend on it.
   The `-merge` marker prevents Git's normal text merge from silently splicing
   two STEP exports into a corrupt IFC; semantic merge is intentionally out of
   scope.
+- `athar_git/pr_bot.py` — GitHub PR comment delivery (`athar git pr-comment`).
+  It discovers changed `.ifc` files from `git diff --name-status -z base...head`,
+  runs the same cached semantic diff for modified/renamed pairs, renders
+  Markdown through the shared renderer, and creates or updates one stable
+  issue comment identified by an HTML sentinel. File-level add/delete entries
+  are reported as pair-diff skips because the semantic engine requires both
+  sides. Optional `--policy-result` only surfaces an existing `athar check`
+  outcome; enforcement remains in `athar/check.py`. The companion workflow is
+  `.github/workflows/athar-pr-diff.yml`.
 
 Schema policy: IFC4 and IFC2X3 are both supported, but only same-schema comparisons in one run (no IFC2X3↔IFC4 translation).
 

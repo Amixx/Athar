@@ -145,6 +145,27 @@ The persistent signature cache is versioned and deterministic, but v1 does not
 evict old entries. Set `ATHAR_CACHE_DIR` to isolate or periodically clear a
 large repository's cache.
 
+### GitHub PR Comments
+
+Athar also includes a thin GitHub PR bot command for CI. It discovers `.ifc`
+files changed between two Git refs, runs the same cached semantic diff for
+modified/renamed pairs, and creates or updates one stable PR comment marked by
+an HTML sentinel.
+
+```bash
+athar git pr-comment \
+  --base "$BASE_SHA" \
+  --head "$HEAD_SHA" \
+  --repo owner/repo \
+  --pr 123
+```
+
+Use `--dry-run` to print the Markdown comment body without calling GitHub.
+When `--policy-result athar-check.json` is supplied, the comment includes a
+pass/fail summary from an `athar check` result, but policy enforcement remains
+separate. The checked-in `.github/workflows/athar-pr-diff.yml` workflow shows
+the default pull-request setup using `GITHUB_TOKEN`.
+
 ## Testing
 
 ```bash

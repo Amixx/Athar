@@ -40,6 +40,7 @@ def add_git_parser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def _add_git_subcommands(git_sub: argparse._SubParsersAction) -> None:
+    from .pr_bot import add_pr_comment_parser
 
     diff_parser = git_sub.add_parser("diff", help="Render a semantic IFC diff for Git")
     diff_parser.add_argument("args", nargs="*", help="OLD NEW, or Git external diff arguments with --external")
@@ -61,6 +62,8 @@ def _add_git_subcommands(git_sub: argparse._SubParsersAction) -> None:
         help="Do not append .gitattributes guidance in the current repository",
     )
     install_parser.set_defaults(func=_cmd_install)
+
+    add_pr_comment_parser(git_sub)
 
 
 def run_git_command(args: argparse.Namespace) -> int:

@@ -1,0 +1,37 @@
+name: Athar IFC PR Diff
+
+on:
+  pull_request:
+    paths:
+      - "**.ifc"
+      - "**.IFC"
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  athar-ifc-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Athar
+        run: python -m pip install -e .
+
+      - name: Post IFC diff comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          athar git pr-comment
+          --base "${{ github.event.pull_request.base.sha }}"
+          --head "${{ github.event.pull_request.head.sha }}"
+          --repo "${{ github.repository }}"
+          --pr "${{ github.event.pull_request.number }}"
