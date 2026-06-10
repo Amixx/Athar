@@ -9,6 +9,7 @@ from typing import Iterator
 
 from athar.bottom.constants import CANON_VERSION
 from athar.bottom.signatures import build_signature_bundle
+from athar.bottom.types import SignatureBundle
 from athar.delta.report import build_delta_report
 from athar.matcher.core import match_signatures
 
@@ -23,6 +24,12 @@ def diff_files(old_path: str, new_path: str) -> dict:
         new_bundle = old_bundle
     else:
         new_bundle = _load_bundle(new_path)
+    return diff_bundles(old_bundle, new_bundle)
+
+
+def diff_bundles(old_bundle: SignatureBundle, new_bundle: SignatureBundle) -> dict:
+    """Diff two pre-built signature bundles."""
+
     _assert_schema_compatible(old_bundle.schema, new_bundle.schema)
 
     matches, unmatched_old, unmatched_new, matcher_diagnostics = match_signatures(

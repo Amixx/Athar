@@ -13,10 +13,12 @@ def _signature(
     vh_data: str = "data-a",
     vh_topology: str = "topo-a",
     placement: tuple[int, ...] | None = None,
+    name: str | None = None,
 ) -> SignatureVector:
     return SignatureVector(
         step_id=step_id,
         guid=guid,
+        name=name,
         entity_type=entity_type,
         canonical_class=canonical_class,
         vh_geometry=vh_geometry,
@@ -293,6 +295,7 @@ def test_build_delta_report_match_items_carry_only_score_reason_and_aspects():
 
     item = report["modified"][0]
     assert set(item) == {"old", "new", "match", "aspects", "data_hash", "change_scope"}
+    assert item["new"]["name"] is None
     assert item["match"] == {"score": 0.9, "reason": "guid"}
     for stat in ("modified_match_reasons", "modified_score_bands", "modified_conflicts"):
         assert stat not in report["stats"]

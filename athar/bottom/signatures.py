@@ -27,6 +27,7 @@ def build_signature_bundle(filepath: str) -> SignatureBundle:
         signatures[step_id] = SignatureVector(
             step_id=step_id,
             guid=entity.global_id,
+            name=entity.name,
             entity_type=entity.entity_type,
             canonical_class=entity.canonical_class,
             vh_geometry=merkle_hashes.get(step_id, {}).get(DOMAIN_GEOMETRY, ""),

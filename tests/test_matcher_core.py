@@ -12,10 +12,12 @@ def _sig(
     topo: str = "t",
     placement: tuple[int, ...] | None = None,
     centroid: tuple[float, float, float] | None = None,
+    name: str | None = None,
 ) -> SignatureVector:
     return SignatureVector(
         step_id=step_id,
         guid=guid,
+        name=name,
         entity_type=klass,
         canonical_class=klass,
         vh_geometry=geom,
@@ -43,6 +45,16 @@ def test_unique_guid_same_vector_matches_at_full_confidence():
 
     assert _by_pair(matches)[(1, 10)].score == 1.0
     assert _by_pair(matches)[(1, 10)].reason == "guid"
+    assert unmatched_old == [] and unmatched_new == []
+
+
+def test_unique_guid_name_change_is_metadata_not_vector_evidence():
+    old = {1: _sig(1, guid="A", name="Old name")}
+    new = {10: _sig(10, guid="A", name="New name")}
+
+    matches, unmatched_old, unmatched_new, _diag = match_signatures(old, new)
+
+    assert _by_pair(matches)[(1, 10)].score == 1.0
     assert unmatched_old == [] and unmatched_new == []
 
 

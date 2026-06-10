@@ -73,6 +73,13 @@ def _assert_supported_schema(schema: str) -> None:
         raise ValueError(f"Unsupported schema: {schema!r}. Current engine supports {allowed}.")
 
 
+def _display_name(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = unicodedata.normalize("NFC", value.strip())
+    return normalized or None
+
+
 def _extract_entity(ent, *, unit_context: dict[str, Any]) -> ParsedEntity:
     decl = schema_util.get_declaration(ent)
     attrs: dict[str, Any] = {}
@@ -98,6 +105,7 @@ def _extract_entity(ent, *, unit_context: dict[str, Any]) -> ParsedEntity:
         entity_type=ent.is_a(),
         canonical_class=canonical_class_name(ent.is_a()),
         global_id=getattr(ent, "GlobalId", None),
+        name=_display_name(getattr(ent, "Name", None)),
         attributes=attrs,
         refs=refs,
         is_product=_entity_is_a(ent, "IfcProduct"),
