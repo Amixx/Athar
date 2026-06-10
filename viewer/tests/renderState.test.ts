@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { buildDiffIndex, parseReport, ReportFormatError } from '../src/lib/report'
+import { buildDiffIndex, classBreakdown, parseReport, ReportFormatError } from '../src/lib/report'
 import {
   bucketFor,
   computeAppearances,
@@ -187,6 +187,22 @@ describe('computeAppearances', () => {
     const app = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, ghostUnchanged: false })
     expect(app.unchanged.opacity).toBe(1)
     expect(app.extra.opacity).toBe(1)
+  })
+})
+
+describe('classBreakdown', () => {
+  it('rolls up per-class counts, busiest first', () => {
+    const rows = classBreakdown(report)
+    expect(rows[0]).toEqual({ klass: 'IfcWall', added: 1, deleted: 1, modified: 4 })
+    expect(rows).toHaveLength(1)
+  })
+
+  it('honors the row limit', () => {
+    const wide: AtharReport = {
+      ...report,
+      added: [summary(100), { ...summary(101), class: 'IfcDoor' }],
+    }
+    expect(classBreakdown(wide, 1)).toHaveLength(1)
   })
 })
 

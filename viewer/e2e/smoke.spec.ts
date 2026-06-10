@@ -90,6 +90,10 @@ test('loads a pair via ?src= hand-off and buckets entities', async ({ page }) =>
   expect(state.reportStats.modified).toBe(5)
   expect(state.reportStats.unchanged).toBe(1)
   expect(typeof state.rendererReady).toBe('boolean')
+
+  // Frame for humans/debugging — assertions above never read pixels.
+  await page.waitForTimeout(500)
+  await page.screenshot({ path: 'test-results/smoke-both.png' })
 })
 
 test('loads a pair via the three file inputs', async ({ page }) => {
@@ -99,4 +103,75 @@ test('loads a pair via the three file inputs', async ({ page }) => {
   await page.setInputFiles('[data-testid=input-report]', join(FIXTURES, 'report.json'))
   const state = await waitReady(page)
   expect(state.bucketEntityCounts).toEqual(EXPECTED_BUCKETS)
+})
+
+test('slider snaps and section toggles drive bucket appearances', async ({ page }) => {
+  await page.goto(`/?src=${srcOrigin}`)
+  await waitReady(page)
+  const debug = () => page.evaluate(() => (window as any).__athar_viewer)
+
+  // Default Both state: crossfade midpoint.
+  let state = await debug()
+  expect(state.sliderT).toBe(0.5)
+  expect(state.appearances.deleted.opacity).toBe(0.5)
+  expect(state.appearances.added.opacity).toBe(0.5)
+
+  // Old snap: deleted fully visible, added gone.
+  await page.getByRole('button', { name: 'Old', exact: true }).click()
+  await page.waitForFunction(() => (window as any).__athar_viewer?.sliderT === 0)
+  state = await debug()
+  expect(state.appearances.deleted.visible).toBe(true)
+  expect(state.appearances.deleted.opacity).toBe(1)
+  expect(state.appearances.added.visible).toBe(false)
+  expect(state.appearances.modifiedOld.visible).toBe(true)
+  expect(state.appearances.modifiedNew.visible).toBe(false)
+  expect(state.appearances.modifiedStatic.visible).toBe(true)
+
+  await page.waitForTimeout(400)
+  await page.screenshot({ path: 'test-results/smoke-old.png' })
+
+  // New snap: mirrored.
+  await page.getByRole('button', { name: 'New', exact: true }).click()
+  await page.waitForFunction(() => (window as any).__athar_viewer?.sliderT === 1)
+  state = await debug()
+  expect(state.appearances.deleted.visible).toBe(false)
+  expect(state.appearances.added.visible).toBe(true)
+  expect(state.appearances.modifiedNew.visible).toBe(true)
+
+  // Section toggle hides every modified bucket.
+  await page.getByRole('button', { name: 'Modified' }).click()
+  await page.waitForFunction(
+    () => (window as any).__athar_viewer?.appearances.modifiedStatic.visible === false,
+  )
+  state = await debug()
+  expect(state.appearances.modifiedNew.visible).toBe(false)
+  expect(state.appearances.modifiedOld.visible).toBe(false)
+
+  // Unchanged ghosting toggle.
+  expect(state.appearances.unchanged.opacity).toBeLessThan(0.5)
+  await page.getByRole('button', { name: 'Ghost' }).click()
+  await page.waitForFunction(
+    () => (window as any).__athar_viewer?.appearances.unchanged.opacity === 1,
+  )
+})
+
+test('clicking an entity opens the inspector; Escape clears it', async ({ page }) => {
+  await page.goto(`/?src=${srcOrigin}`)
+  const state = await waitReady(page)
+  test.skip(!state.rendererReady, 'WebGL unavailable in this environment')
+
+  // After fit-to-model the wall cluster covers the viewport center.
+  const viewport = page.viewportSize()!
+  await page.mouse.click(viewport.width / 2, viewport.height / 2)
+  await page.waitForFunction(() => Boolean((window as any).__athar_viewer?.selection))
+
+  const selection = await page.evaluate(() => (window as any).__athar_viewer.selection)
+  expect(['old', 'new']).toContain(selection.side)
+  expect(selection.stepId).toBeGreaterThan(0)
+  await expect(page.locator('.inspector')).toBeVisible()
+  await expect(page.locator('.inspector .title')).not.toBeEmpty()
+
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => (window as any).__athar_viewer?.selection === null)
+  await expect(page.locator('.inspector')).toHaveCount(0)
 })
