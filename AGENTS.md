@@ -6,7 +6,8 @@ Semantic IFC diff tool. Compares BIM models at the entity/property level, not te
 
 ## Architecture
 
-Athar contains the core diff engine plus a transitional integration package.
+Athar contains the core diff engine plus Git-oriented presentation/integration
+tools.
 
 ### Core Engine (`athar/`)
 
@@ -51,16 +52,11 @@ core engine, but the core engine does not depend on it.
 
 Schema policy: IFC4 and IFC2X3 are both supported, but only same-schema comparisons in one run (no IFC2X3↔IFC4 translation).
 
-### Higher Layers (`athar_layers/`)
-
-Integration layers that build upon the core engine for human-readable output, scene modeling, and folder-level versioning. This package is transitional and may be moved out of this repository. The `athar_layers` CLI is currently disabled pending rewiring to the current engine.
-
-Detailed information for these components can be found in [athar_layers/AGENTS.md](athar_layers/AGENTS.md).
-
 ## Conventions
 
 - Python 3.10+, pure Python. The only core runtime dependency is `ifcopenshell`.
-- Engine modules (`athar/`) must not depend on integration/presentation modules (`athar_layers/`).
+- Engine modules (`athar/`) must not depend on integration/presentation modules
+  (`athar_git/` or future top-level presentation packages).
 - Layering inside the engine: `athar/bottom/` is self-contained; `athar/matcher/` may depend on `athar/bottom/` types; `athar/delta/` may depend on both; `athar/engine.py` orchestrates all three.
 - Use `ifcopenshell` for all IFC parsing. Do not parse STEP files as text.
 - Keep diffing deterministic and algorithmic — no AI in the diff pipeline itself.
@@ -81,10 +77,6 @@ python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
 athar git install                                        # configure .ifc diff driver in this repo
 athar git diff old.ifc new.ifc                           # terminal semantic diff summary
 ```
-
-### Full Tool (`athar_layers`)
-
-Currently disabled pending rewiring to the current engine.
 
 ## Scripts
 
