@@ -26,6 +26,29 @@ Pure Python. Pipeline: parse → signatures → tiered matching → delta report
 - `athar/delta/report.py` — Per-aspect change report assembly. Sections `added/deleted/modified/unchanged`; matched items carry `match{score,reason}`, per-aspect `changed/unchanged` for `geometry/data/topology/placement` plus `placement_delta_mm`, `data_hash{old,new}`, and `change_scope` (`intrinsic|transitive|mixed|none`). Stats cover section counts, signature counts, parse diagnostics, edge stats, `modified_change_scope`, and `dropped_matches`. Because `geometry_hash` matches equal full vectors, every `modified` item is by construction a guid match with score 0.9.
 - `athar/__main__.py` — Minimal CLI: `--stream ndjson|chunked_json`, `--chunk-size`. Errors print to stderr and exit 1.
 
+### Git Integration (`athar_git/`)
+
+Presentation/integration package for Git-specific workflows. It depends on the
+core engine, but the core engine does not depend on it.
+
+- `athar_git/render.py` — Deterministic terminal renderer for JSON delta
+  reports. It emits a Terraform-plan-like summary (`+/-/~/=` counts, class
+  breakdowns, modified aspect details) with a configurable item cap.
+- `athar_git/cache.py` — Persistent SignatureBundle cache for Git diffs,
+  keyed by Git blob oid when available and by content sha256 otherwise. Cache
+  entries are canon-version scoped and invalidated if the pickle metadata or
+  bundle canon version differs. V1 has no eviction policy; large history walks
+  can populate the cache quickly, so document `ATHAR_CACHE_DIR`/manual cleanup
+  rather than pretending it is bounded.
+- `athar_git/cli.py` — `athar git diff` and `athar git install`. The external
+  diff-driver shape accepts Git's seven arguments (`path old-file old-hex
+  old-mode new-file new-hex new-mode`) and renders through the cached bundle
+  path. `athar git install` configures `diff.athar.command=athar git diff
+  --external` and writes `.gitattributes` guidance: `*.ifc diff=athar -merge`.
+  The `-merge` marker prevents Git's normal text merge from silently splicing
+  two STEP exports into a corrupt IFC; semantic merge is intentionally out of
+  scope.
+
 Schema policy: IFC4 and IFC2X3 are both supported, but only same-schema comparisons in one run (no IFC2X3↔IFC4 translation).
 
 ### Higher Layers (`athar_layers/`)
@@ -55,6 +78,8 @@ Detailed information for these components can be found in [athar_layers/AGENTS.m
 python -m athar old.ifc new.ifc                          # raw JSON diff
 python -m athar old.ifc new.ifc --stream ndjson          # NDJSON records
 python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
+athar git install                                        # configure .ifc diff driver in this repo
+athar git diff old.ifc new.ifc                           # terminal semantic diff summary
 ```
 
 ### Full Tool (`athar_layers`)

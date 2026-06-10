@@ -81,6 +81,7 @@ def _entity_summary(sig: SignatureVector) -> dict:
     return {
         "step_id": sig.step_id,
         "guid": sig.guid,
+        "name": sig.name,
         "class": sig.canonical_class,
         "entity_type": sig.entity_type,
     }
