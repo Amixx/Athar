@@ -1,4 +1,4 @@
-"""Deterministic terminal renderer for Athar JSON reports."""
+"""Deterministic renderers for Athar JSON reports."""
 
 from __future__ import annotations
 
@@ -64,6 +64,55 @@ def render_text_report(report: dict, *, max_items: int = DEFAULT_MAX_ITEMS) -> s
     if stats.get("added", 0) == stats.get("deleted", 0) == stats.get("modified", 0) == 0:
         lines.append("")
         lines.append("No semantic entity changes.")
+
+    return "\n".join(lines) + "\n"
+
+
+def render_markdown_report(report: dict, *, max_items: int = DEFAULT_MAX_ITEMS) -> str:
+    """Render a compact Markdown summary suitable for PR comments."""
+
+    stats = report.get("stats", {})
+    schemas = report.get("schemas", {})
+    lines: list[str] = [
+        f"Schema: `{schemas.get('old', '?')}` -> `{schemas.get('new', '?')}`",
+        "",
+        "| Added | Deleted | Modified | Unchanged | Old signatures | New signatures |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| "
+        + " | ".join(
+            str(stats.get(name, 0))
+            for name in ("added", "deleted", "modified", "unchanged", "old_signatures", "new_signatures")
+        )
+        + " |",
+    ]
+
+    scope = stats.get("modified_change_scope") or {}
+    scope_parts = [
+        f"`{name}` {scope.get(name, 0)}"
+        for name in ("intrinsic", "mixed", "transitive")
+        if scope.get(name, 0)
+    ]
+    if scope_parts:
+        lines.extend(["", "Modified scope: " + ", ".join(scope_parts)])
+
+    matcher = (stats.get("matcher_diagnostics") or {}).get("tiers") or {}
+    matcher_parts = [f"`{name}` {matcher[name]}" for name in sorted(matcher) if matcher[name]]
+    if matcher_parts:
+        lines.append("Matches: " + ", ".join(matcher_parts))
+
+    class_lines = _class_count_lines(report)
+    if class_lines:
+        lines.append("")
+        lines.extend(class_lines)
+
+    changed_total = sum(int(stats.get(name, 0) or 0) for name in ("added", "deleted", "modified"))
+    if changed_total == 0:
+        lines.extend(["", "No semantic entity changes."])
+    else:
+        lines.extend(["", "<details>", "<summary>Changed entities</summary>", "", "```text"])
+        text = render_text_report(report, max_items=max_items).rstrip()
+        lines.append(text)
+        lines.extend(["```", "", "</details>"])
 
     return "\n".join(lines) + "\n"
 
