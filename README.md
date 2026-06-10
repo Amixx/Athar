@@ -101,9 +101,6 @@ The persistent signature cache is versioned and deterministic, but v1 does not
 evict old entries. Set `ATHAR_CACHE_DIR` to isolate or periodically clear a
 large repository's cache.
 
-The `athar_layers` package (human-readable summaries, folder mode, Markdown
-reports) is temporarily disabled while it is rewired to the current engine.
-
 ## Testing
 
 ```bash

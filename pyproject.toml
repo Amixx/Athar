@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["athar*", "athar_layers*"]
+include = ["athar*", "athar_git*"]
 
 [project.scripts]
 athar = "athar.__main__:main"
