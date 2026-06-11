@@ -15,6 +15,7 @@ from .render import DEFAULT_MAX_ITEMS, render_text_report
 
 ATTRIBUTES_LINE = "*.ifc diff=athar -merge"
 DIFF_COMMAND = "athar git diff --external"
+DIFFTOOL_COMMAND = 'athar view "$LOCAL" "$REMOTE"'
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,11 @@ def _add_git_subcommands(git_sub: argparse._SubParsersAction) -> None:
         "--no-attributes",
         action="store_true",
         help="Do not append .gitattributes guidance in the current repository",
+    )
+    install_parser.add_argument(
+        "--difftool",
+        action="store_true",
+        help="Also configure `git difftool -t athar` to open the visual diff viewer",
     )
     install_parser.set_defaults(func=_cmd_install)
 
@@ -119,12 +125,17 @@ def _cmd_install(args: argparse.Namespace) -> int:
     config_scope = "--global" if args.global_config else "--local"
     _git_config(config_scope, "diff.athar.command", DIFF_COMMAND)
     _git_config(config_scope, "diff.athar.binary", "true")
+    difftool = getattr(args, "difftool", False)
+    if difftool:
+        _git_config(config_scope, "difftool.athar.cmd", DIFFTOOL_COMMAND)
 
     wrote_attributes = False
     if not args.no_attributes and not args.global_config:
         wrote_attributes = _ensure_attributes_line(Path(".gitattributes"))
 
     print(f"Configured Git diff driver: {DIFF_COMMAND}")
+    if difftool:
+        print("Configured Git difftool: git difftool -t athar -- path/to/file.ifc")
     if args.global_config:
         print(f"Add this to each IFC repository's .gitattributes: {ATTRIBUTES_LINE}")
     elif wrote_attributes:

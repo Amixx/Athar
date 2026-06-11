@@ -174,6 +174,32 @@ pass/fail summary from an `athar check` result, but policy enforcement remains
 separate. The checked-in `.github/workflows/athar-pr-diff.yml` workflow shows
 the default pull-request setup using `GITHUB_TOKEN`.
 
+### Visual 3D Diff Viewer
+
+`athar view` overlays both models in one 3D scene in the browser, colored by
+the semantic report: green added, red deleted, blue modified, gray ghosted
+unchanged, amber displacement lines for placement moves. An old↔new slider
+crossfades between revisions; clicking an entity shows its class, GUID,
+changed aspects, placement delta, and match evidence.
+
+```bash
+athar view old.ifc new.ifc                        # build report, serve, open browser
+athar view old.ifc new.ifc --no-open --port 4799  # print the URL instead
+athar git install --difftool                      # then: git difftool -t athar -- model.ifc
+```
+
+The browser does all tessellation (`@ifc-lite/geometry` WASM); rendering is
+three.js. By default the launcher works fully offline, serving the committed
+SPA bundle from `viewer/dist`. `--viewer-url` (or `ATHAR_VIEWER_URL`) instead
+hands off to a hosted viewer Perfetto-style: the page fetches the models back
+from the local server via `?src=`, so nothing is uploaded. The same SPA also
+accepts plain drag-drop of `old.ifc`, `new.ifc`, and a report JSON — no
+launcher needed.
+
+Viewer development requires [bun](https://bun.sh) and lives entirely under
+`viewer/` (see [viewer/README.md](viewer/README.md)); pip users never need it.
+Rebuild the committed bundle with `make viewer-build`.
+
 ## Testing
 
 ```bash
