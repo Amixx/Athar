@@ -55,6 +55,13 @@ def test_render_text_report_summarizes_counts_classes_and_modified_details():
                     "placement": "changed",
                     "placement_delta_mm": (3.0, 4.0, 0.0),
                 },
+                "data_delta": [
+                    {
+                        "path": "IfcPropertySingleValue[FireRating].NominalValue",
+                        "old": "IfcLabel: 90",
+                        "new": "IfcLabel: 60",
+                    }
+                ],
             }
         ],
         "added": [{"class": "IfcDoor", "step_id": 20, "guid": None, "name": "D-1"}],
@@ -66,6 +73,7 @@ def test_render_text_report_summarizes_counts_classes_and_modified_details():
     assert "Summary: +1 -1 ~1 =5 (old 7, new 7)" in rendered
     assert "Modified by class: IfcWall 1" in rendered
     assert '~ IfcWall "W-101" #11 [data, placement, placement delta 5.000 mm]' in rendered
+    assert "data: IfcPropertySingleValue[FireRating].NominalValue: IfcLabel: 90 -> IfcLabel: 60" in rendered
     assert '+ IfcDoor "D-1" #20' in rendered
     assert "- IfcWindow #30" in rendered
 

@@ -39,6 +39,8 @@ def build_delta_report(
             },
             "change_scope": _change_scope(aspects),
         }
+        if aspects["data"] == "changed":
+            item["data_delta"] = _data_delta(old_sig, new_sig)
         if any(value == "changed" for key, value in aspects.items() if key != "placement_delta_mm"):
             modified.append(item)
         else:
@@ -100,6 +102,19 @@ def _aspect_diff(old_sig: SignatureVector, new_sig: SignatureVector) -> dict:
 
 def _changed(old, new) -> str:
     return "unchanged" if old == new else "changed"
+
+
+def _data_delta(old_sig: SignatureVector, new_sig: SignatureVector) -> list[dict]:
+    old_facts = dict(old_sig.data_facts)
+    new_facts = dict(new_sig.data_facts)
+    out: list[dict] = []
+    for path in sorted(set(old_facts) | set(new_facts)):
+        old_value = old_facts.get(path)
+        new_value = new_facts.get(path)
+        if old_value == new_value:
+            continue
+        out.append({"path": path, "old": old_value, "new": new_value})
+    return out
 
 
 def _placement_delta_mm(old: tuple[int, ...] | None, new: tuple[int, ...] | None) -> tuple[float, float, float] | None:

@@ -1,4 +1,4 @@
-"""Known-edit mutation harness: semantic ground truth from constructed edits.
+"""Known-edit IFC mutation harness for tests and benchmark scripts.
 
 Each mutator takes an open ifcopenshell model, applies exactly one constructed
 edit, and returns a ``Mutation`` manifest stating what was done and what a

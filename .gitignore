@@ -140,6 +140,11 @@ internal-docs/
 # Local external IFC corpus cache; manifests/docs may live in git, raw datasets do not.
 corpus-data/
 
+# Generated benchmark artifacts; regenerate with `make benchmark-run`.
+.athar-benchmark/
+docs/corpus/*-competitor-benchmark.json
+docs/corpus/*-corpus-survey.json
+
 .claude
 
 # The viewer SPA build is committed so Python-only users never need bun
