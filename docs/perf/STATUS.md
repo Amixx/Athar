@@ -38,6 +38,9 @@ acceptance numbers.
 
 - The bundle build (parse → merkle → WL → spatial) is the only hot path that
   matters at large scale; profile it before optimizing anything else.
+- `scripts/explore/profile_signature_bundle.py` provides the current per-stage
+  profiler for that bundle path. Latest measurements are in
+  `FINDINGS_signature_stage_profile_2026-06-26.md`.
 - No disk cache exists in the current engine; if repeat-diff latency on large
   files becomes a real workflow problem, a content-hash-keyed bundle cache is
   the obvious first move.
