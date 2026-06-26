@@ -10,6 +10,13 @@ GitHub comments, and other presentation concerns.
   `SignatureBundle` per input, enforces same-schema comparison, runs the
   matcher, and assembles the report. Its in-process bundle cache is keyed by
   path, mtime, and size.
+- Same-schema enforcement raises `SchemaMismatchError` (a `ValueError`
+  subclass carrying `old_schema`/`new_schema`). The engine never translates
+  between IFC2X3 and IFC4, so a cross-schema pair is surfaced as a clear
+  "schema changed, cannot semantically diff" result rather than diffed into a
+  flood of false add/delete churn. The core CLI catches it, prints a
+  `status: "schema_incompatible"` JSON document, and exits `3` (distinct from
+  generic error exit `1`).
 - `stream_diff_files()` wraps the same report as `ndjson` or `chunked_json`
   records. Keep the header audit metadata and deterministic final stats record.
 - `matcher/` may depend on `athar/bottom/` types, but matching must remain

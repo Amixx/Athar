@@ -10,7 +10,7 @@ from athar.bottom.merkle import compute_merkle_hashes
 from athar.bottom.parser import _quantize_real
 from athar.bottom.types import EntityRef, ParseDiagnostics, ParseResult, ParsedEntity, SignatureVector
 from athar.bottom.wl_gossip import compute_topology_hashes
-from athar.engine import _assert_schema_compatible, _guid_collision_count
+from athar.engine import SchemaMismatchError, _assert_schema_compatible, _guid_collision_count
 from athar.engine import diff_files, stream_diff_files
 from tests.corpus import CORPUS, corpus_path
 
@@ -79,6 +79,18 @@ def test_engine_rejects_cross_schema_comparison():
     _assert_schema_compatible("IFC4", "IFC4")
     with pytest.raises(ValueError, match="Schema mismatch"):
         _assert_schema_compatible("IFC2X3", "IFC4")
+
+
+def test_schema_mismatch_error_is_typed_and_structured():
+    # Subclasses ValueError so existing handlers keep catching it, while
+    # exposing the two schemas for callers that present a clear result.
+    assert issubclass(SchemaMismatchError, ValueError)
+    with pytest.raises(SchemaMismatchError) as excinfo:
+        _assert_schema_compatible("IFC2X3", "IFC4")
+    err = excinfo.value
+    assert err.old_schema == "IFC2X3"
+    assert err.new_schema == "IFC4"
+    assert "IFC2X3" in str(err) and "IFC4" in str(err)
 
 
 def test_engine_model_without_products_yields_empty_report():
