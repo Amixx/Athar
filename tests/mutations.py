@@ -261,6 +261,49 @@ def rename_product(model: ifcopenshell.file) -> Mutation:
     raise AssertionError("seed has no uniquely-identified product to rename")
 
 
+def add_product(model: ifcopenshell.file) -> Mutation:
+    """Insert one fresh leaf product, contained in an existing spatial structure.
+
+    The symmetric counterpart to delete_product: exactly one product appears
+    that was not there before. Truth: a correct report adds only the new proxy,
+    deletes nothing, and shows no *intrinsic* modification anywhere — the only
+    permitted ripple is the spatial container gaining a child (a transitive
+    change on the container).
+    """
+    container = _pick_spatial_container(model)
+    placement = model.create_entity(
+        "IfcLocalPlacement",
+        RelativePlacement=model.create_entity(
+            "IfcAxis2Placement3D",
+            Location=model.create_entity("IfcCartesianPoint", (0.0, 0.0, 0.0)),
+        ),
+    )
+    new_guid = ifcopenshell.guid.compress(uuid.uuid5(_GUID_NAMESPACE, "added-product").hex)
+    proxy = model.create_entity(
+        "IfcBuildingElementProxy",
+        GlobalId=new_guid,
+        Name="athar-added-proxy",
+        ObjectPlacement=placement,
+    )
+    container.RelatedElements = tuple(container.RelatedElements or ()) + (proxy,)
+    return Mutation(
+        operation="add_product",
+        victim_guid=new_guid,
+        victim_type=proxy.is_a(),
+        expected_victim_section="added",
+    )
+
+
+def _pick_spatial_container(model: ifcopenshell.file):
+    """An existing IfcRelContainedInSpatialStructure to append a child to."""
+    rels = sorted(
+        model.by_type("IfcRelContainedInSpatialStructure"), key=lambda entity: entity.id()
+    )
+    if rels:
+        return rels[0]
+    raise AssertionError("seed has no spatial containment relationship to extend")
+
+
 def _products_in_step_order(model: ifcopenshell.file) -> list:
     return sorted(model.by_type("IfcProduct"), key=lambda entity: entity.id())
 

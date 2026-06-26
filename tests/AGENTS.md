@@ -24,7 +24,10 @@ Run the full default suite before committing.
 - The optional external corpus defaults to `../vscode-ifc/test-files` and can
   be overridden with `ATHAR_EXTERNAL_CORPUS_DIR`.
 - Shared report invariants include accounting, 1:1 matching, class safety,
-  score/reason consistency, and change-scope consistency.
+  score/reason consistency, change-scope consistency, and the placement-delta
+  contract (a placement reported `unchanged` carries no translation delta; the
+  converse is not asserted, since a pure rotation is a change with zero
+  translation).
 - Default corpus tests cover small files only so normal runs stay fast.
 
 ## Semantic Scenario Rules
@@ -37,6 +40,18 @@ Run the full default suite before committing.
   claims to be a single-entity edit.
 - Type-level/inherited psets are covered through `IfcTypeObject.HasPropertySets`
   edits and should manifest as data changes on defining occurrences.
+- `add_product` is the symmetric counterpart to `delete_product`: it inserts one
+  fresh proxy into an existing spatial container, so exactly one entity is added
+  and the container may only ripple transitively.
+- Edits whose ground truth needs authored geometry/units use controlled
+  synthetic pairs instead of seed mutators, because real-seed geometry is too
+  heterogeneous to target reliably:
+  - `test_geometry_change.py` moves one explicit mesh vertex (the path that
+    feeds `vh_geometry` — parametric scalars like extrusion `Depth` deliberately
+    do not) to prove a clean geometry change, which is also the positive case
+    for `mixed` change_scope (intrinsic geometry + transitive topology self-seed).
+  - `test_unit_normalization.py` builds the same model in metres and millimetres
+    to prove length quantization is unit-normalized (zero diff).
 
 ## Large Acceptance
 
