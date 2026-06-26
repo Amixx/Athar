@@ -15,6 +15,7 @@ Invariant helpers assert the engine's structural contracts — accounting,
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -156,6 +157,14 @@ def assert_report_invariants(report: dict) -> None:
             changed = any(v == "changed" for k, v in aspects.items() if k != "placement_delta_mm")
             assert changed == (section == "modified"), item
             assert (aspects["data"] == "unchanged") == (item["data_hash"]["old"] == item["data_hash"]["new"]), item
+            # A placement reported unchanged can carry no translation delta:
+            # equal placement matrices have identical translation entries, so
+            # the only valid delta is absent or zero. (A *changed* placement may
+            # still net zero translation — e.g. a pure rotation — so the
+            # converse is intentionally not asserted.)
+            delta = aspects["placement_delta_mm"]
+            if aspects["placement"] == "unchanged":
+                assert delta is None or math.hypot(*delta) == 0, item
             intrinsic = any(aspects[name] == "changed" for name in ("geometry", "data", "placement"))
             transitive = aspects["topology"] == "changed"
             expected_scope = (
