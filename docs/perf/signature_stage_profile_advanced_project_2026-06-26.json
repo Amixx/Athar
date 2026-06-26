@@ -1,0 +1,66 @@
+{
+  "command": "scripts/explore/profile_signature_bundle.py real-world-test/AdvancedProject.ifc --out docs/perf/signature_stage_profile_advanced_project_2026-06-26.json",
+  "files": [
+    {
+      "best": {
+        "diagnostics": {
+          "cycle_breaks": 0,
+          "dangling_refs": 0,
+          "warnings": 0
+        },
+        "edge_stats": {
+          "context:topology": 3872,
+          "include:data": 89330,
+          "include:geometry": 648492,
+          "include:placement": 19892,
+          "include:spatial": 1686
+        },
+        "edges": 763272,
+        "entities": 770172,
+        "schema": "IFC2X3",
+        "signatures": 2365,
+        "stage_seconds": {
+          "assemble_signatures": 0.383253,
+          "build_edge_set": 1.97629,
+          "build_spatial_features": 1.942285,
+          "compute_merkle_hashes": 8.989987,
+          "compute_topology_hashes": 2.720865,
+          "parse_ifc": 40.885046
+        },
+        "total_seconds": 56.897794
+      },
+      "path": "real-world-test/AdvancedProject.ifc",
+      "runs": [
+        {
+          "diagnostics": {
+            "cycle_breaks": 0,
+            "dangling_refs": 0,
+            "warnings": 0
+          },
+          "edge_stats": {
+            "context:topology": 3872,
+            "include:data": 89330,
+            "include:geometry": 648492,
+            "include:placement": 19892,
+            "include:spatial": 1686
+          },
+          "edges": 763272,
+          "entities": 770172,
+          "schema": "IFC2X3",
+          "signatures": 2365,
+          "stage_seconds": {
+            "assemble_signatures": 0.383253,
+            "build_edge_set": 1.97629,
+            "build_spatial_features": 1.942285,
+            "compute_merkle_hashes": 8.989987,
+            "compute_topology_hashes": 2.720865,
+            "parse_ifc": 40.885046
+          },
+          "total_seconds": 56.897794
+        }
+      ],
+      "size_mb": 44.337
+    }
+  ],
+  "repeat": 1
+}
