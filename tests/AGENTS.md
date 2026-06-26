@@ -32,8 +32,10 @@ Run the full default suite before committing.
 
 ## Semantic Scenario Rules
 
-- `tests/mutations.py` creates one constructed edit per scenario through a
-  shared `ifcopenshell` write path.
+- `athar_dev/ifc_mutations.py` creates one constructed edit per scenario
+  through a shared `ifcopenshell` write path. It is shared with exploratory
+  benchmark scripts so generated synthetic benchmark pairs use the same ground
+  truth as the semantic tests.
 - Mutation expectations come from the edit manifest itself: victim section,
   aspect states, and placement delta norms.
 - Pick victims with exclusive placements, psets, or properties when a scenario

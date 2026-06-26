@@ -33,10 +33,16 @@ pytestmark = [
 # Medium/large corpus files, ascending size. Small files run in the default
 # tier (test_corpus_invariants.py).
 LARGE_FILES = (
+    "gni_77",
+    "gni_68",
+    "gni_p5_str",
+    "gni_p7_arc",
+    "gni_p8_arc",
     "duplex_mech",
     "revit_arc",
     "duplex_mep",
     "revit_mep",
+    "gni_p5_arc",
     "advanced_project",
     "adv_changed",
     "basic_house",
@@ -48,11 +54,15 @@ LARGE_FILES = (
 DISCIPLINE_PAIRS = (
     ("duplex_arch", "duplex_mech"),
     ("revit_arc", "revit_mep"),
+    ("gni_p5_arc", "gni_p5_str"),
+    ("gni_p7_arc", "gni_p7_str"),
+    ("gni_p8_arc", "gni_p8_str"),
 )
 
 UNRELATED_PAIRS = (
     ("basic_house", "advanced_project"),
     ("spanish", "uni_house"),
+    ("gni_77", "gni_68"),
 )
 
 

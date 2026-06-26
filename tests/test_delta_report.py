@@ -14,6 +14,7 @@ def _signature(
     vh_topology: str = "topo-a",
     placement: tuple[int, ...] | None = None,
     name: str | None = None,
+    data_facts: tuple[tuple[str, str], ...] = (),
 ) -> SignatureVector:
     return SignatureVector(
         step_id=step_id,
@@ -28,6 +29,7 @@ def _signature(
         centroid=None,
         aabb=None,
         canon_version="athar-canon-v1",
+        data_facts=data_facts,
     )
 
 
@@ -270,6 +272,53 @@ def test_build_delta_report_change_scope_classifies_transitive_and_mixed():
         "transitive": 1,
         "mixed": 1,
     }
+
+
+def test_build_delta_report_includes_human_readable_data_deltas():
+    old_bundle = _bundle(
+        schema="IFC4",
+        signatures={
+            1: _signature(
+                1,
+                guid="A",
+                vh_data="d-old",
+                data_facts=(
+                    ("IfcWall[W1].Name", "W1"),
+                    ("IfcPropertySingleValue[FireRating].NominalValue", "IfcLabel: 90"),
+                    ("IfcPropertySingleValue[AcousticRating].NominalValue", "IfcLabel: A"),
+                ),
+            )
+        },
+    )
+    new_bundle = _bundle(
+        schema="IFC4",
+        signatures={
+            10: _signature(
+                10,
+                guid="A",
+                vh_data="d-new",
+                data_facts=(
+                    ("IfcWall[W1].Name", "W1"),
+                    ("IfcPropertySingleValue[FireRating].NominalValue", "IfcLabel: 60"),
+                    ("IfcPropertySingleValue[SmokeRating].NominalValue", "IfcLabel: S"),
+                ),
+            )
+        },
+    )
+
+    report = build_delta_report(
+        old_bundle,
+        new_bundle,
+        matches=[MatchedPair(old_step=1, new_step=10, score=0.9, reason="guid")],
+        unmatched_old=[],
+        unmatched_new=[],
+    )
+
+    assert report["modified"][0]["data_delta"] == [
+        {"path": "IfcPropertySingleValue[AcousticRating].NominalValue", "old": "IfcLabel: A", "new": None},
+        {"path": "IfcPropertySingleValue[FireRating].NominalValue", "old": "IfcLabel: 90", "new": "IfcLabel: 60"},
+        {"path": "IfcPropertySingleValue[SmokeRating].NominalValue", "old": None, "new": "IfcLabel: S"},
+    ]
 
 
 def test_build_delta_report_match_items_carry_only_score_reason_and_aspects():
