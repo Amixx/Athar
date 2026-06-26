@@ -13,6 +13,7 @@ from ifcopenshell.util import schema as schema_util
 from .constants import SUPPORTED_SCHEMA_PREFIXES
 from .index import build_step_index
 from .link_inversion import invert_entity_refs
+from .properties import extract_properties
 from .schema_dict import canonical_class_name
 from .types import EntityRef, ParseDiagnostics, ParseResult, ParsedEntity
 
@@ -61,6 +62,8 @@ def parse_ifc(filepath: str) -> ParseResult:
         if ref.target_step not in entities
     )
 
+    property_index = extract_properties(ifc)
+
     return ParseResult(
         filepath=filepath,
         schema=schema,
@@ -69,6 +72,7 @@ def parse_ifc(filepath: str) -> ParseResult:
         incoming_refs=incoming,
         unit_context=unit_context,
         diagnostics=diagnostics,
+        property_index=property_index,
     )
 
 
