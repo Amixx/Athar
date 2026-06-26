@@ -162,11 +162,37 @@ def _render_item(section: str, marker: str, item: dict) -> list[str]:
         match = item.get("match", {})
         reason = match.get("reason", "?")
         score = match.get("score", "?")
-        return [
+        lines = [
             f"{marker} {_entity_label(new)} [{detail}]",
             f"  match: {reason} score {score}; old {_entity_ref(old)} -> new {_entity_ref(new)}",
         ]
+        lines.extend(_data_delta_lines(item.get("data_delta")))
+        return lines
     return [f"{marker} {_entity_label(item)}"]
+
+
+def _data_delta_lines(data_delta: object, *, limit: int = 5) -> list[str]:
+    if not isinstance(data_delta, list) or not data_delta:
+        return []
+    lines: list[str] = []
+    shown = data_delta[:limit]
+    for entry in shown:
+        if not isinstance(entry, dict):
+            continue
+        path = entry.get("path", "?")
+        old = _render_value(entry.get("old"))
+        new = _render_value(entry.get("new"))
+        lines.append(f"  data: {path}: {old} -> {new}")
+    hidden = len(data_delta) - len(shown)
+    if hidden > 0:
+        lines.append(f"  data: ... and {hidden} more value deltas")
+    return lines
+
+
+def _render_value(value: object) -> str:
+    if value is None:
+        return "<missing>"
+    return str(value)
 
 
 def _entity_label(entity: dict) -> str:

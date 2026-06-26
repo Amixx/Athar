@@ -12,6 +12,16 @@ dependencies = [
   "ifcopenshell",
 ]
 
+[project.optional-dependencies]
+benchmark = [
+  "ifcdiff",
+  "ifcfast",
+]
+benchmark-ui = [
+  "fastapi",
+  "uvicorn",
+]
+
 [tool.setuptools.packages.find]
 include = ["athar*", "athar_git*", "athar_store*"]
 
@@ -22,6 +32,7 @@ athar_view = ["static/**/*"]
 
 [project.scripts]
 athar = "athar.__main__:main"
+athar-benchmark-ui = "athar_bench.ui:main"
 
 [tool.pytest.ini_options]
 markers = [

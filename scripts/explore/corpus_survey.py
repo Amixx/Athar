@@ -16,7 +16,7 @@ the former spatial/topology fallback tiers were deleted after the 2026-06-10
 survey showed they only manufactured cross-model matches.
 
 Usage:
-    python scripts/explore/corpus_survey.py [--out PATH] [--skip-large] [--include-bad]
+    python scripts/explore/corpus_survey.py [--out PATH] [--markdown-out PATH] [--skip-large] [--include-bad]
 
 Large files (>100MB) take minutes each; progress streams to stdout and the
 output JSON is rewritten after every group so partial results survive a crash.
@@ -303,6 +303,121 @@ def pair_stats(kind: str, old_key: str, new_key: str, report: dict, seconds: flo
     return entry
 
 
+def render_markdown(results: dict) -> str:
+    """Render a concise dated corpus findings note from survey JSON."""
+
+    files = results.get("files", {})
+    pairs = results.get("pairs", [])
+    usable_files = [info for info in files.values() if "signatures" in info]
+    skipped_files = [info for info in files.values() if "skipped" in info]
+    errors = results.get("errors", [])
+
+    lines = [
+        "# Athar corpus survey findings",
+        "",
+        f"Generated: {results.get('generated_at', 'unknown')}",
+        "",
+        "Source note: GNI-BIM sample files are covered by `corpus/gni-bim-sample/NOTICE.md`.",
+        "",
+        "## Summary",
+        "",
+        f"- Parsed files: {len(usable_files)}",
+        f"- Skipped files: {len(skipped_files)}",
+        f"- Diff pairs: {len(pairs)}",
+        f"- Errors: {len(errors)}",
+        f"- Total runtime: {results.get('total_seconds', 'unknown')}s",
+        "",
+    ]
+    lines.extend(_subset_summary(usable_files))
+    lines.extend(_file_table(usable_files))
+    lines.extend(_pair_table(pairs))
+    if skipped_files:
+        lines.extend(_skipped_table(skipped_files))
+    if errors:
+        lines.extend(_error_table(errors))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _subset_summary(files: list[dict]) -> list[str]:
+    subsets: dict[str, dict[str, float | int]] = {}
+    for info in files:
+        tags = set(info.get("tags") or [])
+        if "gni" not in tags:
+            subset = "legacy/default corpus"
+        elif "2025-fundamentals" in tags:
+            subset = "GNI 2025 fundamentals"
+        elif "2026-projects" in tags:
+            subset = "GNI 2026 arch/structure pairs"
+        else:
+            subset = "GNI other"
+        entry = subsets.setdefault(subset, {"files": 0, "size_mb": 0.0, "signatures": 0})
+        entry["files"] += 1
+        entry["size_mb"] += float(info.get("size_mb") or 0.0)
+        entry["signatures"] += int(info.get("signatures") or 0)
+    lines = ["## Subsets", "", "| Subset | Files | Size MB | Signatures |", "| --- | ---: | ---: | ---: |"]
+    for subset, entry in sorted(subsets.items()):
+        lines.append(
+            f"| {subset} | {entry['files']} | {entry['size_mb']:.1f} | {entry['signatures']} |"
+        )
+    lines.append("")
+    return lines
+
+
+def _file_table(files: list[dict]) -> list[str]:
+    lines = [
+        "## Files",
+        "",
+        "| Key | Schema | Size MB | Signatures | GUID collisions | Build s | Top classes |",
+        "| --- | --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for info in sorted(files, key=lambda item: item.get("key", "")):
+        classes = ", ".join(f"{name} {count}" for name, count in (info.get("top_classes") or {}).items())
+        lines.append(
+            f"| {info.get('key')} | {info.get('schema')} | {info.get('size_mb')} | "
+            f"{info.get('signatures')} | {info.get('guid_collisions')} | {info.get('build_seconds')} | {classes} |"
+        )
+    lines.append("")
+    return lines
+
+
+def _pair_table(pairs: list[dict]) -> list[str]:
+    lines = [
+        "## Pairs",
+        "",
+        "| Kind | Old -> New | Schema | + | - | ~ | = | Tiers | Scope | Diff s |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | ---: |",
+    ]
+    for pair in pairs:
+        sections = pair.get("sections") or {}
+        schemas = pair.get("schemas") or {}
+        tiers = ", ".join(f"{k} {v}" for k, v in (pair.get("matched_by_tier") or {}).items() if v)
+        scope = ", ".join(f"{k} {v}" for k, v in (pair.get("modified_change_scope") or {}).items() if v)
+        lines.append(
+            f"| {pair.get('kind')} | {pair.get('old')} -> {pair.get('new')} | {schemas.get('old')} | "
+            f"{sections.get('added')} | {sections.get('deleted')} | {sections.get('modified')} | {sections.get('unchanged')} | "
+            f"{tiers or 'none'} | {scope or 'none'} | {pair.get('diff_seconds')} |"
+        )
+    lines.append("")
+    return lines
+
+
+def _skipped_table(files: list[dict]) -> list[str]:
+    lines = ["## Skipped files", "", "| Key | Reason | Path |", "| --- | --- | --- |"]
+    for info in sorted(files, key=lambda item: item.get("key", "")):
+        lines.append(f"| {info.get('key')} | {info.get('skipped')} | `{info.get('path')}` |")
+    lines.append("")
+    return lines
+
+
+def _error_table(errors: list[dict]) -> list[str]:
+    lines = ["## Errors", "", "| Stage | Context | Error |", "| --- | --- | --- |"]
+    for error in errors:
+        context = error.get("key") or error.get("pair") or ""
+        lines.append(f"| {error.get('stage')} | {context} | {error.get('error')} |")
+    lines.append("")
+    return lines
+
+
 def make_scrambled_pair(src: Path, workdir: Path) -> tuple[Path, Path]:
     """(clean, scrambled) copies differing only in GlobalId values."""
     import ifcopenshell
@@ -326,6 +441,7 @@ def make_scrambled_pair(src: Path, workdir: Path) -> tuple[Path, Path]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="/tmp/athar_corpus_survey.json")
+    parser.add_argument("--markdown-out", help="optional Markdown findings note to write after the JSON survey")
     parser.add_argument("--skip-large", action="store_true", help="skip files marked large (>100MB)")
     parser.add_argument("--include-bad", action="store_true", help="also parse intentionally corrupted files")
     args = parser.parse_args()
@@ -418,6 +534,10 @@ def main() -> int:
 
     results["total_seconds"] = round(time.perf_counter() - total_start, 1)
     flush()
+    if args.markdown_out:
+        markdown_path = Path(args.markdown_out)
+        markdown_path.parent.mkdir(parents=True, exist_ok=True)
+        markdown_path.write_text(render_markdown(results), encoding="utf-8")
     log(f"done in {results['total_seconds']}s -> {out_path}")
     return 0
 

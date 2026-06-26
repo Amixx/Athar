@@ -24,8 +24,11 @@ def compute_topology_hashes(
     seeds: dict[int, str] = {}
     for step_id, entity in entities.items():
         vh_geometry = merkle_hashes.get(step_id, {}).get("geometry", "")
-        vh_data = merkle_hashes.get(step_id, {}).get("data", "")
-        seeds[step_id] = _sha256(f"{entity.canonical_class}|{vh_geometry}|{vh_data}")
+        # Topology should describe structural neighborhood shape, not fan out
+        # scalar data edits. A single product Name/property edit already
+        # appears in vh_data on the edited product; including data in topology
+        # seeds turns that one edit into many transitive neighbor changes.
+        seeds[step_id] = _sha256(f"{entity.canonical_class}|{vh_geometry}")
 
     out: dict[int, str] = {}
     for step_id in sorted(entities):

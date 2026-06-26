@@ -1,9 +1,9 @@
 """Known-edit semantic scenarios over small real seeds.
 
 Each test builds a before/after pair in a tmp dir by applying one constructed
-mutation (tests/mutations.py) to a real seed file, then asserts the report
-against the mutation's own manifest — the expectations are derived from the
-edit, never from current engine output. Structural report contracts are
+mutation from ``athar_dev.ifc_mutations`` to a real seed file, then asserts the
+report against the mutation's own manifest — the expectations are derived from
+the edit, never from current engine output. Structural report contracts are
 re-checked through the shared corpus invariants.
 """
 
@@ -14,8 +14,8 @@ import math
 import ifcopenshell
 import pytest
 
+from athar_dev import ifc_mutations as mutations
 from athar.engine import diff_files
-from tests import mutations
 from tests.corpus import assert_report_invariants, assert_zero_diff, corpus_path
 
 SEEDS = ("gni_190", "gni_9")
@@ -121,7 +121,15 @@ def test_type_pset_value_edit_is_inherited_data_change_on_occurrences(scenario_s
 def test_rename_is_a_data_change_on_that_product(scenario_seed):
     baseline, mutate = scenario_seed
     mutated, mutation = mutate(mutations.rename_product)
-    _assert_single_product_data_edit(diff_files(baseline, mutated), mutation)
+    report = diff_files(baseline, mutated)
+    _assert_single_product_data_edit(report, mutation)
+    # A scalar Name edit must not fan out through topology gossip as dozens of
+    # neighbor changes. Humans expect this to read as one product data change.
+    assert report["stats"]["modified"] == 1
+    assert len(report["modified"][0]["data_delta"]) == 1
+    data_delta = report["modified"][0]["data_delta"][0]
+    assert data_delta["path"] == f"{mutation.victim_type}[GlobalId={mutation.victim_guid}].Name"
+    assert data_delta["new"] == f"{data_delta['old']} [athar-renamed]"
 
 
 def test_add_one_product_adds_exactly_that_product(scenario_seed):
