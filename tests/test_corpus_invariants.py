@@ -29,6 +29,12 @@ SMALL_FILES = (
     "duplex_arch",
     "gni_190",
     "gni_9",
+    "gni_50",
+    "gni_62",
+    "gni_149",
+    "gni_18",
+    "gni_p0_str",
+    "gni_p3_str",
 )
 
 REVISION_PAIRS = (
@@ -73,6 +79,49 @@ def test_unrelated_pair_has_no_guid_matches():
     report = diff_files(corpus_path("cube_brep"), corpus_path("sample_house_roof"))
     assert_report_invariants(report)
     assert report["stats"]["matcher_diagnostics"]["matched_by_tier"]["guid"] == 0
+
+
+@pytest.mark.parametrize(
+    "old_key,new_key",
+    (
+        ("gni_190", "gni_9"),
+        ("gni_50", "gni_62"),
+    ),
+)
+def test_gni_independent_fundamentals_are_unrelated(old_key, new_key):
+    report = diff_files(corpus_path(old_key), corpus_path(new_key))
+    assert_report_invariants(report)
+    stats = report["stats"]
+    assert stats["matcher_diagnostics"]["matched_by_tier"]["guid"] == 0
+    assert stats["deleted"] >= stats["old_signatures"] // 2
+    assert stats["added"] >= stats["new_signatures"] // 2
+
+
+@pytest.mark.parametrize(
+    "old_key,new_key",
+    (
+        ("gni_p0_arc", "gni_p0_str"),
+    ),
+)
+def test_gni_arch_structure_pairs_are_mostly_disjoint(old_key, new_key):
+    report = diff_files(corpus_path(old_key), corpus_path(new_key))
+    assert_report_invariants(report)
+    stats = report["stats"]
+    assert stats["deleted"] >= stats["old_signatures"] // 2
+    assert stats["added"] >= stats["new_signatures"] // 2
+
+
+def test_gni_arch_structure_pair_with_shared_guids_still_has_visible_discipline_churn():
+    # Pair 3 has many shared GlobalIds across arch/structure files, so it is
+    # not a "mostly disjoint" case. Keep it in the default tier as a different
+    # real-world shape: same schema, class-safe matches, and non-vacuous
+    # discipline-specific additions/deletions.
+    report = diff_files(corpus_path("gni_p3_arc"), corpus_path("gni_p3_str"))
+    assert_report_invariants(report)
+    stats = report["stats"]
+    assert stats["added"] > 0
+    assert stats["deleted"] > 0
+    assert stats["matcher_diagnostics"]["matched_by_tier"]["geometry_hash"] == 0
 
 
 def test_cross_schema_pair_is_rejected_end_to_end():

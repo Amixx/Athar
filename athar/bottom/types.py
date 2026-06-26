@@ -85,6 +85,7 @@ class SignatureVector:
     aabb: tuple[float, float, float, float, float, float] | None
     canon_version: str
     name: str | None = None
+    data_facts: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
