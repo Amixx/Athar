@@ -1,0 +1,180 @@
+{
+  "command": "scripts/explore/profile_signature_bundle.py tests/fixtures/tiny_no_products.ifc real-world-test/Building-Landscaping-v1.ifc real-world-test/Duplex-Architecture.ifc --out docs/perf/signature_stage_profile_2026-06-26.json",
+  "files": [
+    {
+      "best": {
+        "diagnostics": {
+          "cycle_breaks": 0,
+          "dangling_refs": 0,
+          "warnings": 0
+        },
+        "edge_stats": {
+          "include:geometry": 2,
+          "include:placement": 1
+        },
+        "edges": 3,
+        "entities": 8,
+        "schema": "IFC4",
+        "signatures": 0,
+        "stage_seconds": {
+          "assemble_signatures": 6e-06,
+          "build_edge_set": 0.000536,
+          "build_spatial_features": 6e-06,
+          "compute_merkle_hashes": 0.000394,
+          "compute_topology_hashes": 3.6e-05,
+          "parse_ifc": 0.019355
+        },
+        "total_seconds": 0.020342
+      },
+      "path": "tests/fixtures/tiny_no_products.ifc",
+      "runs": [
+        {
+          "diagnostics": {
+            "cycle_breaks": 0,
+            "dangling_refs": 0,
+            "warnings": 0
+          },
+          "edge_stats": {
+            "include:geometry": 2,
+            "include:placement": 1
+          },
+          "edges": 3,
+          "entities": 8,
+          "schema": "IFC4",
+          "signatures": 0,
+          "stage_seconds": {
+            "assemble_signatures": 6e-06,
+            "build_edge_set": 0.000536,
+            "build_spatial_features": 6e-06,
+            "compute_merkle_hashes": 0.000394,
+            "compute_topology_hashes": 3.6e-05,
+            "parse_ifc": 0.019355
+          },
+          "total_seconds": 0.020342
+        }
+      ],
+      "size_mb": 0.001
+    },
+    {
+      "best": {
+        "diagnostics": {
+          "cycle_breaks": 0,
+          "dangling_refs": 0,
+          "warnings": 0
+        },
+        "edge_stats": {
+          "context:topology": 5,
+          "include:data": 11,
+          "include:geometry": 31,
+          "include:placement": 47,
+          "include:spatial": 8
+        },
+        "edges": 102,
+        "entities": 150,
+        "schema": "IFC4",
+        "signatures": 8,
+        "stage_seconds": {
+          "assemble_signatures": 3.1e-05,
+          "build_edge_set": 0.000346,
+          "build_spatial_features": 0.000241,
+          "compute_merkle_hashes": 0.068275,
+          "compute_topology_hashes": 0.000423,
+          "parse_ifc": 0.448383
+        },
+        "total_seconds": 0.51771
+      },
+      "path": "real-world-test/Building-Landscaping-v1.ifc",
+      "runs": [
+        {
+          "diagnostics": {
+            "cycle_breaks": 0,
+            "dangling_refs": 0,
+            "warnings": 0
+          },
+          "edge_stats": {
+            "context:topology": 5,
+            "include:data": 11,
+            "include:geometry": 31,
+            "include:placement": 47,
+            "include:spatial": 8
+          },
+          "edges": 102,
+          "entities": 150,
+          "schema": "IFC4",
+          "signatures": 8,
+          "stage_seconds": {
+            "assemble_signatures": 3.1e-05,
+            "build_edge_set": 0.000346,
+            "build_spatial_features": 0.000241,
+            "compute_merkle_hashes": 0.068275,
+            "compute_topology_hashes": 0.000423,
+            "parse_ifc": 0.448383
+          },
+          "total_seconds": 0.51771
+        }
+      ],
+      "size_mb": 1.204
+    },
+    {
+      "best": {
+        "diagnostics": {
+          "cycle_breaks": 0,
+          "dangling_refs": 0,
+          "warnings": 0
+        },
+        "edge_stats": {
+          "context:topology": 331,
+          "include:data": 8952,
+          "include:geometry": 26103,
+          "include:placement": 4089,
+          "include:spatial": 234
+        },
+        "edges": 39709,
+        "entities": 38898,
+        "schema": "IFC2X3",
+        "signatures": 295,
+        "stage_seconds": {
+          "assemble_signatures": 0.007179,
+          "build_edge_set": 0.097192,
+          "build_spatial_features": 0.021518,
+          "compute_merkle_hashes": 0.400149,
+          "compute_topology_hashes": 0.104358,
+          "parse_ifc": 2.101057
+        },
+        "total_seconds": 2.731474
+      },
+      "path": "real-world-test/Duplex-Architecture.ifc",
+      "runs": [
+        {
+          "diagnostics": {
+            "cycle_breaks": 0,
+            "dangling_refs": 0,
+            "warnings": 0
+          },
+          "edge_stats": {
+            "context:topology": 331,
+            "include:data": 8952,
+            "include:geometry": 26103,
+            "include:placement": 4089,
+            "include:spatial": 234
+          },
+          "edges": 39709,
+          "entities": 38898,
+          "schema": "IFC2X3",
+          "signatures": 295,
+          "stage_seconds": {
+            "assemble_signatures": 0.007179,
+            "build_edge_set": 0.097192,
+            "build_spatial_features": 0.021518,
+            "compute_merkle_hashes": 0.400149,
+            "compute_topology_hashes": 0.104358,
+            "parse_ifc": 2.101057
+          },
+          "total_seconds": 2.731474
+        }
+      ],
+      "size_mb": 2.381
+    }
+  ],
+  "repeat": 1
+}
