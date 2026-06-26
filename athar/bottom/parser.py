@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import unicodedata
-from typing import Any
+from typing import Any, NamedTuple
 import json
 
 import ifcopenshell
@@ -43,9 +43,14 @@ def parse_ifc(filepath: str) -> ParseResult:
     unit_context = _extract_unit_context(ifc)
     entities: dict[int, ParsedEntity] = {}
     diagnostics = ParseDiagnostics()
+    # Per-class metadata (attribute layout, class flags) is identical for every
+    # instance of a class but expensive to derive through ifcopenshell's schema
+    # introspection. Compute it once per distinct class within this parse. The
+    # cache is parse-local so it can never leak a declaration across schemas.
+    class_cache: dict[str, _ClassMeta] = {}
 
     for ent in ifc:
-        parsed = _extract_entity(ent, unit_context=unit_context)
+        parsed = _extract_entity(ent, unit_context=unit_context, class_cache=class_cache)
         entities[parsed.step_id] = parsed
 
     incoming = invert_entity_refs(entities)
@@ -80,18 +85,60 @@ def _display_name(value: Any) -> str | None:
     return normalized or None
 
 
-def _extract_entity(ent, *, unit_context: dict[str, Any]) -> ParsedEntity:
-    decl = schema_util.get_declaration(ent)
-    attrs: dict[str, Any] = {}
-    refs: list[EntityRef] = []
+class _ClassMeta(NamedTuple):
+    """Per-IFC-class facts that are identical for every instance of the class."""
 
+    attr_layout: tuple[tuple[str, Any], ...]  # (attribute name, schema type) in order
+    canonical_class: str
+    is_product: bool
+    is_spatial: bool
+    guid_index: int | None  # position of GlobalId, or None if the class has none
+    name_index: int | None  # position of Name, or None if the class has none
+
+
+def _build_class_meta(ent, type_name: str) -> _ClassMeta:
+    """Derive class-level metadata from one representative instance.
+
+    All schema introspection (declaration lookup, attribute names/types,
+    supertype membership) depends only on the class, so it is done once here
+    and reused for every other instance of ``type_name``.
+    """
+    decl = schema_util.get_declaration(ent)
+    layout: list[tuple[str, Any]] = []
+    guid_index = name_index = None
     for i in range(len(ent)):
         attr_decl = decl.attribute_by_index(i)
         attr_name = attr_decl.name()
-        attr_type = attr_decl.type_of_attribute()
+        layout.append((attr_name, attr_decl.type_of_attribute()))
+        if attr_name == "GlobalId":
+            guid_index = i
+        elif attr_name == "Name":
+            name_index = i
+    return _ClassMeta(
+        attr_layout=tuple(layout),
+        canonical_class=canonical_class_name(type_name),
+        is_product=_entity_is_a(ent, "IfcProduct"),
+        is_spatial=_is_spatial_entity(ent),
+        guid_index=guid_index,
+        name_index=name_index,
+    )
+
+
+def _extract_entity(ent, *, unit_context: dict[str, Any], class_cache: dict[str, "_ClassMeta"]) -> ParsedEntity:
+    type_name = ent.is_a()
+    meta = class_cache.get(type_name)
+    if meta is None:
+        meta = _build_class_meta(ent, type_name)
+        class_cache[type_name] = meta
+
+    attrs: dict[str, Any] = {}
+    refs: list[EntityRef] = []
+    step_id = ent.id()
+
+    for i, (attr_name, attr_type) in enumerate(meta.attr_layout):
         attrs[attr_name] = _canonicalize_value(
-            source_step=ent.id(),
-            source_type=ent.is_a(),
+            source_step=step_id,
+            source_type=type_name,
             value=ent[i],
             attr_type=attr_type,
             attr_name=attr_name,
@@ -100,16 +147,22 @@ def _extract_entity(ent, *, unit_context: dict[str, Any]) -> ParsedEntity:
             unit_context=unit_context,
         )
 
+    # GlobalId/Name are read by index (skipping ifcopenshell's __getattr__) and
+    # only when the class actually declares them — most entities in a geometry-
+    # heavy model are mesh primitives that carry neither.
+    global_id = ent[meta.guid_index] if meta.guid_index is not None else None
+    name = _display_name(ent[meta.name_index]) if meta.name_index is not None else None
+
     return ParsedEntity(
-        step_id=ent.id(),
-        entity_type=ent.is_a(),
-        canonical_class=canonical_class_name(ent.is_a()),
-        global_id=getattr(ent, "GlobalId", None),
-        name=_display_name(getattr(ent, "Name", None)),
+        step_id=step_id,
+        entity_type=type_name,
+        canonical_class=meta.canonical_class,
+        global_id=global_id,
+        name=name,
         attributes=attrs,
         refs=refs,
-        is_product=_entity_is_a(ent, "IfcProduct"),
-        is_spatial=_is_spatial_entity(ent),
+        is_product=meta.is_product,
+        is_spatial=meta.is_spatial,
     )
 
 
