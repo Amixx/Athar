@@ -1,0 +1,16 @@
+{
+  "athar_viewer_manifest": 1,
+  "schema_version": 1,
+  "generator": "scripts/make_viewer_fixture.py",
+  "old": {
+    "name": "old.ifc",
+    "url": "/old.ifc"
+  },
+  "new": {
+    "name": "new.ifc",
+    "url": "/new.ifc"
+  },
+  "report": {
+    "url": "/report.json"
+  }
+}

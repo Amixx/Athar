@@ -141,3 +141,10 @@ internal-docs/
 corpus-data/
 
 .claude
+
+# The viewer SPA build is committed so Python-only users never need bun
+# (overrides the global dist/ rule above).
+!viewer/dist/
+!viewer/dist/**
+!viewer/src/lib/
+!viewer/src/lib/**

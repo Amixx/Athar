@@ -20,6 +20,13 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "check":
         sys.exit(_run_check(sys.argv[2:]))
 
+    if len(sys.argv) > 1 and sys.argv[1] == "view":
+        from athar_view.cli import build_view_parser, run_view
+
+        view_parser = build_view_parser()
+        view_args = view_parser.parse_args(sys.argv[2:])
+        sys.exit(run_view(view_args))
+
     parser = argparse.ArgumentParser(prog="athar-core")
     parser.add_argument("old", nargs="?", help="Path to old IFC file")
     parser.add_argument("new", nargs="?", help="Path to new IFC file")
