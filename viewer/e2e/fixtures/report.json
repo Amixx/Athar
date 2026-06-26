@@ -1,0 +1,304 @@
+{
+  "engine": "athar",
+  "canon_version": "athar-canon-v3",
+  "schemas": {
+    "old": "IFC4",
+    "new": "IFC4"
+  },
+  "stats": {
+    "added": 1,
+    "deleted": 1,
+    "modified": 5,
+    "unchanged": 1,
+    "old_signatures": 7,
+    "new_signatures": 7,
+    "old_diagnostics": {
+      "dangling_refs": 0,
+      "cycle_breaks": 0,
+      "warnings": []
+    },
+    "new_diagnostics": {
+      "dangling_refs": 0,
+      "cycle_breaks": 0,
+      "warnings": []
+    },
+    "old_edge_stats": {
+      "include:data": 8,
+      "include:geometry": 34,
+      "include:placement": 36,
+      "include:spatial": 7
+    },
+    "new_edge_stats": {
+      "include:data": 8,
+      "include:geometry": 34,
+      "include:placement": 36,
+      "include:spatial": 7
+    },
+    "modified_change_scope": {
+      "intrinsic": 0,
+      "transitive": 3,
+      "mixed": 2
+    },
+    "dropped_matches": 0,
+    "guid_collisions": {
+      "old": 0,
+      "new": 0
+    },
+    "matcher_diagnostics": {
+      "matched_by_tier": {
+        "guid": 6,
+        "geometry_hash": 0
+      },
+      "pools": {
+        "old": 7,
+        "new": 7
+      },
+      "unmatched": {
+        "old": 1,
+        "new": 1
+      },
+      "duplicate_guids": {
+        "old": 0,
+        "new": 0
+      }
+    }
+  },
+  "added": [
+    {
+      "step_id": 85,
+      "guid": "1xBrhnC4oYFKb9rwq4H7kE",
+      "name": "WallE",
+      "class": "IfcWall",
+      "entity_type": "IfcWall"
+    }
+  ],
+  "deleted": [
+    {
+      "step_id": 69,
+      "guid": "1z46ZFuYfNKSXB5jHag0OF",
+      "name": "WallC",
+      "class": "IfcWall",
+      "entity_type": "IfcWall"
+    }
+  ],
+  "modified": [
+    {
+      "old": {
+        "step_id": 17,
+        "guid": "3f37Zlqw58fdTHPZ7nOj5W",
+        "name": "Building",
+        "class": "IfcBuilding",
+        "entity_type": "IfcBuilding"
+      },
+      "new": {
+        "step_id": 17,
+        "guid": "3f37Zlqw58fdTHPZ7nOj5W",
+        "name": "Building",
+        "class": "IfcBuilding",
+        "entity_type": "IfcBuilding"
+      },
+      "match": {
+        "score": 0.9,
+        "reason": "guid"
+      },
+      "aspects": {
+        "geometry": "unchanged",
+        "data": "unchanged",
+        "topology": "changed",
+        "placement": "unchanged",
+        "placement_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "data_hash": {
+        "old": "15640334d07d7c918899307c4b7662e1eff4f5f27d0073fc14cfb0e158c3d964",
+        "new": "15640334d07d7c918899307c4b7662e1eff4f5f27d0073fc14cfb0e158c3d964"
+      },
+      "change_scope": "transitive"
+    },
+    {
+      "old": {
+        "step_id": 21,
+        "guid": "1vnWMEVLR0YfYZ9p1twj$w",
+        "name": "Storey",
+        "class": "IfcBuildingStorey",
+        "entity_type": "IfcBuildingStorey"
+      },
+      "new": {
+        "step_id": 21,
+        "guid": "1vnWMEVLR0YfYZ9p1twj$w",
+        "name": "Storey",
+        "class": "IfcBuildingStorey",
+        "entity_type": "IfcBuildingStorey"
+      },
+      "match": {
+        "score": 0.9,
+        "reason": "guid"
+      },
+      "aspects": {
+        "geometry": "unchanged",
+        "data": "unchanged",
+        "topology": "changed",
+        "placement": "unchanged",
+        "placement_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "data_hash": {
+        "old": "788004618342898dda3683ed61dbbe85abcfe497b8c3727a1d1f1463a61d2ce9",
+        "new": "788004618342898dda3683ed61dbbe85abcfe497b8c3727a1d1f1463a61d2ce9"
+      },
+      "change_scope": "transitive"
+    },
+    {
+      "old": {
+        "step_id": 37,
+        "guid": "2vWdlAPNYvcScJXgBxB4Q$",
+        "name": "WallA",
+        "class": "IfcWall",
+        "entity_type": "IfcWall"
+      },
+      "new": {
+        "step_id": 37,
+        "guid": "2vWdlAPNYvcScJXgBxB4Q$",
+        "name": "WallA",
+        "class": "IfcWall",
+        "entity_type": "IfcWall"
+      },
+      "match": {
+        "score": 0.9,
+        "reason": "guid"
+      },
+      "aspects": {
+        "geometry": "unchanged",
+        "data": "unchanged",
+        "topology": "changed",
+        "placement": "unchanged",
+        "placement_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "data_hash": {
+        "old": "5683ef5977335703f8b1e207dc492a9ce9680a5ee5ed1302183c830ba3616d1b",
+        "new": "5683ef5977335703f8b1e207dc492a9ce9680a5ee5ed1302183c830ba3616d1b"
+      },
+      "change_scope": "transitive"
+    },
+    {
+      "old": {
+        "step_id": 53,
+        "guid": "3IqAPR6GzpeH_hE8X$TKjo",
+        "name": "WallB",
+        "class": "IfcWall",
+        "entity_type": "IfcWall"
+      },
+      "new": {
+        "step_id": 53,
+        "guid": "3IqAPR6GzpeH_hE8X$TKjo",
+        "name": "WallB",
+        "class": "IfcWall",
+        "entity_type": "IfcWall"
+      },
+      "match": {
+        "score": 0.9,
+        "reason": "guid"
+      },
+      "aspects": {
+        "geometry": "unchanged",
+        "data": "unchanged",
+        "topology": "changed",
+        "placement": "changed",
+        "placement_delta_mm": [
+          1000.0,
+          0.0,
+          0.0
+        ]
+      },
+      "data_hash": {
+        "old": "4ee031a4f1167eab3abde25274f27822433c649db90ba72c98e1596b7b1e6189",
+        "new": "4ee031a4f1167eab3abde25274f27822433c649db90ba72c98e1596b7b1e6189"
+      },
+      "change_scope": "mixed"
+    },
+    {
+      "old": {
+        "step_id": 85,
+        "guid": "2KrALq3FB3ZVMCx3tidPYM",
+        "name": "WallD",
+        "class": "IfcWall",
+        "entity_type": "IfcWall"
+      },
+      "new": {
+        "step_id": 69,
+        "guid": "2KrALq3FB3ZVMCx3tidPYM",
+        "name": "WallD",
+        "class": "IfcWall",
+        "entity_type": "IfcWall"
+      },
+      "match": {
+        "score": 0.9,
+        "reason": "guid"
+      },
+      "aspects": {
+        "geometry": "unchanged",
+        "data": "changed",
+        "topology": "changed",
+        "placement": "unchanged",
+        "placement_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "data_hash": {
+        "old": "4b1ced2b6fc6cbcc043f7ec9e38160e5044a1a1f62b9fb8d28d441f359247589",
+        "new": "144207c2d0dc96177b0fe47056bb6841244f38330fbe8884210f9a619ff9e1a8"
+      },
+      "change_scope": "mixed"
+    }
+  ],
+  "unchanged": [
+    {
+      "old": {
+        "step_id": 13,
+        "guid": "3bio2EbNpUvLcSJSHqFUdD",
+        "name": "Site",
+        "class": "IfcSite",
+        "entity_type": "IfcSite"
+      },
+      "new": {
+        "step_id": 13,
+        "guid": "3bio2EbNpUvLcSJSHqFUdD",
+        "name": "Site",
+        "class": "IfcSite",
+        "entity_type": "IfcSite"
+      },
+      "match": {
+        "score": 1.0,
+        "reason": "guid"
+      },
+      "aspects": {
+        "geometry": "unchanged",
+        "data": "unchanged",
+        "topology": "unchanged",
+        "placement": "unchanged",
+        "placement_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "data_hash": {
+        "old": "683b4c23fbc893cb6e97b36a072b1857bfa0b0eb43f2ffc785b700c48ffe624b",
+        "new": "683b4c23fbc893cb6e97b36a072b1857bfa0b0eb43f2ffc785b700c48ffe624b"
+      },
+      "change_scope": "none"
+    }
+  ]
+}

@@ -9,6 +9,7 @@ the code they govern:
 - `athar/AGENTS.md` — core engine, matcher, delta report, and policy gates.
 - `athar/bottom/AGENTS.md` — IFC parsing and signature construction.
 - `athar_git/AGENTS.md` — Git diff driver, cache, renderer, and PR comments.
+- `athar_view/AGENTS.md` — visual 3D diff viewer launcher and SPA.
 - `tests/AGENTS.md` — corpus, mutation, invariant, and acceptance testing.
 - `docs/AGENTS.md` — corpus/performance notes and historical records.
 - `scripts/AGENTS.md` — inspection and exploratory scripts.
@@ -28,6 +29,9 @@ the code they govern:
   presentation/integration code.
 - No deep B-rep comparison. Athar hashes geometry-domain subgraphs and compares
   placement/spatial features.
+- JavaScript/TypeScript is confined to `viewer/`; bun is its package manager and
+  test runner. pip users never need bun — `viewer/dist` is committed and served
+  by `athar view`.
 
 ## Identity Policy
 
