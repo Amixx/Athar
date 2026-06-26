@@ -10,6 +10,14 @@ HashHex = str
 
 
 @dataclass(frozen=True)
+class PropertyEntry:
+    """One extracted property or quantity value."""
+
+    name: str
+    value: str | int | float | bool | list[str]
+
+
+@dataclass(frozen=True)
 class EntityRef:
     """A typed reference discovered while parsing explicit IFC attributes."""
 
@@ -56,6 +64,7 @@ class ParseResult:
     incoming_refs: dict[int, list[EntityRef]]
     unit_context: dict[str, Any]
     diagnostics: ParseDiagnostics
+    property_index: dict[int, list[PropertyEntry]] | None = None
 
 
 @dataclass(frozen=True)
@@ -98,3 +107,4 @@ class SignatureBundle:
     signatures: dict[int, SignatureVector]
     diagnostics: ParseDiagnostics
     edge_stats: dict[str, int]
+    property_index: dict[int, list[PropertyEntry]] | None = None

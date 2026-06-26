@@ -93,7 +93,11 @@ def test_delete_one_product_deletes_exactly_that_product(scenario_seed):
 def test_pset_value_edit_is_a_data_change_on_that_product(scenario_seed):
     baseline, mutate = scenario_seed
     mutated, mutation = mutate(mutations.edit_pset_value)
-    _assert_single_product_data_edit(diff_files(baseline, mutated), mutation)
+    report = diff_files(baseline, mutated)
+    _assert_single_product_data_edit(report, mutation)
+    victim = [item for item in report["modified"] if item["old"]["guid"] == mutation.victim_guid][0]
+    assert "property_deltas" in victim
+    assert "changed" in victim["property_deltas"]
 
 
 def test_type_pset_value_edit_is_inherited_data_change_on_occurrences(scenario_seed):
@@ -113,6 +117,8 @@ def test_type_pset_value_edit_is_inherited_data_change_on_occurrences(scenario_s
         assert item["match"]["reason"] == "guid"
         _assert_aspects(item, mutation.expected_victim_aspects)
         assert item["data_hash"]["old"] != item["data_hash"]["new"]
+        assert "property_deltas" in item
+        assert "changed" in item["property_deltas"]
     for other in report["modified"]:
         if other["old"]["guid"] not in affected:
             assert other["change_scope"] == "transitive", other

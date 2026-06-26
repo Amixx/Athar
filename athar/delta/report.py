@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from athar.bottom.types import SignatureBundle, SignatureVector
+from athar.bottom.types import PropertyEntry, SignatureBundle, SignatureVector
 from athar.matcher.types import MatchedPair
 
 
@@ -16,6 +16,8 @@ def build_delta_report(
     """Build a structured change report."""
     old_signatures = old_bundle.signatures
     new_signatures = new_bundle.signatures
+    old_props = old_bundle.property_index
+    new_props = new_bundle.property_index
 
     modified: list[dict] = []
     unchanged: list[dict] = []
@@ -41,6 +43,13 @@ def build_delta_report(
         }
         if aspects["data"] == "changed":
             item["data_delta"] = _data_delta(old_sig, new_sig)
+            if old_props is not None and new_props is not None:
+                deltas = _property_deltas(
+                    old_props.get(pair.old_step, []),
+                    new_props.get(pair.new_step, []),
+                )
+                if deltas:
+                    item["property_deltas"] = deltas
         if any(value == "changed" for key, value in aspects.items() if key != "placement_delta_mm"):
             modified.append(item)
         else:
@@ -159,3 +168,46 @@ def _scope_stats(modified: list[dict]) -> dict[str, int]:
         if scope in out:
             out[scope] += 1
     return out
+
+
+def _property_deltas(
+    old_entries: list[PropertyEntry],
+    new_entries: list[PropertyEntry],
+) -> dict | None:
+    """Compare old and new property lists and return per-property deltas."""
+    old_map: dict[str, str | int | float | bool | list[str]] = {}
+    for entry in old_entries:
+        old_map[entry.name] = entry.value
+
+    new_map: dict[str, str | int | float | bool | list[str]] = {}
+    for entry in new_entries:
+        new_map[entry.name] = entry.value
+
+    changed: list[dict] = []
+    added: list[dict] = []
+    removed: list[dict] = []
+
+    for name, new_val in new_map.items():
+        if name in old_map:
+            old_val = old_map[name]
+            if old_val != new_val:
+                changed.append({"name": name, "old_value": old_val, "new_value": new_val})
+        else:
+            added.append({"name": name, "new_value": new_val})
+
+    for name, old_val in old_map.items():
+        if name not in new_map:
+            removed.append({"name": name, "old_value": old_val})
+
+    if not (changed or added or removed):
+        return None
+
+    result: dict[str, list[dict]] = {}
+    if changed:
+        result["changed"] = sorted(changed, key=lambda x: x["name"])
+    if added:
+        result["added"] = sorted(added, key=lambda x: x["name"])
+    if removed:
+        result["removed"] = sorted(removed, key=lambda x: x["name"])
+
+    return result

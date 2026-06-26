@@ -1,5 +1,5 @@
-from athar.bottom.types import ParseDiagnostics, SignatureBundle, SignatureVector
-from athar.delta.report import build_delta_report
+from athar.bottom.types import ParseDiagnostics, PropertyEntry, SignatureBundle, SignatureVector
+from athar.delta.report import _property_deltas, build_delta_report
 from athar.matcher.types import MatchedPair
 
 
@@ -33,7 +33,13 @@ def _signature(
     )
 
 
-def _bundle(*, schema: str, signatures: dict[int, SignatureVector], warnings: list[str] | None = None) -> SignatureBundle:
+def _bundle(
+    *,
+    schema: str,
+    signatures: dict[int, SignatureVector],
+    warnings: list[str] | None = None,
+    property_index: dict[int, list[PropertyEntry]] | None = None,
+) -> SignatureBundle:
     return SignatureBundle(
         filepath=f"/tmp/{schema}.ifc",
         schema=schema,
@@ -45,6 +51,7 @@ def _bundle(*, schema: str, signatures: dict[int, SignatureVector], warnings: li
             warnings=list(warnings or []),
         ),
         edge_stats={"semantic": 3},
+        property_index=property_index,
     )
 
 
@@ -348,3 +355,125 @@ def test_build_delta_report_match_items_carry_only_score_reason_and_aspects():
     assert item["match"] == {"score": 0.9, "reason": "guid"}
     for stat in ("modified_match_reasons", "modified_score_bands", "modified_conflicts"):
         assert stat not in report["stats"]
+
+
+def test_property_deltas_detects_changed_values():
+    old_props = [
+        PropertyEntry(name="FireRating", value="F90"),
+        PropertyEntry(name="Height", value=3000.0),
+    ]
+    new_props = [
+        PropertyEntry(name="FireRating", value="F60"),
+        PropertyEntry(name="Height", value=3000.0),
+    ]
+    result = _property_deltas(old_props, new_props)
+    assert result is not None
+    assert "changed" in result
+    assert result["changed"] == [
+        {"name": "FireRating", "old_value": "F90", "new_value": "F60"},
+    ]
+    assert "added" not in result
+    assert "removed" not in result
+
+
+def test_property_deltas_detects_added_and_removed():
+    old_props = [
+        PropertyEntry(name="FireRating", value="F90"),
+    ]
+    new_props = [
+        PropertyEntry(name="ThermalRating", value="T1"),
+    ]
+    result = _property_deltas(old_props, new_props)
+    assert result is not None
+    assert result["added"] == [
+        {"name": "ThermalRating", "new_value": "T1"},
+    ]
+    assert result["removed"] == [
+        {"name": "FireRating", "old_value": "F90"},
+    ]
+
+
+def test_property_deltas_returns_none_when_no_difference():
+    old_props = [PropertyEntry(name="FireRating", value="F90")]
+    new_props = [PropertyEntry(name="FireRating", value="F90")]
+    assert _property_deltas(old_props, new_props) is None
+
+
+def test_property_deltas_returns_none_when_both_empty():
+    assert _property_deltas([], []) is None
+
+
+def test_property_deltas_handles_mixed_types():
+    old_props = [
+        PropertyEntry(name="Name", value="Wall A"),
+        PropertyEntry(name="Length", value=3500.0),
+        PropertyEntry(name="IsExternal", value=True),
+        PropertyEntry(name="Flags", value=["a", "b"]),
+    ]
+    new_props = [
+        PropertyEntry(name="Name", value="Wall B"),
+        PropertyEntry(name="Length", value=4200.0),
+        PropertyEntry(name="IsExternal", value=False),
+        PropertyEntry(name="Flags", value=["b", "c"]),
+    ]
+    result = _property_deltas(old_props, new_props)
+    assert result is not None
+    assert result["changed"] == [
+        {"name": "Flags", "old_value": ["a", "b"], "new_value": ["b", "c"]},
+        {"name": "IsExternal", "old_value": True, "new_value": False},
+        {"name": "Length", "old_value": 3500.0, "new_value": 4200.0},
+        {"name": "Name", "old_value": "Wall A", "new_value": "Wall B"},
+    ]
+
+
+def test_build_delta_report_emits_property_deltas_when_data_changed():
+    old_props = {1: [PropertyEntry(name="FireRating", value="F90")]}
+    new_props = {10: [PropertyEntry(name="FireRating", value="F60")]}
+
+    old_bundle = _bundle(
+        schema="IFC4",
+        signatures={1: _signature(1, guid="A", vh_data="h-old")},
+        property_index=old_props,
+    )
+    new_bundle = _bundle(
+        schema="IFC4",
+        signatures={10: _signature(10, guid="A", vh_data="h-new")},
+        property_index=new_props,
+    )
+    report = build_delta_report(
+        old_bundle,
+        new_bundle,
+        matches=[MatchedPair(old_step=1, new_step=10, score=0.9, reason="guid")],
+        unmatched_old=[],
+        unmatched_new=[],
+    )
+    item = report["modified"][0]
+    assert "property_deltas" in item
+    assert item["property_deltas"]["changed"] == [
+        {"name": "FireRating", "old_value": "F90", "new_value": "F60"},
+    ]
+
+
+def test_build_delta_report_omits_property_deltas_when_not_data_changed():
+    old_props = {1: [PropertyEntry(name="FireRating", value="F90")]}
+    new_props = {10: [PropertyEntry(name="FireRating", value="F90")]}
+
+    old_bundle = _bundle(
+        schema="IFC4",
+        signatures={1: _signature(1, guid="A", vh_geometry="g-old")},
+        property_index=old_props,
+    )
+    new_bundle = _bundle(
+        schema="IFC4",
+        signatures={10: _signature(10, guid="A", vh_geometry="g-new")},
+        property_index=new_props,
+    )
+    report = build_delta_report(
+        old_bundle,
+        new_bundle,
+        matches=[MatchedPair(old_step=1, new_step=10, score=0.9, reason="guid")],
+        unmatched_old=[],
+        unmatched_new=[],
+    )
+    item = report["modified"][0]
+    assert "property_deltas" not in item

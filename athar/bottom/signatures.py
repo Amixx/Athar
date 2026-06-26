@@ -51,6 +51,7 @@ def build_signature_bundle(filepath: str) -> SignatureBundle:
         signatures=signatures,
         diagnostics=parsed.diagnostics,
         edge_stats=edge_stats(edges),
+        property_index=parsed.property_index,
     )
 
 
