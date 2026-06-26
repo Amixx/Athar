@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["athar*", "athar_git*"]
+include = ["athar*", "athar_git*", "athar_store*"]
 
 [tool.setuptools.package-data]
 # Optional wheel-bundled viewer SPA: copy viewer/dist to athar_view/static

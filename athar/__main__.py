@@ -25,6 +25,13 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "check":
         sys.exit(_run_check(sys.argv[2:]))
 
+    if len(sys.argv) > 1 and sys.argv[1] == "store":
+        from athar_store.cli import build_store_parser, run_store
+
+        store_parser = build_store_parser()
+        store_args = store_parser.parse_args(sys.argv[2:])
+        sys.exit(run_store(store_args))
+
     if len(sys.argv) > 1 and sys.argv[1] == "view":
         from athar_view.cli import build_view_parser, run_view
 
