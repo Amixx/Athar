@@ -95,6 +95,28 @@ def test_cli_stream_chunk_size(monkeypatch, capsys):
     assert called["stream"] == ("old.ifc", "new.ifc", "chunked_json", 7)
 
 
+def test_cli_schema_mismatch_emits_structured_result_and_exit_3(monkeypatch, capsys):
+    from athar.engine import SchemaMismatchError
+
+    def fake_diff_files(old, new, **_kwargs):
+        raise SchemaMismatchError("IFC2X3", "IFC4")
+
+    monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
+    monkeypatch.setattr(sys, "argv", ["athar", "old.ifc", "new.ifc"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        main_mod.main()
+    assert excinfo.value.code == 3
+
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["status"] == "schema_incompatible"
+    assert result["schemas"] == {"old": "IFC2X3", "new": "IFC4"}
+    assert "IFC2X3" in result["message"] and "IFC4" in result["message"]
+    # Human-readable line still goes to stderr.
+    assert "Schema mismatch" in captured.err
+
+
 def test_cli_rejects_removed_legacy_flags(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["athar", "old.ifc", "new.ifc", "--guid-policy", "disambiguate"])
     with pytest.raises(SystemExit):

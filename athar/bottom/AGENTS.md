@@ -36,3 +36,19 @@ code.
   semantic reason and coverage proving the change.
 - Placement is excluded from `vh_geometry`; identical components at different
   locations should share the same geometry hash.
+
+## Known Limitation: Representation Equivalence
+
+`vh_geometry` hashes the geometry-domain subgraph (representation items,
+profiles, points), not a resolved solid. The same shape stored two ways — e.g.
+an `IfcExtrudedAreaSolid` in one file and an `IfcTriangulatedFaceSet` /
+`IfcFacetedBrep` of the identical solid in another — produces different
+subgraphs and therefore a different geometry hash, so the engine reports it as
+geometry-changed even though the realized BRep is the same.
+
+This is intentional, not a bug: the engine does no deep B-rep comparison (a
+core contract), so it cannot resolve representations to a canonical solid.
+Identity still holds — a GUID-matched product survives the swap as `modified`
+with the geometry aspect flipped, never as added+deleted. The gap is pinned by
+`tests/test_geometry_representation_gap.py` (a strict `xfail`); closing it would
+require canonical solid resolution through a geometry kernel.
