@@ -124,6 +124,20 @@ def test_rename_is_a_data_change_on_that_product(scenario_seed):
     _assert_single_product_data_edit(diff_files(baseline, mutated), mutation)
 
 
+def test_add_one_product_adds_exactly_that_product(scenario_seed):
+    baseline, mutate = scenario_seed
+    mutated, mutation = mutate(mutations.add_product)
+    report = diff_files(baseline, mutated)
+    assert_report_invariants(report)
+    # Symmetric to deletion: exactly the new proxy appears, nothing is removed,
+    # and nothing pre-existing changes intrinsically — only the spatial
+    # container may ripple (transitively) from gaining a child.
+    assert report["stats"]["deleted"] == 0
+    assert [item["guid"] for item in report["added"]] == [mutation.victim_guid]
+    for item in report["modified"]:
+        assert item["change_scope"] == "transitive", item
+
+
 def test_duplicated_guid_is_surfaced_and_never_identity_evidence(scenario_seed):
     baseline, mutate = scenario_seed
     mutated, mutation = mutate(mutations.duplicate_guid)
