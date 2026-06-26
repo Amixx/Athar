@@ -6,7 +6,12 @@ import argparse
 import json
 import sys
 
-from athar.engine import diff_files, generated_at_now_utc, stream_diff_files
+from athar.engine import (
+    SchemaMismatchError,
+    diff_files,
+    generated_at_now_utc,
+    stream_diff_files,
+)
 
 
 def main() -> None:
@@ -68,9 +73,30 @@ def main() -> None:
         result = diff_files(args.old, args.new, generated_at=generated_at)
         json.dump(result, sys.stdout, indent=2)
         print()
+    except SchemaMismatchError as exc:
+        _emit_schema_incompatible(exc)
+        sys.exit(3)
     except Exception as exc:  # pragma: no cover - CLI error path
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
+
+
+def _emit_schema_incompatible(exc: SchemaMismatchError) -> None:
+    """Surface a cross-schema pair as a clear structured result, not churn.
+
+    Exit code 3 distinguishes "schemas differ, cannot semantically diff" from
+    a generic execution error (exit 1). The JSON document gives automation a
+    parseable signal; the stderr line keeps the human message visible.
+    """
+    result = {
+        "engine": "athar",
+        "status": "schema_incompatible",
+        "schemas": {"old": exc.old_schema, "new": exc.new_schema},
+        "message": str(exc),
+    }
+    json.dump(result, sys.stdout, indent=2)
+    print()
+    print(f"Error: {exc}", file=sys.stderr)
 
 
 def _run_check(argv: list[str]) -> int:

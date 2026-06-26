@@ -20,6 +20,30 @@ from athar.matcher.core import match_signatures
 _BUNDLE_CACHE: dict[tuple[str, int, int], object] = {}
 
 
+class SchemaMismatchError(ValueError):
+    """Raised when the two inputs use different IFC schema versions.
+
+    Athar compares files of the same schema only. Cross-schema comparison
+    (e.g. IFC2X3 vs IFC4) is intentionally unsupported: the engine never
+    translates between schema versions, so diffing across them would emit a
+    flood of false add/delete churn rather than real changes. Callers should
+    surface this as a clear "schema changed, cannot semantically diff" result.
+
+    It subclasses ``ValueError`` so existing ``except ValueError`` / ``except
+    Exception`` handlers keep working; new callers can catch it specifically
+    and read the structured ``old_schema`` / ``new_schema`` fields.
+    """
+
+    def __init__(self, old_schema: str, new_schema: str) -> None:
+        self.old_schema = old_schema
+        self.new_schema = new_schema
+        super().__init__(
+            "Schema mismatch: cannot semantically diff across IFC schema "
+            f"versions (old={old_schema}, new={new_schema}). Athar compares "
+            "files of the same schema only."
+        )
+
+
 def diff_files(old_path: str, new_path: str, *, generated_at: str | None = None) -> dict:
     """Diff two IFC files with the current architecture."""
 
@@ -111,7 +135,7 @@ def _stream_chunked_json(report: dict, *, chunk_size: int) -> Iterator[str]:
 
 def _assert_schema_compatible(old_schema: str, new_schema: str) -> None:
     if old_schema != new_schema:
-        raise ValueError(f"Schema mismatch: {old_schema} vs {new_schema}")
+        raise SchemaMismatchError(old_schema, new_schema)
 
 
 def _guid_collision_count(signatures) -> int:
