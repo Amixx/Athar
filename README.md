@@ -189,16 +189,17 @@ athar git install --difftool                      # then: git difftool -t athar 
 ```
 
 The browser does all tessellation (`@ifc-lite/geometry` WASM); rendering is
-three.js. By default the launcher works fully offline, serving the committed
-SPA bundle from `viewer/dist`. `--viewer-url` (or `ATHAR_VIEWER_URL`) instead
-hands off to a hosted viewer Perfetto-style: the page fetches the models back
-from the local server via `?src=`, so nothing is uploaded. The same SPA also
-accepts plain drag-drop of `old.ifc`, `new.ifc`, and a report JSON — no
-launcher needed.
+three.js. `--viewer-url` (or `ATHAR_VIEWER_URL`) hands off to a hosted viewer
+Perfetto-style: the page fetches the models back from the local server via
+`?src=`, so nothing is uploaded. Offline mode serves a local build from
+`ATHAR_VIEWER_DIST`, a release-packaged `athar_view/static`, or a freshly built
+`viewer/dist`. The same SPA also accepts plain drag-drop of `old.ifc`,
+`new.ifc`, and a report JSON — no launcher needed.
 
 Viewer development requires [bun](https://bun.sh) and lives entirely under
-`viewer/` (see [viewer/README.md](viewer/README.md)); pip users never need it.
-Rebuild the committed bundle with `make viewer-build`.
+`viewer/` (see [viewer/README.md](viewer/README.md)). Build the local bundle
+with `make viewer-build`; release builds can run `make viewer-package-static`
+before creating the Python distribution.
 
 ## Testing
 

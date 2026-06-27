@@ -7,18 +7,27 @@ import html
 import json
 import math
 import os
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
 try:  # Optional dependency: install with `.[benchmark-ui]`.
     from fastapi import FastAPI
-    from fastapi.responses import HTMLResponse, JSONResponse
+    from fastapi import Request
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
     from fastapi.responses import Response
+    from fastapi.staticfiles import StaticFiles
 except ModuleNotFoundError:  # pragma: no cover - exercised when optional deps are absent.
     FastAPI = None  # type: ignore[assignment]
+    Request = None  # type: ignore[assignment]
+    FileResponse = None  # type: ignore[assignment]
     HTMLResponse = None  # type: ignore[assignment]
     JSONResponse = None  # type: ignore[assignment]
+    RedirectResponse = None  # type: ignore[assignment]
     Response = None  # type: ignore[assignment]
+    StaticFiles = None  # type: ignore[assignment]
+
+from athar_view.server import MANIFEST_SCHEMA_VERSION, build_report_bytes, find_dist
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -37,6 +46,9 @@ def create_app(benchmark_path: str | Path | None = None):
 
     path = Path(benchmark_path or os.getenv("ATHAR_BENCHMARK_JSON") or DEFAULT_BENCHMARK)
     app = FastAPI(title="Athar benchmark viewer")
+    dist = find_dist()
+    if dist is not None and StaticFiles is not None:
+        app.mount("/viewer-app", StaticFiles(directory=dist, html=True), name="viewer-app")
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
@@ -56,6 +68,83 @@ def create_app(benchmark_path: str | Path | None = None):
     @app.get("/api/benchmark")
     def benchmark_json() -> JSONResponse:
         return JSONResponse(_load(path))
+
+    @app.get("/pair/{pair_name}", response_class=HTMLResponse)
+    def pair_detail(pair_name: str) -> str:
+        data = _load(path)
+        pair = _pair_by_name(data, pair_name)
+        if pair is None:
+            return _not_found_page(f"Unknown benchmark pair: {pair_name}")
+        return _pair_page(data, path, pair, viewer_available=dist is not None)
+
+    @app.get("/viewer/{pair_name}")
+    def viewer(pair_name: str, request: Request):
+        data = _load(path)
+        pair = _pair_by_name(data, pair_name)
+        if pair is None:
+            return Response(f"Unknown benchmark pair: {pair_name}", status_code=404)
+        if dist is None:
+            return Response("No viewer build found. Run `make viewer-build` first.", status_code=404)
+        src = str(request.url_for("viewer_manifest_base", pair_name=pair_name)).removesuffix("/manifest.json")
+        return RedirectResponse(url=f"/viewer-app/?src={urllib.parse.quote(src, safe='')}")
+
+    @app.get("/viewer-src/{pair_name}/manifest.json", name="viewer_manifest_base")
+    def viewer_manifest(pair_name: str, request: Request) -> JSONResponse:
+        data = _load(path)
+        pair = _pair_by_name(data, pair_name)
+        if pair is None:
+            return JSONResponse({"error": f"Unknown benchmark pair: {pair_name}"}, status_code=404)
+        base = str(request.url).removesuffix("/manifest.json")
+        old_path = _pair_input_path(pair, "old")
+        new_path = _pair_input_path(pair, "new")
+        return JSONResponse(
+            {
+                "athar_viewer_manifest": 1,
+                "schema_version": MANIFEST_SCHEMA_VERSION,
+                "generator": "athar_bench/ui",
+                "old": {"name": old_path.name if old_path else "old.ifc", "url": f"{base}/files/old.ifc"},
+                "new": {"name": new_path.name if new_path else "new.ifc", "url": f"{base}/files/new.ifc"},
+                "report": {"url": f"{base}/files/report.json"},
+            }
+        )
+
+    @app.get("/viewer-src/{pair_name}/files/{which}")
+    def viewer_file(pair_name: str, which: str):
+        data = _load(path)
+        pair = _pair_by_name(data, pair_name)
+        if pair is None:
+            return Response(f"Unknown benchmark pair: {pair_name}", status_code=404)
+        old_path = _pair_input_path(pair, "old")
+        new_path = _pair_input_path(pair, "new")
+        if which == "old.ifc" and old_path and old_path.is_file():
+            return FileResponse(old_path, media_type="application/x-step", filename=old_path.name)
+        if which == "new.ifc" and new_path and new_path.is_file():
+            return FileResponse(new_path, media_type="application/x-step", filename=new_path.name)
+        if which == "report.json" and old_path and new_path and old_path.is_file() and new_path.is_file():
+            return Response(build_report_bytes(old_path, new_path), media_type="application/json")
+        return Response(f"No benchmark viewer file: {which}", status_code=404)
+
+    @app.get("/tool-output/{pair_name}/{tool}")
+    def tool_output(pair_name: str, tool: str):
+        data = _load(path)
+        pair = _pair_by_name(data, pair_name)
+        if pair is None:
+            return Response(f"Unknown benchmark pair: {pair_name}", status_code=404)
+        run = pair.get("runs", {}).get(tool)
+        if not isinstance(run, dict):
+            return Response(f"No output for {tool} on {pair_name}", status_code=404)
+        if tool == "athar":
+            old_path = _pair_input_path(pair, "old")
+            new_path = _pair_input_path(pair, "new")
+            if old_path and new_path and old_path.is_file() and new_path.is_file():
+                return Response(build_report_bytes(old_path, new_path), media_type="application/json")
+        output_path = _safe_existing_output_path(run.get("output"), benchmark_root=path.parent)
+        if output_path is not None:
+            return FileResponse(output_path, media_type="application/json", filename=output_path.name)
+        preview = _tool_preview_payload(run)
+        if preview is not None:
+            return JSONResponse(preview)
+        return Response(f"No saved output for {tool} on {pair_name}", status_code=404)
 
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> Response:
@@ -159,11 +248,13 @@ def _table(rows: list[dict[str, Any]]) -> str:
 
 
 def _row(row: dict[str, Any]) -> str:
+    name = row.get("name", "unknown")
     return f"""
     <tr>
       <td>
-        <strong>{_e(row.get("name", "unknown"))}</strong>
+        <strong><a href="/pair/{_url(name)}">{_e(name)}</a></strong>
         <div><span class="badge text-bg-light border">{_e(row.get("kind", "unknown"))}</span></div>
+        <div class="small"><a href="/viewer/{_url(name)}" target="_blank" rel="noreferrer">viewer</a> · <a href="/pair/{_url(name)}">outputs</a></div>
       </td>
       <td class="text-secondary">{_e(row.get("expectation", ""))}</td>
       {_tool_cell(row, "athar")}
@@ -183,11 +274,13 @@ def _tool_cell(row: dict[str, Any], tool: str) -> str:
     time_s = result.get("seconds_median")
     rss = result.get("peak_rss_mb_max")
     title = _assessment_title(assessment)
+    output = f'<div class="small"><a href="/tool-output/{_url(row.get("name", "unknown"))}/{_url(tool)}">output</a></div>'
     return f"""
     <td class="tool-cell">
       <span class="badge {_badge_class(assessment)}" title="{_e(title)}">{_label(assessment)}</span>
       <div class="font-monospace small mt-1">+{counts.get("added", "?")} −{counts.get("deleted", "?")} ~{counts.get("modified", "?")} ={counts.get("unchanged", "—")}</div>
       <div class="text-secondary small">{_metric(time_s, "s")} · {_metric(rss, "MB")}</div>
+      {output}
     </td>
     """
 
@@ -324,6 +417,72 @@ def _page(data: dict[str, Any], path: Path, controls: str, table: str, insights:
 </html>"""
 
 
+def _pair_page(data: dict[str, Any], path: Path, pair: dict[str, Any], *, viewer_available: bool) -> str:
+    name = pair.get("name", "unknown")
+    old_path = _pair_input_path(pair, "old")
+    new_path = _pair_input_path(pair, "new")
+    viewer = (
+        f'<a class="btn btn-primary" href="/viewer/{_url(name)}" target="_blank" rel="noreferrer">Open Athar viewer</a>'
+        if viewer_available and old_path and new_path and old_path.is_file() and new_path.is_file()
+        else '<span class="text-secondary">Viewer unavailable: run <code>make viewer-build</code> and ensure input IFCs exist locally.</span>'
+    )
+    outputs = "".join(_tool_output_card(name, tool, run) for tool, run in pair.get("runs", {}).items() if isinstance(run, dict))
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{_e(name)} · Athar benchmark viewer</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>{_css()}</style>
+</head>
+<body>
+  <main class="container-fluid py-4">
+    <p><a href="/">← Benchmark results</a></p>
+    <header class="mb-4">
+      <h1 class="h3">{_e(name)}</h1>
+      <p class="text-secondary mb-2">{_e(pair.get("expectation", ""))}</p>
+      <div class="mb-3">{viewer}</div>
+      <dl class="row small mb-0">
+        <dt class="col-sm-2 col-lg-1">Kind</dt><dd class="col-sm-10 col-lg-11">{_e(pair.get("kind", "unknown"))}</dd>
+        <dt class="col-sm-2 col-lg-1">Old</dt><dd class="col-sm-10 col-lg-11 font-monospace">{_e(old_path or "—")}</dd>
+        <dt class="col-sm-2 col-lg-1">New</dt><dd class="col-sm-10 col-lg-11 font-monospace">{_e(new_path or "—")}</dd>
+      </dl>
+    </header>
+    <section class="mb-4">
+      <h2 class="h5">Tool outputs</h2>
+      <div class="row g-3">{outputs}</div>
+    </section>
+    <section>
+      <h2 class="h5">Full benchmark pair JSON</h2>
+      <pre class="json-block">{_e(json.dumps(pair, indent=2, sort_keys=True))}</pre>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
+def _tool_output_card(pair_name: str, tool: str, run: dict[str, Any]) -> str:
+    counts = _run_counts(run) or {}
+    body = _tool_preview_text(run)
+    return f"""
+    <div class="col-12 col-xl-6">
+      <article class="card h-100">
+        <div class="card-body">
+          <h3 class="h6 card-title">{_label(tool)}</h3>
+          <div class="font-monospace small mb-2">+{counts.get("added", "?")} −{counts.get("deleted", "?")} ~{counts.get("modified", "?")} ={counts.get("unchanged", "—")}</div>
+          <p class="small mb-2"><a href="/tool-output/{_url(pair_name)}/{_url(tool)}">Open raw output</a></p>
+          <pre class="preview-block">{_e(body)}</pre>
+        </div>
+      </article>
+    </div>
+    """
+
+
+def _not_found_page(message: str) -> str:
+    return f"""<!doctype html><html lang="en"><body><main><p><a href="/">← Benchmark results</a></p><h1>Not found</h1><p>{_e(message)}</p></main></body></html>"""
+
+
 def _tool_strip(tools: dict[str, Any]) -> str:
     cards = []
     for name, info in tools.items():
@@ -368,12 +527,74 @@ def _e(value: Any) -> str:
     return html.escape(str(value), quote=True)
 
 
+def _url(value: Any) -> str:
+    return urllib.parse.quote(str(value), safe="")
+
+
+def _pair_by_name(data: dict[str, Any], pair_name: str) -> dict[str, Any] | None:
+    return next((pair for pair in data.get("pairs", []) if pair.get("name") == pair_name), None)
+
+
+def _pair_input_path(pair: dict[str, Any], side: str) -> Path | None:
+    value = pair.get(side, {}).get("path") if isinstance(pair.get(side), dict) else None
+    if not isinstance(value, str) or not value:
+        return None
+    return Path(value)
+
+
+def _safe_existing_output_path(value: Any, *, benchmark_root: Path) -> Path | None:
+    if not isinstance(value, str) or not value:
+        return None
+    path = Path(value)
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    try:
+        resolved = path.resolve()
+        allowed_roots = [benchmark_root.resolve(), (REPO_ROOT / ".athar-benchmark").resolve()]
+        if not any(resolved == root or resolved.is_relative_to(root) for root in allowed_roots):
+            return None
+    except OSError:
+        return None
+    return resolved if resolved.is_file() else None
+
+
+def _tool_preview_payload(run: dict[str, Any]) -> Any:
+    if "output_preview" in run:
+        return run["output_preview"]
+    previews = {key: run.get(key) for key in ("stdout_preview", "stderr_preview") if run.get(key)}
+    return previews or None
+
+
+def _tool_preview_text(run: dict[str, Any]) -> str:
+    preview = _tool_preview_payload(run)
+    if preview is None:
+        return "No inline preview saved."
+    if isinstance(preview, str):
+        return preview
+    return json.dumps(preview, indent=2, sort_keys=True)
+
+
+def _run_counts(run: dict[str, Any]) -> dict[str, Any] | None:
+    counts = run.get("counts") or run.get("sections")
+    return counts if isinstance(counts, dict) else None
+
+
 def _css() -> str:
     return """
     .table { min-width: 1120px; }
     .tool-cell { min-width: 160px; }
     td:first-child { min-width: 260px; }
     td:nth-child(2) { min-width: 260px; max-width: 360px; }
+    .json-block, .preview-block {
+      background: #0f172a;
+      border-radius: .5rem;
+      color: #e2e8f0;
+      max-height: 32rem;
+      overflow: auto;
+      padding: 1rem;
+      white-space: pre-wrap;
+    }
+    .preview-block { max-height: 18rem; }
     """
 
 

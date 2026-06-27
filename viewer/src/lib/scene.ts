@@ -55,6 +55,8 @@ interface EntityLocation {
 
 const HIGHLIGHT_COLOR = 0xf5d90a
 const LINE_COLOR = 0xf5a524
+const ARROW_HEAD_FRACTION = 0.18
+const ARROW_HEAD_MIN = 0.25
 
 export class DiffScene {
   private renderer: THREE.WebGLRenderer
@@ -77,7 +79,7 @@ export class DiffScene {
   }
   private modelBox = new THREE.Box3()
   private changesBox = new THREE.Box3()
-  private displacement: THREE.LineSegments | null = null
+  private displacement: THREE.Group | null = null
   private highlight: THREE.Mesh | null = null
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -90,6 +92,11 @@ export class DiffScene {
     this.controls = new OrbitControls(this.camera, canvas)
     this.controls.enableDamping = true
     this.controls.dampingFactor = 0.12
+    // OrbitControls applies wheel zoom synchronously inside its event handler.
+    // By the next animation frame `controls.update()` may report no movement,
+    // so mark the scene dirty on every control change instead of relying only
+    // on the render loop's damping return value.
+    this.controls.addEventListener('change', () => this.invalidate())
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0x39424e, 1.1)
     const key = new THREE.DirectionalLight(0xffffff, 1.6)
@@ -229,28 +236,45 @@ export class DiffScene {
   }
 
   private buildDisplacementLines(pairs: Array<{ oldId: number; newId: number }>): number {
-    const points: number[] = []
+    const group = new THREE.Group()
+    group.name = 'placement-displacement-arrows'
+
+    let count = 0
     for (const pair of pairs) {
       const from = this.entityBoxes.old.get(pair.oldId)
       const to = this.entityBoxes.new.get(pair.newId)
       if (!from || !to || from.isEmpty() || to.isEmpty()) continue
       const a = from.getCenter(new THREE.Vector3())
       const b = to.getCenter(new THREE.Vector3())
-      points.push(a.x, a.y, a.z, b.x, b.y, b.z)
+      const delta = b.clone().sub(a)
+      const length = delta.length()
+      if (length <= 1e-9) continue
+
+      const headLength = Math.min(length * ARROW_HEAD_FRACTION, Math.max(ARROW_HEAD_MIN, length * 0.35))
+      const arrow = new THREE.ArrowHelper(
+        delta.normalize(),
+        a,
+        length,
+        LINE_COLOR,
+        headLength,
+        headLength * 0.45,
+      )
+      arrow.renderOrder = 998
+      arrow.traverse((object) => {
+        const material = (object as THREE.Mesh | THREE.Line).material
+        if (material instanceof THREE.Material) {
+          material.depthTest = false
+          material.transparent = true
+          material.opacity = 0.92
+        }
+      })
+      group.add(arrow)
+      count += 1
     }
-    if (points.length === 0) return 0
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(points), 3))
-    const material = new THREE.LineBasicMaterial({
-      color: LINE_COLOR,
-      transparent: true,
-      opacity: 0.9,
-      depthTest: false,
-    })
-    this.displacement = new THREE.LineSegments(geometry, material)
-    this.displacement.renderOrder = 998
+    if (count === 0) return 0
+    this.displacement = group
     this.scene.add(this.displacement)
-    return points.length / 6
+    return count
   }
 
   applyAppearances(appearances: Record<Bucket, Appearance>, showLines: boolean): void {
@@ -258,11 +282,13 @@ export class DiffScene {
       const appearance = appearances[bucket]
       entry.mesh.visible = appearance.visible
       entry.material.color.set(appearance.color)
+      entry.material.emissive.set(appearance.color)
+      entry.material.emissiveIntensity = bucket === 'unchanged' || bucket === 'extra' ? 0.28 : 0.06
       entry.material.opacity = appearance.opacity
       const solid = appearance.opacity >= 0.999
       entry.material.transparent = !solid
       entry.material.depthWrite = solid
-      entry.material.needsUpdate = false
+      entry.material.needsUpdate = true
     }
     if (this.displacement) this.displacement.visible = showLines
     this.invalidate()
@@ -370,8 +396,16 @@ export class DiffScene {
     this.changesBox.makeEmpty()
     if (this.displacement) {
       this.scene.remove(this.displacement)
-      this.displacement.geometry.dispose()
-      ;(this.displacement.material as THREE.Material).dispose()
+      this.displacement.traverse((object) => {
+        const mesh = object as THREE.Mesh | THREE.Line
+        mesh.geometry?.dispose()
+        const material = mesh.material
+        if (Array.isArray(material)) {
+          for (const item of material) item.dispose()
+        } else {
+          material?.dispose()
+        }
+      })
       this.displacement = null
     }
   }

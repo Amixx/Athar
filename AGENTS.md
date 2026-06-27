@@ -32,8 +32,8 @@ the code they govern:
 - No deep B-rep comparison. Athar hashes geometry-domain subgraphs and compares
   placement/spatial features.
 - JavaScript/TypeScript is confined to `viewer/`; bun is its package manager and
-  test runner. pip users never need bun — `viewer/dist` is committed and served
-  by `athar view`.
+  test runner. Generated viewer bundles are not committed; release builds may
+  package them under `athar_view/static`.
 
 ## Identity Policy
 

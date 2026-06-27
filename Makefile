@@ -7,7 +7,7 @@ BENCHMARK_PAGE ?= $(BENCHMARK_DIR)/site/index.html
 BENCHMARK_REPEATS ?= 3
 BENCHMARK_TIMEOUT_S ?= 300
 
-.PHONY: help dev-setup benchmark-setup benchmark-ui-setup benchmark-run benchmark-page benchmark-ui benchmark-ui-refresh test test-large-acceptance native-build native-clean viewer-build viewer-test
+.PHONY: help dev-setup benchmark-setup benchmark-ui-setup benchmark-run benchmark-page benchmark-ui benchmark-ui-refresh test test-large-acceptance native-build native-clean viewer-build viewer-package-static viewer-test
 
 help:
 	@printf "%s\n" \
@@ -24,6 +24,7 @@ help:
 	"  make native-build           Build the optional Rust accelerator into the venv (requires cargo + maturin)" \
 	"  make native-clean           Remove the Rust build artifacts (athar/_native/target)" \
 	"  make viewer-build           Build the viewer SPA into viewer/dist (requires bun)" \
+	"  make viewer-package-static  Build and copy viewer assets into athar_view/static for packaging" \
 	"  make viewer-test            Viewer unit tests + headless e2e smoke (requires bun)"
 
 dev-setup:
@@ -74,6 +75,11 @@ native-clean:
 
 viewer-build:
 	cd viewer && bun install && bun run build
+
+viewer-package-static: viewer-build
+	rm -rf athar_view/static
+	mkdir -p athar_view/static
+	cp -R viewer/dist/. athar_view/static/
 
 viewer-test:
 	cd viewer && bun test tests && bunx playwright test

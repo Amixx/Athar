@@ -144,7 +144,7 @@ describe('computeAppearances', () => {
     expect(app.modifiedNew.visible).toBe(false)
     expect(app.modifiedStatic.visible).toBe(true)
     expect(app.unchanged.visible).toBe(true)
-    expect(app.unchanged.opacity).toBe(GHOST_OPACITY)
+    expect(app.unchanged.opacity).toBe(1)
   })
 
   it('shows only the new state at t=1', () => {
@@ -187,6 +187,12 @@ describe('computeAppearances', () => {
     const app = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, ghostUnchanged: false })
     expect(app.unchanged.opacity).toBe(1)
     expect(app.extra.opacity).toBe(1)
+  })
+
+  it('ghosts unchanged only when explicitly enabled', () => {
+    const app = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, ghostUnchanged: true })
+    expect(app.unchanged.opacity).toBe(GHOST_OPACITY)
+    expect(app.extra.opacity).toBe(GHOST_OPACITY)
   })
 })
 

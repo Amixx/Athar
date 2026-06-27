@@ -148,7 +148,11 @@ test('slider snaps and section toggles drive bucket appearances', async ({ page 
   expect(state.appearances.modifiedOld.visible).toBe(false)
 
   // Unchanged ghosting toggle.
-  expect(state.appearances.unchanged.opacity).toBeLessThan(0.5)
+  expect(state.appearances.unchanged.opacity).toBe(1)
+  await page.getByRole('button', { name: 'Ghost' }).click()
+  await page.waitForFunction(
+    () => (window as any).__athar_viewer?.appearances.unchanged.opacity < 0.5,
+  )
   await page.getByRole('button', { name: 'Ghost' }).click()
   await page.waitForFunction(
     () => (window as any).__athar_viewer?.appearances.unchanged.opacity === 1,
