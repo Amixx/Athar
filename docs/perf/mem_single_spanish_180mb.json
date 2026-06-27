@@ -1,0 +1,69 @@
+{
+  "environment": {
+    "git_commit": "b3d95d5",
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "python": "3.12.0",
+    "sample_interval_s": 0.05
+  },
+  "files": [
+    {
+      "path": "real-world-test/real-world-spanish-180mb.ifc",
+      "size_mb": 181.8
+    }
+  ],
+  "mode": "single",
+  "peak_rss_mb": {
+    "baseline_at_start": 22.5,
+    "getrusage_true_peak": 4114.4,
+    "sampler": 4089.5
+  },
+  "phases": [
+    {
+      "peak_mb": 1633.6,
+      "phase": "ifc_open",
+      "rss_delta_mb": 1534.2,
+      "rss_enter_mb": 91.0,
+      "rss_exit_mb": 1625.2,
+      "seconds": 15.758
+    },
+    {
+      "peak_mb": 1833.2,
+      "phase": "extract_properties",
+      "rss_delta_mb": 136.3,
+      "rss_enter_mb": 1625.2,
+      "rss_exit_mb": 1761.5,
+      "seconds": 13.286
+    },
+    {
+      "peak_mb": 1761.5,
+      "phase": "ifc_release",
+      "rss_delta_mb": -189.3,
+      "rss_enter_mb": 1761.5,
+      "rss_exit_mb": 1572.2,
+      "seconds": 0.919
+    },
+    {
+      "peak_mb": 4010.6,
+      "phase": "native_build",
+      "rss_delta_mb": 2437.8,
+      "rss_enter_mb": 1572.8,
+      "rss_exit_mb": 4010.6,
+      "seconds": 90.5
+    },
+    {
+      "peak_mb": 4089.5,
+      "phase": "materialize_signatures",
+      "rss_delta_mb": -273.9,
+      "rss_enter_mb": 4007.6,
+      "rss_exit_mb": 3733.7,
+      "seconds": 1.517
+    }
+  ],
+  "started_at": "2026-06-27T16:47:54",
+  "summary": {
+    "resident_after_build_mb": 3577.1,
+    "schema": "IFC2X3",
+    "signatures": 44389
+  },
+  "total_seconds": 123.896
+}

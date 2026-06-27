@@ -33,6 +33,189 @@ fn sha256_hex(payload: &[u8]) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Per-stage memory/time profiler
+// ---------------------------------------------------------------------------
+//
+// `build_bundle` is one opaque call from Python's perspective, so the
+// `profile_memory.py` phase view bottoms out at "native_build". This breaks that
+// stage open from the inside.
+//
+// Rust's std has no RSS API, and shelling to `ps` would measure OS resident
+// pages — which include the lingering ifcopenshell C++ model and freed-but-
+// unreturned pages, i.e. exactly the noise that made our RSS readings jump ~20%
+// run-to-run. Instead we install a tracking global allocator: two atomics count
+// live Rust heap bytes and a high-water mark. This measures the native
+// pipeline's *own* working set precisely and deterministically (Python's heap
+// uses its own allocator and is not counted). The OS-level RSS picture still
+// comes from `profile_memory.py`; this is the Rust-internal breakdown.
+//
+// The counting allocator is always active (a global allocator cannot be toggled
+// at runtime) and adds two relaxed atomic ops per allocation. The per-stage
+// report is opt-in via ATHAR_NATIVE_PROFILE=1 (stderr only, no FFI change).
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);
+static PEAK_BYTES: AtomicUsize = AtomicUsize::new(0);
+// Churn: cumulative bytes ever handed out and number of alloc events. Compared
+// against peak live, these answer "how much transient work are we doing" — a
+// high total-allocated / peak-live ratio means we rebuild/copy our working set
+// many times over (a better "are we doing the right thing" signal than peak).
+static ALLOC_BYTES: AtomicUsize = AtomicUsize::new(0);
+static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+struct CountingAlloc;
+
+unsafe impl GlobalAlloc for CountingAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ptr = System.alloc(layout);
+        if !ptr.is_null() {
+            let now = LIVE_BYTES.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+            PEAK_BYTES.fetch_max(now, Ordering::Relaxed);
+            ALLOC_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
+            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        ptr
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        LIVE_BYTES.fetch_sub(layout.size(), Ordering::Relaxed);
+        System.dealloc(ptr, layout);
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let new_ptr = System.realloc(ptr, layout, new_size);
+        if !new_ptr.is_null() {
+            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
+            if new_size >= layout.size() {
+                let grow = new_size - layout.size();
+                let now = LIVE_BYTES.fetch_add(grow, Ordering::Relaxed) + grow;
+                PEAK_BYTES.fetch_max(now, Ordering::Relaxed);
+                ALLOC_BYTES.fetch_add(grow, Ordering::Relaxed);
+            } else {
+                LIVE_BYTES.fetch_sub(layout.size() - new_size, Ordering::Relaxed);
+            }
+        }
+        new_ptr
+    }
+}
+
+#[global_allocator]
+static GLOBAL: CountingAlloc = CountingAlloc;
+
+fn live_mb() -> f64 {
+    LIVE_BYTES.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0)
+}
+
+/// Reset the high-water mark to the current live total, so the next interval's
+/// peak reflects only that stage.
+fn reset_peak() {
+    PEAK_BYTES.store(LIVE_BYTES.load(Ordering::Relaxed), Ordering::Relaxed);
+}
+
+fn peak_mb() -> f64 {
+    PEAK_BYTES.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0)
+}
+
+fn alloc_total_mb() -> f64 {
+    ALLOC_BYTES.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0)
+}
+
+fn alloc_count() -> u64 {
+    ALLOC_COUNT.load(Ordering::Relaxed) as u64
+}
+
+struct StageRow {
+    name: String,
+    secs: f64,
+    live_mb: f64,
+    peak_mb: f64,
+    churn_mb: f64, // bytes allocated during this stage
+    allocs: u64,   // alloc events during this stage
+}
+
+struct StageProfiler {
+    enabled: bool,
+    last: std::time::Instant,
+    prev_alloc_mb: f64,
+    prev_allocs: u64,
+    rows: Vec<StageRow>,
+}
+
+impl StageProfiler {
+    fn new() -> Self {
+        let enabled = std::env::var("ATHAR_NATIVE_PROFILE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        reset_peak();
+        Self {
+            enabled,
+            last: std::time::Instant::now(),
+            prev_alloc_mb: alloc_total_mb(),
+            prev_allocs: alloc_count(),
+            rows: Vec::new(),
+        }
+    }
+
+    /// Record the stage that just finished: wall time, live heap now, peak live
+    /// during it, and the allocation churn (bytes + events) it produced.
+    fn mark(&mut self, name: &str) {
+        if !self.enabled {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let secs = now.duration_since(self.last).as_secs_f64();
+        self.last = now;
+        let alloc_mb = alloc_total_mb();
+        let allocs = alloc_count();
+        self.rows.push(StageRow {
+            name: name.to_string(),
+            secs,
+            live_mb: live_mb(),
+            peak_mb: peak_mb(),
+            churn_mb: alloc_mb - self.prev_alloc_mb,
+            allocs: allocs - self.prev_allocs,
+        });
+        self.prev_alloc_mb = alloc_mb;
+        self.prev_allocs = allocs;
+        reset_peak();
+    }
+
+    fn report(&self) {
+        if !self.enabled {
+            return;
+        }
+        eprintln!("[native-profile] Rust heap (tracking allocator), per internal stage:");
+        eprintln!(
+            "[native-profile] {:<20}{:>8}{:>11}{:>11}{:>11}{:>11}{:>12}",
+            "stage", "sec", "live_mb", "peak_mb", "Δlive_mb", "churn_mb", "allocs"
+        );
+        let mut prev = 0.0_f64;
+        for r in &self.rows {
+            eprintln!(
+                "[native-profile] {:<20}{:>8.3}{:>11.1}{:>11.1}{:>+11.1}{:>11.1}{:>12}",
+                r.name, r.secs, r.live_mb, r.peak_mb, r.live_mb - prev, r.churn_mb, r.allocs
+            );
+            prev = r.live_mb;
+        }
+        // Efficiency proxies: total churn vs the peak working set it built.
+        let total_churn = alloc_total_mb();
+        let total_allocs = alloc_count();
+        let peak_live = self
+            .rows
+            .iter()
+            .map(|r| r.peak_mb)
+            .fold(0.0_f64, f64::max);
+        let churn_factor = if peak_live > 0.0 { total_churn / peak_live } else { 0.0 };
+        eprintln!(
+            "[native-profile] TOTAL  churn={:.0} MB  allocs={}  peak_live={:.0} MB  churn_factor={:.1}x",
+            total_churn, total_allocs, peak_live, churn_factor
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Merkle pass
 // ---------------------------------------------------------------------------
 
@@ -309,23 +492,40 @@ fn build_bundle(
     schema_json: &str,
     unit_factors: &HashMap<String, f64>,
 ) -> Result<NativeBundle, String> {
+    let mut prof = StageProfiler::new();
+    prof.mark("enter");
     let bytes = std::fs::read(path).map_err(|e| format!("read {path}: {e}"))?;
+    prof.mark("read_bytes");
     let records = step::Parser::new(&bytes).parse()?;
+    // STEP tokens are owned (Record holds Strings), so the raw file bytes are
+    // dead the moment tokenization finishes; free them before the heavier stages.
+    drop(bytes);
+    prof.mark("tokenize");
     let schema = descriptor::parse_schema(schema_json)?;
-    let parsed = canon::canonicalize(&records, &schema, unit_factors);
+    let mut parsed = canon::canonicalize(&records, &schema, unit_factors);
+    // canonicalize() copied everything it needs into `parsed`; the token records
+    // (the second-largest intermediate) are dead through the rest of the pipeline.
+    drop(records);
+    prof.mark("canonicalize");
     let edge_list = edges::build_edges(&parsed.entities, &parsed.id_to_keyword);
+    prof.mark("build_edges");
 
     // ---- Merkle inputs -----------------------------------------------------
     let mut classes: HashMap<i64, String> = HashMap::with_capacity(parsed.entities.len());
     let mut geom_parts: HashMap<i64, Vec<String>> = HashMap::new();
     let mut data_parts: HashMap<i64, Vec<String>> = HashMap::new();
-    for e in &parsed.entities {
+    // `geom_parts`/`data_parts` are not read off the entities again after this,
+    // so move them into the merkle maps instead of cloning (avoids duplicating
+    // the per-entity attribute strings — the bulk of the old +900 MB here).
+    // `canonical_class` is still needed downstream (WL seeds, assemble), so it
+    // stays a (small) clone.
+    for e in &mut parsed.entities {
         classes.insert(e.step_id, e.canonical_class.clone());
         if !e.geom_parts.is_empty() {
-            geom_parts.insert(e.step_id, e.geom_parts.clone());
+            geom_parts.insert(e.step_id, std::mem::take(&mut e.geom_parts));
         }
         if !e.data_parts.is_empty() {
-            data_parts.insert(e.step_id, e.data_parts.clone());
+            data_parts.insert(e.step_id, std::mem::take(&mut e.data_parts));
         }
     }
     let mut geom_adj: HashMap<i64, Vec<(String, i64)>> = HashMap::new();
@@ -366,6 +566,9 @@ fn build_bundle(
             context_adj.entry(edge.target).or_default().insert(edge.source);
         }
     }
+    // The flat edge list has been fully projected into the adjacency maps above;
+    // it is dead for the rest of the pipeline.
+    drop(edge_list);
     for v in geom_adj.values_mut() {
         v.sort();
     }
@@ -376,7 +579,18 @@ fn build_bundle(
         v.sort();
     }
 
+    prof.mark("merkle_inputs");
     let (merkle_out, cycles) = merkle_compute(&classes, &geom_parts, &data_parts, &geom_adj, &data_adj);
+    // Merkle consumed these; only `geometry_adj`, `data_children`, `context_adj`,
+    // and `spatial_adj` are still needed (WL + spatial). Free the rest — the
+    // moved attribute-part strings (`geom_parts`/`data_parts`) and the
+    // domain-labelled adjacency are the bulk of it.
+    drop(classes);
+    drop(geom_parts);
+    drop(data_parts);
+    drop(geom_adj);
+    drop(data_adj);
+    prof.mark("merkle");
 
     // ---- WL topology -------------------------------------------------------
     let mut seeds: HashMap<i64, String> = HashMap::with_capacity(parsed.entities.len());
@@ -393,6 +607,7 @@ fn build_bundle(
     let context_vec: HashMap<i64, Vec<i64>> = sorted_adj(context_adj);
     let spatial_vec: HashMap<i64, Vec<i64>> = sorted_adj(spatial_adj);
     let topo = topology_compute(&seeds, &context_vec, &spatial_vec, 1, 2);
+    prof.mark("wl_topology");
 
     // ---- Spatial -----------------------------------------------------------
     let by_id: HashMap<i64, &canon::Entity> =
@@ -413,6 +628,7 @@ fn build_bundle(
         dir_ratios: &parsed.dir_ratios,
     };
     let spatial_feats = spatial::build_spatial_features(&parsed.entities, &ctx);
+    prof.mark("spatial");
 
     // ---- Assemble signatures ----------------------------------------------
     let mut signatures: Vec<SigTuple> = Vec::new();
@@ -446,6 +662,7 @@ fn build_bundle(
         ));
     }
     signatures.sort_by_key(|s| s.0);
+    prof.mark("assemble_signatures");
 
     // ---- Diagnostics -------------------------------------------------------
     let mut dangling_refs: i64 = 0;
@@ -462,6 +679,8 @@ fn build_bundle(
         .map(|kw| format!("No schema descriptor for {kw}; entities of this class were skipped."))
         .collect();
     warnings.sort();
+    prof.mark("diagnostics");
+    prof.report();
 
     Ok(NativeBundle {
         signatures,
