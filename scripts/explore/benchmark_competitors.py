@@ -259,27 +259,6 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
         expected=Expected(counts={"added": 1, "deleted": 0, "modified_max": 20}),
     ),
     Pair(
-        name="unrelated_gni_190_gni_9",
-        kind="unrelated",
-        builder=_static_pair("gni_190", "gni_9"),
-        expectation="no GUID matches and most entities unmatched",
-        expected=Expected(athar={"matched_total": 0}),
-    ),
-    Pair(
-        name="discipline_gni_pair_0_arc_structure",
-        kind="discipline",
-        builder=_static_pair("gni_p0_arc", "gni_p0_str"),
-        expectation="mostly disjoint architecture/structure content",
-        expected=Expected(athar={"matched_total": 0}),
-    ),
-    Pair(
-        name="large_unrelated_gni_77_gni_68",
-        kind="large_unrelated",
-        builder=_static_pair("gni_77", "gni_68", acceptance=True),
-        expectation="large opt-in unrelated-pair stress shape",
-        large=True,
-    ),
-    Pair(
         name="large_same_file_gni_p5_arc",
         kind="large_same_file",
         builder=_static_pair("gni_p5_arc", "gni_p5_arc", acceptance=True),

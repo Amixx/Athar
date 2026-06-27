@@ -147,9 +147,13 @@ docs/corpus/*-corpus-survey.json
 
 .claude
 
-# The viewer SPA build is committed so Python-only users never need bun
-# (overrides the global dist/ rule above).
-!viewer/dist/
-!viewer/dist/**
+# Keep generated viewer bundles out of source control. Release builds may copy
+# viewer/dist into athar_view/static before building Python distributions.
+viewer/dist/
+athar_view/static/
+
+# The global lib/ rule above would otherwise hide viewer source modules.
 !viewer/src/lib/
 !viewer/src/lib/**
+
+.playwright-mcp

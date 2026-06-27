@@ -41,9 +41,9 @@ so parser and renderer can be swapped independently.
   counts, meshless counts, appearances, selection) so headless tests assert
   state, not pixels; the app stays usable without WebGL (panels work, canvas
   degrades).
-- `viewer/dist/` is committed so `athar view` works from a plain pip install
-  with no bun/node anywhere; rebuild with `make viewer-build` after viewer
-  source changes.
+- `viewer/dist/` is generated and ignored. Use `make viewer-build` for local
+  offline testing; release builds can copy it into ignored `athar_view/static`
+  with `make viewer-package-static` before building the Python distribution.
 
 ## `athar_view/`
 
@@ -62,9 +62,9 @@ cache; nothing depends on it.
   `<viewer-url>?src=<local origin>` Perfetto-style (URL from `--viewer-url` or
   `ATHAR_VIEWER_URL`; nothing is uploaded — the hosted page fetches from
   localhost) and falls back to offline if the hosted origin is unreachable.
-  Offline mode — the default while no hosted deployment exists — serves the
-  committed `viewer/dist` (`ATHAR_VIEWER_DIST` overrides; release wheels may
-  bundle it as `athar_view/static`). Inputs over 50MB warn but proceed.
+  Offline mode — the default while no hosted deployment exists — serves
+  `ATHAR_VIEWER_DIST`, release-packaged `athar_view/static`, or local
+  `viewer/dist`. Inputs over 50MB warn but proceed.
 - `athar git install --difftool` additionally sets
   `difftool.athar.cmd = athar view "$LOCAL" "$REMOTE"`, so
   `git difftool -t athar -- model.ifc` opens the visual diff for any committed

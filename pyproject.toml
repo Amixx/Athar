@@ -32,8 +32,8 @@ native = [
 include = ["athar*", "athar_git*", "athar_store*", "athar_qa*"]
 
 [tool.setuptools.package-data]
-# Optional wheel-bundled viewer SPA: copy viewer/dist to athar_view/static
-# before building a release wheel (see athar_view.server.find_dist).
+# Optional wheel-bundled viewer SPA: run `make viewer-package-static` before
+# building a release distribution (see athar_view.server.find_dist).
 athar_view = ["static/**/*"]
 # Shipped, reusable policy packs resolved by name via athar.check.resolve_policy.
 athar = ["policies/*.json"]

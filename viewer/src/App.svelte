@@ -59,6 +59,9 @@
 
   const appearances = $derived(computeAppearances(sliderT, toggles))
   const classes = $derived(index ? classBreakdown(index.report) : [])
+  const modifiedScope = $derived(index?.report.stats.modified_change_scope ?? null)
+  const directModified = $derived((modifiedScope?.intrinsic ?? 0) + (modifiedScope?.mixed ?? 0))
+  const rippleModified = $derived(modifiedScope?.transitive ?? 0)
   const selectedRecord = $derived.by<EntityRecord | null>(() => {
     if (!selection || !index) return null
     const map = selection.side === 'old' ? index.old : index.new
@@ -153,6 +156,7 @@
       if (scene) {
         const stats = scene.setModels(oldGeometry, newGeometry, bucketOfFn, displacementPairs)
         displacementLines = stats.displacementLines
+        scene.applyAppearances(computeAppearances(sliderT, toggles), showLines)
       }
 
       selection = null
@@ -286,13 +290,21 @@
       <div class="statgrid">
         <div class="stat add"><div class="num">+{index.report.stats.added}</div><div class="microlabel">added</div></div>
         <div class="stat del"><div class="num">−{index.report.stats.deleted}</div><div class="microlabel">deleted</div></div>
-        <div class="stat mod"><div class="num">~{index.report.stats.modified}</div><div class="microlabel">modified</div></div>
+        <div class="stat mod">
+          <div class="num">~{index.report.stats.modified}</div>
+          <div class="microlabel">
+            {#if modifiedScope && index.report.stats.modified > 0}
+              {directModified} direct · {rippleModified} ripple
+            {:else}
+              modified
+            {/if}
+          </div>
+        </div>
         <div class="stat unch"><div class="num">={index.report.stats.unchanged}</div><div class="microlabel">unchanged</div></div>
       </div>
-      {#if index.report.stats.modified_change_scope}
-        {@const scope = index.report.stats.modified_change_scope}
+      {#if modifiedScope}
         <div class="footnote">
-          scope: {scope.intrinsic ?? 0} intrinsic · {scope.transitive ?? 0} transitive · {scope.mixed ?? 0} mixed
+          scope: {modifiedScope.intrinsic ?? 0} intrinsic · {modifiedScope.transitive ?? 0} transitive · {modifiedScope.mixed ?? 0} mixed
         </div>
       {/if}
       {#if classes.length}
@@ -314,7 +326,7 @@
         <div class="footnote">{meshless} report entit{meshless === 1 ? 'y has' : 'ies have'} no 3D geometry (spatial containers etc.) — counted above, not drawn.</div>
       {/if}
       {#if index.placementPairs.filter(isPlacementOnly).length > 0}
-        <div class="footnote">Amber lines trace placement-only moves (old → new centroid).</div>
+        <div class="footnote">Amber arrows trace placement-only moves (old → new centroid).</div>
       {/if}
     </aside>
 
@@ -390,7 +402,7 @@
       <button class:off={!toggles.ghostUnchanged} onclick={() => (toggles.ghostUnchanged = !toggles.ghostUnchanged)}>
         Ghost
       </button>
-      <button class:off={!showLines} onclick={() => (showLines = !showLines)}>Move lines</button>
+      <button class:off={!showLines} onclick={() => (showLines = !showLines)}>Move arrows</button>
     </div>
 
     <div class="panel viewbtns">

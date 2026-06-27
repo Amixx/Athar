@@ -57,9 +57,10 @@ bun run test:e2e     # playwright headless smoke (builds + previews on :4173)
 bun run build        # production bundle into dist/
 ```
 
-`viewer/dist` is committed so `athar view` works from a plain pip install.
-After changing viewer sources, rebuild and commit it (`make viewer-build`
-from the repo root).
+`viewer/dist` is generated and ignored. Build it locally with
+`make viewer-build` from the repo root. Release packaging can run
+`make viewer-package-static` to copy the built SPA into `athar_view/static`
+before building the Python distribution.
 
 ## Testing
 

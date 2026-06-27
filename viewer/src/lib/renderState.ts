@@ -117,7 +117,7 @@ export const DEFAULT_TOGGLES: Toggles = {
   added: true,
   modified: true,
   unchanged: true,
-  ghostUnchanged: true,
+  ghostUnchanged: false,
 }
 
 export interface Appearance {

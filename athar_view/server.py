@@ -2,8 +2,8 @@
 
 Perfetto-style: the CLI serves only the two IFC files + the diff report on
 127.0.0.1 with CORS headers for the viewer origin, so model data never
-leaves the machine. In offline mode the same server additionally serves the
-built viewer SPA (viewer/dist) so no hosted deployment is needed.
+leaves the machine. In offline mode the same server additionally serves a
+built viewer SPA from an explicit path, a packaged bundle, or local viewer/dist.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def build_report_bytes(
 
 def find_dist(explicit: str | os.PathLike[str] | None = None) -> Path | None:
     """Locate a built viewer SPA: explicit arg → $ATHAR_VIEWER_DIST →
-    wheel-packaged athar_view/static → repo viewer/dist."""
+    wheel-packaged athar_view/static → local repo viewer/dist."""
     candidates: list[Path] = []
     if explicit:
         candidates.append(Path(explicit))

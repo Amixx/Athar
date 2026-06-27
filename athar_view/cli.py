@@ -8,8 +8,8 @@ Two delivery modes, same SPA:
   never leaves the machine.
 - Offline/bundled (--offline, and the automatic fallback when no hosted URL
   is configured or it is unreachable): the same localhost server also
-  serves the built SPA from viewer/dist (or $ATHAR_VIEWER_DIST, or the
-  wheel-packaged athar_view/static).
+  serves the built SPA from $ATHAR_VIEWER_DIST, wheel-packaged
+  athar_view/static, or local viewer/dist.
 """
 
 from __future__ import annotations
