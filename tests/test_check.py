@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from athar.check import evaluate_report
+from athar.check import builtin_policy_packs, evaluate_report, resolve_policy
 
 
 def test_check_passes_when_report_stays_within_policy():
@@ -127,3 +127,107 @@ def _report() -> dict:
         ],
         "unchanged": [{}, {}, {}],
     }
+
+
+def _report_with_property_deltas() -> dict:
+    return {
+        "schemas": {"old": "IFC4", "new": "IFC4"},
+        "stats": {"added": 0, "deleted": 0, "modified": 2, "unchanged": 0},
+        "added": [],
+        "deleted": [],
+        "modified": [
+            {
+                "old": {"class": "IfcWall", "step_id": 11, "guid": "WALL", "name": "Wall"},
+                "new": {"class": "IfcWall", "step_id": 21, "guid": "WALL", "name": "Wall"},
+                "aspects": {"data": "changed"},
+                "change_scope": "intrinsic",
+                "property_deltas": {
+                    "changed": [{"name": "FireRating", "old_value": "90", "new_value": "60"}],
+                    "removed": [{"name": "AcousticRating", "old_value": "52"}],
+                },
+            },
+            {
+                "old": {"class": "IfcDoor", "step_id": 12, "guid": "DOOR", "name": "Door"},
+                "new": {"class": "IfcDoor", "step_id": 22, "guid": "DOOR", "name": "Door"},
+                "aspects": {"data": "changed"},
+                "change_scope": "intrinsic",
+                "property_deltas": {
+                    "changed": [{"name": "Width", "old_value": 900, "new_value": 1000}],
+                },
+            },
+        ],
+        "unchanged": [],
+    }
+
+
+def test_check_flags_removed_properties():
+    result = evaluate_report(_report_with_property_deltas(), {"forbid_property_removal": "*"})
+
+    assert result["ok"] is False
+    violation = next(v for v in result["violations"] if v["code"] == "property_removed")
+    assert violation["count"] == 1
+    assert violation["affected"][0]["class"] == "IfcWall"
+    assert violation["affected"][0]["removed_properties"] == ["AcousticRating"]
+
+
+def test_check_property_removal_respects_class_filter():
+    result = evaluate_report(_report_with_property_deltas(), {"forbid_property_removal": ["IfcDoor"]})
+
+    assert result["ok"] is True
+    assert result["violations"] == []
+
+
+def test_check_flags_protected_property_value_change():
+    result = evaluate_report(
+        _report_with_property_deltas(),
+        {"forbid_property_value_change": {"FireRating": "*"}},
+    )
+
+    assert result["ok"] is False
+    violation = next(v for v in result["violations"] if v["code"] == "property_value_changed")
+    assert violation["property"] == "FireRating"
+    assert violation["affected"][0]["old_value"] == "90"
+    assert violation["affected"][0]["new_value"] == "60"
+
+
+def test_check_protected_property_change_ignores_other_properties():
+    result = evaluate_report(
+        _report_with_property_deltas(),
+        {"forbid_property_value_change": {"FireRating": ["IfcDoor"]}},
+    )
+
+    assert result["ok"] is True
+
+
+def test_check_rejects_invalid_property_value_change_shape():
+    with pytest.raises(ValueError, match="forbid_property_value_change must be an object"):
+        evaluate_report(_report_with_property_deltas(), {"forbid_property_value_change": ["FireRating"]})
+
+
+def test_builtin_policy_packs_are_loadable():
+    packs = builtin_policy_packs()
+    assert {"data-integrity", "safety-critical", "no-deletions", "georeferencing"} <= set(packs)
+    for name in packs:
+        policy = resolve_policy(name)
+        assert isinstance(policy, dict)
+        # Each shipped pack is a valid, evaluable policy.
+        assert evaluate_report(_report(), policy)["summary"]
+
+
+def test_resolve_policy_prefers_file_path(tmp_path):
+    policy_file = tmp_path / "p.json"
+    policy_file.write_text('{"max_deleted": 0}', encoding="utf-8")
+    assert resolve_policy(str(policy_file)) == {"max_deleted": 0}
+
+
+def test_resolve_policy_unknown_name_lists_packs():
+    with pytest.raises(ValueError, match="not a file and not a builtin pack"):
+        resolve_policy("does-not-exist")
+
+
+def test_safety_critical_pack_catches_fire_rating_change():
+    result = evaluate_report(_report_with_property_deltas(), resolve_policy("safety-critical"))
+
+    assert result["ok"] is False
+    codes = {v["code"] for v in result["violations"]}
+    assert {"property_value_changed", "property_removed"} <= codes

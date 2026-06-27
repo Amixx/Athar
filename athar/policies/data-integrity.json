@@ -1,0 +1,5 @@
+{
+  "description": "Data integrity: no schema drift and no property/quantity values dropped from any entity.",
+  "forbid_schema_change": true,
+  "forbid_property_removal": "*"
+}

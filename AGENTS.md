@@ -11,6 +11,7 @@ the code they govern:
 - `athar_git/AGENTS.md` — Git diff driver, cache, renderer, and PR comments.
 - `athar_view/AGENTS.md` — visual 3D diff viewer launcher and SPA.
 - `athar_store/AGENTS.md` — persistent baselines, approvals, and review history.
+- `athar_qa/AGENTS.md` — human-readable QA gate reports and review timelines.
 - `tests/AGENTS.md` — corpus, mutation, invariant, and acceptance testing.
 - `docs/AGENTS.md` — corpus/performance notes and historical records.
 - `scripts/AGENTS.md` — inspection and exploratory scripts.

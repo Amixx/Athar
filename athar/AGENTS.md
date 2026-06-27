@@ -25,7 +25,11 @@ GitHub comments, and other presentation concerns.
   aspect states, placement deltas, data hashes, change scope, and stats.
 - `check.py` evaluates JSON reports or fresh diffs against report-visible
   policy signals only. Exit `2` is policy violation; exit `1` is execution or
-  configuration error.
+  configuration error. Property-level gates (`forbid_property_removal`,
+  `forbid_property_value_change`) read the report's `property_deltas`, so they
+  only fire when `delta/report.py` emitted them (a `property_index` was present).
+  `resolve_policy` accepts a file path or a shipped pack name; packs live as
+  JSON in `athar/policies/` and are wheel-bundled package data.
 - `__main__.py` is the minimal CLI for raw JSON, streaming output, generated-at
   audit timestamps, and `check`.
 

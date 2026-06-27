@@ -1,0 +1,9 @@
+{
+  "description": "Safety-critical attributes: schema, fire ratings and load-bearing flags must not change or disappear.",
+  "forbid_schema_change": true,
+  "forbid_property_removal": "*",
+  "forbid_property_value_change": {
+    "FireRating": "*",
+    "LoadBearing": "*"
+  }
+}

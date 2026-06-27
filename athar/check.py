@@ -12,6 +12,9 @@ from typing import Any
 ASPECTS = {"geometry", "data", "topology", "placement"}
 
 
+_POLICY_PACK_DIR = Path(__file__).parent / "policies"
+
+
 def load_policy(path: str | Path) -> dict[str, Any]:
     """Load a JSON policy file."""
     with open(path, encoding="utf-8") as fh:
@@ -19,6 +22,31 @@ def load_policy(path: str | Path) -> dict[str, Any]:
     if not isinstance(policy, dict):
         raise ValueError("Policy must be a JSON object")
     return policy
+
+
+def builtin_policy_packs() -> dict[str, Path]:
+    """Map each shipped policy pack name to its JSON file."""
+    if not _POLICY_PACK_DIR.is_dir():
+        return {}
+    return {path.stem: path for path in sorted(_POLICY_PACK_DIR.glob("*.json"))}
+
+
+def resolve_policy(name_or_path: str | Path) -> dict[str, Any]:
+    """Load a policy from a file path, or by shipped pack name.
+
+    A value that names an existing file is loaded directly; otherwise it is
+    looked up among the builtin packs (see :func:`builtin_policy_packs`).
+    """
+    path = Path(name_or_path)
+    if path.is_file():
+        return load_policy(path)
+    packs = builtin_policy_packs()
+    if str(name_or_path) in packs:
+        return load_policy(packs[str(name_or_path)])
+    available = ", ".join(packs) or "(none)"
+    raise ValueError(
+        f"Policy {name_or_path!r} is not a file and not a builtin pack. Available packs: {available}"
+    )
 
 
 def load_report(path: str | Path) -> dict[str, Any]:
@@ -44,6 +72,13 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     - ``max_placement_delta_mm``: number, Euclidean translation delta limit
     - ``max_placement_delta_mm_by_class``: ``{"IfcSite": 0}``
     - ``forbid_aspect_changes``: ``{"data": ["IfcWall"], "placement": "*"}`
+    - ``forbid_property_removal``: ``"*"``, a class string, or a list of classes
+      — fail when a matched entity drops a property/quantity value
+    - ``forbid_property_value_change``: ``{"FireRating": "*", "LoadBearing":
+      ["IfcWall"]}`` — fail when a protected property's value changes
+
+    A leading ``description`` (or any other unrecognized key) is ignored, so
+    shipped policy packs can carry their own human-readable label.
     """
 
     violations: list[dict[str, Any]] = []
@@ -54,6 +89,8 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     _check_site_placement(report, policy, violations)
     _check_placement_limits(report, policy, violations)
     _check_aspect_bans(report, policy, violations)
+    _check_property_removal(report, policy, violations)
+    _check_property_value_changes(report, policy, violations)
 
     return {
         "ok": not violations,
@@ -219,6 +256,65 @@ def _check_aspect_bans(report: dict[str, Any], policy: dict[str, Any], violation
                     "code": "aspect_change_forbidden",
                     "message": f"{aspect} changes are forbidden for {len(affected)} entity(s)",
                     "aspect": aspect,
+                    "count": len(affected),
+                    "affected": affected[:20],
+                }
+            )
+
+
+def _check_property_removal(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
+    spec = policy.get("forbid_property_removal")
+    if spec is None:
+        return
+    class_filter = _class_filter(spec, "forbid_property_removal")
+    affected: list[dict[str, Any]] = []
+    for item in report.get("modified", []):
+        if not class_filter(_modified_class(item)):
+            continue
+        removed = (item.get("property_deltas") or {}).get("removed") or []
+        if not removed:
+            continue
+        ref = _modified_entity_ref(item)
+        ref["removed_properties"] = [entry.get("name") for entry in removed]
+        affected.append(ref)
+    if affected:
+        violations.append(
+            {
+                "code": "property_removed",
+                "message": f"Properties removed from {len(affected)} entity(s)",
+                "count": len(affected),
+                "affected": affected[:20],
+            }
+        )
+
+
+def _check_property_value_changes(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
+    spec = policy.get("forbid_property_value_change")
+    if spec is None:
+        return
+    if not isinstance(spec, dict):
+        raise ValueError("forbid_property_value_change must be an object")
+    for prop_name in sorted(spec):
+        class_filter = _class_filter(spec[prop_name], f"forbid_property_value_change.{prop_name}")
+        affected: list[dict[str, Any]] = []
+        for item in report.get("modified", []):
+            if not class_filter(_modified_class(item)):
+                continue
+            changed = (item.get("property_deltas") or {}).get("changed") or []
+            entry = next((e for e in changed if e.get("name") == prop_name), None)
+            if entry is None:
+                continue
+            ref = _modified_entity_ref(item)
+            ref["property"] = prop_name
+            ref["old_value"] = entry.get("old_value")
+            ref["new_value"] = entry.get("new_value")
+            affected.append(ref)
+        if affected:
+            violations.append(
+                {
+                    "code": "property_value_changed",
+                    "message": f"Protected property {prop_name} changed on {len(affected)} entity(s)",
+                    "property": prop_name,
                     "count": len(affected),
                     "affected": affected[:20],
                 }

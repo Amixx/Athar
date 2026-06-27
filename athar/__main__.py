@@ -107,7 +107,7 @@ def _emit_schema_incompatible(exc: SchemaMismatchError) -> None:
 
 
 def _run_check(argv: list[str]) -> int:
-    from athar.check import evaluate_report, load_policy, load_report
+    from athar.check import builtin_policy_packs, evaluate_report, load_report, resolve_policy
 
     parser = argparse.ArgumentParser(prog="athar check")
     parser.add_argument("old", nargs="?", help="Path to old IFC file")
@@ -118,10 +118,26 @@ def _run_check(argv: list[str]) -> int:
     )
     parser.add_argument(
         "--policy",
-        required=True,
-        help="Path to a JSON policy file",
+        help="A JSON policy file path, or the name of a shipped policy pack (see --list-packs)",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("json", "text"),
+        default="json",
+        help="Output format for the verdict (default: json)",
+    )
+    parser.add_argument(
+        "--list-packs",
+        action="store_true",
+        help="List the shipped policy packs and exit",
     )
     args = parser.parse_args(argv)
+
+    if args.list_packs:
+        return _list_policy_packs(builtin_policy_packs)
+
+    if args.policy is None:
+        parser.error("the following arguments are required: --policy")
 
     using_report = args.report is not None
     using_files = args.old is not None or args.new is not None
@@ -131,15 +147,36 @@ def _run_check(argv: list[str]) -> int:
         parser.error("the following arguments are required: old, new unless --report is used")
 
     try:
-        policy = load_policy(args.policy)
+        policy = resolve_policy(args.policy)
         report = load_report(args.report) if using_report else diff_files(args.old, args.new)
         result = evaluate_report(report, policy)
-        json.dump(result, sys.stdout, indent=2)
-        print()
+        if args.format == "text":
+            from athar_qa import render_check_report
+
+            print(render_check_report(result), end="")
+        else:
+            json.dump(result, sys.stdout, indent=2)
+            print()
         return 0 if result["ok"] else 2
     except Exception as exc:  # pragma: no cover - CLI error path
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+
+
+def _list_policy_packs(builtin_policy_packs) -> int:
+    packs = builtin_policy_packs()
+    if not packs:
+        print("No policy packs are installed.")
+        return 0
+    for name, path in packs.items():
+        description = ""
+        try:
+            with open(path, encoding="utf-8") as fh:
+                description = json.load(fh).get("description", "")
+        except Exception:  # pragma: no cover - defensive
+            pass
+        print(f"{name}\t{description}" if description else name)
+    return 0
 
 
 def _generated_at_arg(value: str | None) -> str | None:
