@@ -279,6 +279,22 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
         expectation="large opt-in unrelated-pair stress shape",
         large=True,
     ),
+    Pair(
+        name="large_same_file_gni_p5_arc",
+        kind="large_same_file",
+        builder=_static_pair("gni_p5_arc", "gni_p5_arc", acceptance=True),
+        expectation="76MB same-file: zero semantic changes, isolates parse cost",
+        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        large=True,
+    ),
+    Pair(
+        name="large_same_file_spanish_180mb",
+        kind="large_same_file",
+        builder=_static_pair("spanish", "spanish", acceptance=True),
+        expectation="180MB same-file: zero semantic changes, parse-bound stress",
+        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        large=True,
+    ),
 )
 
 
