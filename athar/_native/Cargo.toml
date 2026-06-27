@@ -1,0 +1,40 @@
+[package]
+name = "athar_native"
+version = "0.1.0"
+edition = "2021"
+description = "Native (Rust/PyO3) acceleration for Athar's bottom signature pipeline (Stage A: Merkle + WL gossip)."
+license = "MIT"
+publish = false
+
+[lib]
+name = "athar_native"
+# cdylib so maturin/PyO3 can produce an importable extension module.
+crate-type = ["cdylib"]
+
+[features]
+# `extension-module` must be OFF when building the test binary (otherwise the
+# linker can't resolve libpython symbols). Default build (maturin) keeps it on;
+# run unit tests with `cargo test --no-default-features`.
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+# abi3-py310 builds a single forward-compatible wheel for CPython 3.10+,
+# which keeps the wheel/CI story simple (one wheel per platform, not per
+# minor Python version).
+pyo3 = { version = "0.22", default-features = false, features = ["abi3-py310", "macros"] }
+sha2 = "0.10"
+hex = "0.4"
+# Only used to deserialize the small per-class schema descriptor map (~100
+# classes) that Python builds once from ifcopenshell and hands to Rust.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# NFC normalization of string attribute values, matching the Python parser's
+# unicodedata.normalize("NFC", ...).
+unicode-normalization = "0.1"
+
+[profile.release]
+# The recursion-heavy Merkle pass benefits from aggressive inlining; LTO is
+# cheap here because the crate is tiny.
+lto = true
+codegen-units = 1
