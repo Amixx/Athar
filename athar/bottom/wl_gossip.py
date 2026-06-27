@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections import defaultdict, deque
 
+from ._native import native
 from .edge_policy import DOMAIN_SPATIAL, DOMAIN_TOPOLOGY, EDGE_CONTEXT, EDGE_INCLUDE
 from .types import ClassifiedEdge, ParseResult
 
@@ -17,10 +18,17 @@ def compute_topology_hashes(
     context_k: int = 1,
     spatial_k: int = 2,
 ) -> dict[int, str]:
-    """Compute VH_Topology from context + spatial neighborhood gossip."""
+    """Compute VH_Topology from context + spatial neighborhood gossip.
+
+    Dispatches to the native (Rust) accelerator when ``athar_native`` is
+    importable, otherwise runs the pure-Python implementation. Both paths are
+    byte-identical (see ``tests/test_native_parity.py``).
+    """
     entities = parse_result.entities
     context_adj, spatial_adj = _build_adjacency(edges)
 
+    # The self seed is one cheap hash per entity; keep it in Python so the only
+    # work crossing into Rust is the expensive BFS neighbor gossip.
     seeds: dict[int, str] = {}
     for step_id, entity in entities.items():
         vh_geometry = merkle_hashes.get(step_id, {}).get("geometry", "")
@@ -29,6 +37,16 @@ def compute_topology_hashes(
         # appears in vh_data on the edited product; including data in topology
         # seeds turns that one edit into many transitive neighbor changes.
         seeds[step_id] = _sha256(f"{entity.canonical_class}|{vh_geometry}")
+
+    native_mod = native()
+    if native_mod is not None:
+        return native_mod.compute_topology_hashes(
+            seeds,
+            {step: sorted(targets) for step, targets in context_adj.items()},
+            {step: sorted(targets) for step, targets in spatial_adj.items()},
+            context_k,
+            spatial_k,
+        )
 
     out: dict[int, str] = {}
     for step_id in sorted(entities):

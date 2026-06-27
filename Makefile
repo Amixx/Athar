@@ -7,7 +7,7 @@ BENCHMARK_PAGE ?= $(BENCHMARK_DIR)/site/index.html
 BENCHMARK_REPEATS ?= 3
 BENCHMARK_TIMEOUT_S ?= 300
 
-.PHONY: help dev-setup benchmark-setup benchmark-ui-setup benchmark-run benchmark-page benchmark-ui benchmark-ui-refresh test test-large-acceptance viewer-build viewer-test
+.PHONY: help dev-setup benchmark-setup benchmark-ui-setup benchmark-run benchmark-page benchmark-ui benchmark-ui-refresh test test-large-acceptance native-build native-clean viewer-build viewer-test
 
 help:
 	@printf "%s\n" \
@@ -21,6 +21,8 @@ help:
 	"  make benchmark-ui-refresh   Regenerate benchmark JSON, then serve dashboard locally" \
 	"  make test                   Run the default test suite (fast; small real IFC fixtures)" \
 	"  make test-large-acceptance  Run opt-in large IFC acceptance checks" \
+	"  make native-build           Build the optional Rust accelerator into the venv (requires cargo + maturin)" \
+	"  make native-clean           Remove the Rust build artifacts (athar/_native/target)" \
 	"  make viewer-build           Build the viewer SPA into viewer/dist (requires bun)" \
 	"  make viewer-test            Viewer unit tests + headless e2e smoke (requires bun)"
 
@@ -58,6 +60,17 @@ test:
 
 test-large-acceptance:
 	ATHAR_RUN_LARGE_ACCEPTANCE=1 $(PYTHON) -m pytest tests/test_acceptance_large_ifc.py -q --durations=5
+
+# Optional native accelerator (Stage A: Merkle + WL gossip). Builds the Rust
+# extension straight into the active venv via maturin; pure-Python users never
+# need to run this — athar.bottom falls back automatically when it is absent.
+native-build:
+	@$(PYTHON) -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('maturin') else 1)" \
+		|| $(PYTHON) -m pip install "maturin>=1.5,<2.0"
+	$(PYTHON) -m maturin develop --release --manifest-path athar/_native/Cargo.toml --interpreter $(PYTHON)
+
+native-clean:
+	rm -rf athar/_native/target
 
 viewer-build:
 	cd viewer && bun install && bun run build

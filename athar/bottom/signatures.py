@@ -4,18 +4,100 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 
+from ._native import native
 from .constants import CANON_VERSION
 from .edge_policy import DOMAIN_DATA, DOMAIN_GEOMETRY, EDGE_INCLUDE, edge_stats, build_edge_set
 from .merkle import _attribute_matches_domain, _encode_attr_value
 from .merkle import compute_merkle_hashes
 from .parser import parse_ifc
 from .spatial import build_spatial_features
-from .types import ClassifiedEdge, ParsedEntity, SignatureBundle, SignatureVector
+from .types import ClassifiedEdge, ParseDiagnostics, ParsedEntity, SignatureBundle, SignatureVector
 from .wl_gossip import compute_topology_hashes
 
 
 def build_signature_bundle(filepath: str) -> SignatureBundle:
-    """Run bottom-layer extraction and return first-class signatures."""
+    """Run bottom-layer extraction and return first-class signatures.
+
+    Uses the native (Rust) parse path when ``athar_native`` is available — it
+    tokenizes the STEP file and runs the whole pipeline in Rust, returning only
+    signatures, so the file's entities never materialize as Python objects.
+    Falls back to the pure-Python pipeline when native is absent
+    (``ATHAR_NO_NATIVE=1`` or no compiled wheel). The native path is not
+    byte-identical with Python — it owns its own canonical form.
+    """
+    native_mod = native()
+    if native_mod is not None:
+        return _build_signature_bundle_native(filepath, native_mod)
+    return _build_signature_bundle_python(filepath)
+
+
+def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle:
+    import ifcopenshell
+
+    from .native_schema import schema_descriptors_json
+    from .parser import _assert_supported_schema, _extract_unit_context
+
+    # ifcopenshell is used only for the schema name + unit factors (cheap,
+    # ~2s); it is released before the native parse so the file's entities are
+    # never held as Python/C++ model state during signature building.
+    ifc = ifcopenshell.open(filepath)
+    schema = str(ifc.schema or "")
+    _assert_supported_schema(schema)
+    unit_factors = _extract_unit_context(ifc).get("unit_factors", {})
+    del ifc
+
+    schema_json = schema_descriptors_json(schema)
+    sigs, edge_stats_map, (dangling, cycle_breaks, warnings) = native_mod.build_signature_bundle(
+        filepath, schema_json, unit_factors
+    )
+
+    signatures: dict[int, SignatureVector] = {}
+    for (
+        step_id,
+        guid,
+        name,
+        entity_type,
+        canonical_class,
+        vh_geometry,
+        vh_data,
+        vh_topology,
+        placement,
+        centroid,
+        aabb,
+        data_facts,
+    ) in sigs:
+        signatures[step_id] = SignatureVector(
+            step_id=step_id,
+            guid=guid,
+            name=name,
+            entity_type=entity_type,
+            canonical_class=canonical_class,
+            vh_geometry=vh_geometry,
+            vh_data=vh_data,
+            vh_topology=vh_topology,
+            placement=tuple(placement) if placement is not None else None,
+            centroid=tuple(centroid) if centroid is not None else None,
+            aabb=tuple(aabb) if aabb is not None else None,
+            canon_version=CANON_VERSION,
+            data_facts=tuple((path, value) for path, value in data_facts),
+        )
+
+    diagnostics = ParseDiagnostics(
+        dangling_refs=dangling,
+        cycle_breaks=cycle_breaks,
+        warnings=list(warnings),
+    )
+    return SignatureBundle(
+        filepath=filepath,
+        schema=schema,
+        canon_version=CANON_VERSION,
+        signatures=signatures,
+        diagnostics=diagnostics,
+        edge_stats=dict(edge_stats_map),
+    )
+
+
+def _build_signature_bundle_python(filepath: str) -> SignatureBundle:
     parsed = parse_ifc(filepath)
     edges = build_edge_set(parsed)
     merkle_hashes = compute_merkle_hashes(parsed, edges)

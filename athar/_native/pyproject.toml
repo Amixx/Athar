@@ -1,0 +1,20 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "athar_native"
+description = "Native acceleration for Athar's bottom signature pipeline."
+requires-python = ">=3.10"
+version = "0.1.0"
+classifiers = [
+  "Programming Language :: Rust",
+  "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.maturin]
+# Single pure-Rust extension module imported as `athar_native`. It is an
+# OPTIONAL accelerator: athar.bottom imports it when present and silently
+# falls back to the pure-Python implementation when it is not, so pip users
+# who never build this crate are unaffected.
+module-name = "athar_native"

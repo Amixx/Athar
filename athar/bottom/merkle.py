@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections import defaultdict
 
+from ._native import native
 from .edge_policy import DOMAIN_DATA, DOMAIN_GEOMETRY, DOMAIN_PLACEMENT, EDGE_INCLUDE
 from .types import ClassifiedEdge, ParseResult, ParsedEntity
 
@@ -30,9 +31,24 @@ def compute_merkle_hashes(
     parse_result: ParseResult,
     edges: list[ClassifiedEdge],
 ) -> dict[int, dict[str, str]]:
-    """Return per-entity domain hashes for geometry/data."""
-    entities = parse_result.entities
+    """Return per-entity domain hashes for geometry/data.
+
+    Dispatches to the native (Rust) accelerator when ``athar_native`` is
+    importable, otherwise runs the pure-Python implementation. Both paths are
+    byte-identical (see ``tests/test_native_parity.py``).
+    """
     adjacency = _build_include_adjacency(edges)
+    native_mod = native()
+    if native_mod is not None:
+        return _compute_merkle_hashes_native(parse_result, adjacency, native_mod)
+    return _compute_merkle_hashes_python(parse_result, adjacency)
+
+
+def _compute_merkle_hashes_python(
+    parse_result: ParseResult,
+    adjacency: dict[str, dict[int, list[tuple[str, int]]]],
+) -> dict[int, dict[str, str]]:
+    entities = parse_result.entities
     out: dict[int, dict[str, str]] = {}
     cache: dict[str, dict[int, str]] = {DOMAIN_GEOMETRY: {}, DOMAIN_DATA: {}}
     visiting: dict[str, set[int]] = {DOMAIN_GEOMETRY: set(), DOMAIN_DATA: set()}
@@ -58,6 +74,48 @@ def compute_merkle_hashes(
         )
         out[step_id] = {DOMAIN_GEOMETRY: geom, DOMAIN_DATA: data}
     return out
+
+
+def _compute_merkle_hashes_native(
+    parse_result: ParseResult,
+    adjacency: dict[str, dict[int, list[tuple[str, int]]]],
+    native_mod,
+) -> dict[int, dict[str, str]]:
+    # Python owns the byte-exact canonicalization: it precomputes the
+    # domain-filtered, JSON-encoded attribute parts per entity. Rust only does
+    # the sha256 recursion + cycle detection, so no ifcopenshell object and no
+    # encoding logic crosses the FFI boundary.
+    entities = parse_result.entities
+    classes: dict[int, str] = {}
+    geom_parts: dict[int, list[str]] = {}
+    data_parts: dict[int, list[str]] = {}
+    for step_id, entity in entities.items():
+        classes[step_id] = entity.canonical_class
+        geom = _attribute_parts(entity, domain=DOMAIN_GEOMETRY)
+        if geom:
+            geom_parts[step_id] = geom
+        data = _attribute_parts(entity, domain=DOMAIN_DATA)
+        if data:
+            data_parts[step_id] = data
+
+    result, cycles = native_mod.compute_merkle_hashes(
+        classes,
+        geom_parts,
+        data_parts,
+        dict(adjacency[DOMAIN_GEOMETRY]),
+        dict(adjacency[DOMAIN_DATA]),
+    )
+
+    for domain, step_id in cycles:
+        parse_result.diagnostics.cycle_breaks += 1
+        parse_result.diagnostics.warnings.append(
+            f"Cycle detected in {domain} Merkle pass at step #{step_id}; back-edge ignored."
+        )
+
+    return {
+        step_id: {DOMAIN_GEOMETRY: geom_hash, DOMAIN_DATA: data_hash}
+        for step_id, (geom_hash, data_hash) in result.items()
+    }
 
 
 def _build_include_adjacency(edges: list[ClassifiedEdge]) -> dict[str, dict[int, list[tuple[str, int]]]]:
