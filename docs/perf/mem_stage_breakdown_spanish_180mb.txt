@@ -1,0 +1,13 @@
+Rust heap (tracking allocator), per internal stage:
+stage                     sec     live_mb     peak_mb    Δlive_mb
+enter                   0.000         0.4         0.4        +0.4
+read_bytes              0.043       173.8       173.8      +173.4
+tokenize                1.723      1520.0      1520.0     +1346.2
+canonicalize            9.222      3494.2      3494.2     +1974.2
+build_edges             2.918      3854.1      3932.0      +359.9
+merkle_inputs           6.344      4754.0      4754.4      +899.9
+merkle                 30.558      5274.6      5849.5      +520.6
+wl_topology            12.520      5828.9      5847.1      +554.3
+spatial                 1.299      5909.8      5920.3       +81.0
+assemble_signatures     5.623      6431.0      6438.6      +521.2
+diagnostics             0.402      6431.0      6431.0        +0.0

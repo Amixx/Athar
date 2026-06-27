@@ -8,6 +8,8 @@
 //! float noise.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
+use std::rc::Rc;
 
 use unicode_normalization::UnicodeNormalization;
 
@@ -33,7 +35,10 @@ pub struct Entity {
 }
 
 pub struct RefOut {
-    pub attr_name: String,
+    /// Interned attribute name. There are only a few hundred distinct attribute
+    /// names in a schema but tens of millions of references, so this is a shared
+    /// `Rc<str>` (a refcount bump per ref) rather than a fresh `String` each time.
+    pub attr_name: Rc<str>,
     pub target: i64,
 }
 
@@ -117,6 +122,11 @@ pub fn canonicalize(
     let mut point_coords: HashMap<i64, [f64; 3]> = HashMap::new();
     let mut dir_ratios: HashMap<i64, [f64; 3]> = HashMap::new();
     let mut unknown: HashMap<String, ()> = HashMap::new();
+    // Intern attribute names once (keys borrow the schema, which outlives this
+    // function): every reference then shares one `Rc<str>` instead of cloning
+    // the name. Schemas have a few hundred names; files have tens of millions
+    // of refs.
+    let mut attr_intern: HashMap<&str, Rc<str>> = HashMap::new();
 
     for rec in records {
         let desc = match schema.get(&rec.keyword) {
@@ -148,26 +158,44 @@ pub fn canonicalize(
         for i in 0..n {
             let attr = &desc.attrs[i];
             let token = &rec.attrs[i];
+            let attr_rc = attr_intern
+                .entry(attr.name.as_str())
+                .or_insert_with(|| Rc::from(attr.name.as_str()))
+                .clone();
             if attr.name == "GlobalId" || attr.name == "OwnerHistory" {
                 // Still collect refs (OwnerHistory etc.), but never hash these.
-                collect_refs(token, &attr.name, &mut refs);
+                collect_refs(token, &attr_rc, &mut refs);
                 continue;
             }
-            collect_refs(token, &attr.name, &mut refs);
+            collect_refs(token, &attr_rc, &mut refs);
 
             let geom = matches_geometry(&attr.name);
             let data = matches_data(&attr.name);
             if !geom && !data {
                 continue;
             }
-            if let Some(enc) =
-                encode_attr(token, &attr.shape, attr.direction, unit_factors)
-            {
-                if geom {
-                    geom_parts.push(format!("attr={}:{}", attr.name, enc));
+            // A plain top-level entity ref contributes a Merkle edge, not a part
+            // (mirrors `encode_attr` returning None). Skip before allocating.
+            let ref_skip =
+                matches!(token, Token::Ref(_)) && !matches!(attr.shape, Shape::Select);
+            if !ref_skip {
+                // Build the "attr=<name>:<enc>" part directly in one buffer,
+                // encoding the value in place — no intermediate `enc` String, no
+                // nested `format!`/`join` allocations.
+                let mut part = String::new();
+                part.push_str("attr=");
+                part.push_str(&attr.name);
+                part.push(':');
+                encode_inner_into(&mut part, token, &attr.shape, attr.direction, unit_factors);
+                if geom && data {
+                    geom_parts.push(part.clone());
+                    data_parts.push(part);
+                } else if geom {
+                    geom_parts.push(part);
+                } else {
+                    data_parts.push(part);
                 }
                 if data {
-                    data_parts.push(format!("attr={}:{}", attr.name, enc));
                     data_facts.push((
                         attr.name.clone(),
                         human_value(token, &attr.shape, attr.direction, unit_factors),
@@ -256,10 +284,10 @@ fn coords_from_first_list(
     Some(out)
 }
 
-fn collect_refs(token: &Token, attr_name: &str, refs: &mut Vec<RefOut>) {
+fn collect_refs(token: &Token, attr_name: &Rc<str>, refs: &mut Vec<RefOut>) {
     match token {
         Token::Ref(target) => refs.push(RefOut {
-            attr_name: attr_name.to_string(),
+            attr_name: Rc::clone(attr_name),
             target: *target,
         }),
         Token::List(items) => {
@@ -320,124 +348,177 @@ fn round_half_even(x: f64) -> i64 {
 
 // ----- canonical-string encoding ------------------------------------------
 
-/// Encode a top-level attribute value. Returns `None` when the attribute is a
-/// plain entity reference (it contributes a Merkle edge, not a hashed part) —
-/// matching `merkle._encode_attr_value` returning `None` for `{kind: ref}`.
-fn encode_attr(
-    token: &Token,
-    shape: &Shape,
-    attr_dir: bool,
-    units: &HashMap<String, f64>,
-) -> Option<String> {
-    if let (Token::Ref(_), false) = (token, matches!(shape, Shape::Select)) {
-        return None;
-    }
-    Some(encode_inner(token, shape, attr_dir, units))
-}
+// The encoders append into a caller-provided buffer (`*_into`) so a whole
+// attribute value — including nested aggregates and typed wrappers — is built
+// with a single allocation (the buffer) instead of a String per node plus
+// per-aggregate `Vec<String>` + `join`. Output is byte-identical to the former
+// returning versions. Thin `String`-returning wrappers are kept for unit tests.
 
-fn encode_inner(
+fn encode_inner_into(
+    out: &mut String,
     token: &Token,
     shape: &Shape,
     attr_dir: bool,
     units: &HashMap<String, f64>,
-) -> String {
+) {
     match shape {
-        Shape::Select => encode_select(token, attr_dir, units),
+        Shape::Select => encode_select_into(out, token, attr_dir, units),
         Shape::Agg { sorted, elem } => match token {
             Token::List(items) => {
-                let mut encs: Vec<String> = items
-                    .iter()
-                    .map(|it| encode_inner(it, elem, attr_dir, units))
-                    .collect();
+                out.push('[');
                 if *sorted {
+                    // Sorted set/bag: still need the elements as separate strings
+                    // to sort, but only this aggregate's direct children.
+                    let mut encs: Vec<String> = items
+                        .iter()
+                        .map(|it| {
+                            let mut s = String::new();
+                            encode_inner_into(&mut s, it, elem, attr_dir, units);
+                            s
+                        })
+                        .collect();
                     encs.sort();
+                    for (i, e) in encs.iter().enumerate() {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        out.push_str(e);
+                    }
+                } else {
+                    for (i, it) in items.iter().enumerate() {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        encode_inner_into(out, it, elem, attr_dir, units);
+                    }
                 }
-                format!("[{}]", encs.join(","))
+                out.push(']');
             }
-            Token::Null => "$".to_string(),
-            other => encode_inner(other, elem, attr_dir, units),
+            Token::Null => out.push('$'),
+            other => encode_inner_into(out, other, elem, attr_dir, units),
         },
-        Shape::Leaf { m } => encode_scalar(token, *m, attr_dir, units),
+        Shape::Leaf { m } => encode_scalar_into(out, token, *m, attr_dir, units),
     }
 }
 
-fn encode_scalar(
+fn encode_scalar_into(
+    out: &mut String,
     token: &Token,
     measure: Measure,
     attr_dir: bool,
     units: &HashMap<String, f64>,
-) -> String {
+) {
     match token {
-        Token::Ref(_) => "R".to_string(),
-        Token::Null => "$".to_string(),
-        Token::Derived => "*".to_string(),
-        Token::Int(i) => format!("i{i}"),
-        Token::Real(r) => format!("r{}", quantize_real(*r, measure, attr_dir, units)),
-        Token::Str(s) => encode_string(s),
-        Token::Enum(e) => encode_enum(e),
-        Token::Typed(kw, inner) => encode_typed(kw, inner, attr_dir, units),
+        Token::Ref(_) => out.push('R'),
+        Token::Null => out.push('$'),
+        Token::Derived => out.push('*'),
+        Token::Int(i) => {
+            out.push('i');
+            let _ = write!(out, "{i}");
+        }
+        Token::Real(r) => {
+            out.push('r');
+            let _ = write!(out, "{}", quantize_real(*r, measure, attr_dir, units));
+        }
+        Token::Str(s) => encode_string_into(out, s),
+        Token::Enum(e) => encode_enum_into(out, e),
+        Token::Typed(kw, inner) => encode_typed_into(out, kw, inner, attr_dir, units),
         Token::List(items) => {
-            let encs: Vec<String> = items
-                .iter()
-                .map(|it| encode_scalar(it, measure, attr_dir, units))
-                .collect();
-            format!("[{}]", encs.join(","))
+            out.push('[');
+            for (i, it) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                encode_scalar_into(out, it, measure, attr_dir, units);
+            }
+            out.push(']');
         }
     }
 }
 
-fn encode_string(s: &str) -> String {
+fn encode_string_into(out: &mut String, s: &str) {
     let n = nfc_strip(s);
-    let up = n.to_uppercase();
-    if up == ".TRUE." || up == ".T." {
-        "b1".to_string()
-    } else if up == ".FALSE." || up == ".F." {
-        "b0".to_string()
+    // ASCII-case-insensitive compare to the STEP logical literals — equivalent
+    // to the old `to_uppercase()` for these ASCII patterns, but allocation-free.
+    if n.eq_ignore_ascii_case(".TRUE.") || n.eq_ignore_ascii_case(".T.") {
+        out.push_str("b1");
+    } else if n.eq_ignore_ascii_case(".FALSE.") || n.eq_ignore_ascii_case(".F.") {
+        out.push_str("b0");
     } else {
-        format!("s'{n}")
+        out.push_str("s'");
+        out.push_str(&n);
     }
 }
 
-fn encode_enum(e: &str) -> String {
-    match e.to_uppercase().as_str() {
-        "T" | "TRUE" => "b1".to_string(),
-        "F" | "FALSE" => "b0".to_string(),
-        "U" | "UNKNOWN" => "$".to_string(),
-        _ => format!("e{e}"),
+fn encode_enum_into(out: &mut String, e: &str) {
+    if e.eq_ignore_ascii_case("T") || e.eq_ignore_ascii_case("TRUE") {
+        out.push_str("b1");
+    } else if e.eq_ignore_ascii_case("F") || e.eq_ignore_ascii_case("FALSE") {
+        out.push_str("b0");
+    } else if e.eq_ignore_ascii_case("U") || e.eq_ignore_ascii_case("UNKNOWN") {
+        out.push('$');
+    } else {
+        out.push('e');
+        out.push_str(e);
     }
 }
 
-fn encode_typed(
+fn encode_typed_into(
+    out: &mut String,
     keyword: &str,
     inner: &[Token],
     attr_dir: bool,
     units: &HashMap<String, f64>,
-) -> String {
+) {
     let measure = Measure::from_keyword(keyword).unwrap_or(if attr_dir {
         Measure::Direction
     } else {
         Measure::Default
     });
-    let inner_enc = if inner.len() == 1 {
-        encode_scalar(&inner[0], measure, attr_dir, units)
+    out.push_str("T(");
+    out.push_str(keyword);
+    out.push(':');
+    if inner.len() == 1 {
+        encode_scalar_into(out, &inner[0], measure, attr_dir, units);
     } else {
-        let encs: Vec<String> = inner
-            .iter()
-            .map(|it| encode_scalar(it, measure, attr_dir, units))
-            .collect();
-        format!("[{}]", encs.join(","))
-    };
-    format!("T({keyword}:{inner_enc})")
+        out.push('[');
+        for (i, it) in inner.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            encode_scalar_into(out, it, measure, attr_dir, units);
+        }
+        out.push(']');
+    }
+    out.push(')');
 }
 
-fn encode_select(token: &Token, attr_dir: bool, units: &HashMap<String, f64>) -> String {
+fn encode_select_into(
+    out: &mut String,
+    token: &Token,
+    attr_dir: bool,
+    units: &HashMap<String, f64>,
+) {
     match token {
-        Token::Ref(_) => "sel(R)".to_string(),
+        Token::Ref(_) => out.push_str("sel(R)"),
         Token::Typed(kw, inner) => {
-            format!("sel({})", encode_typed(kw, inner, attr_dir, units))
+            out.push_str("sel(");
+            encode_typed_into(out, kw, inner, attr_dir, units);
+            out.push(')');
         }
-        other => format!("sel({})", encode_scalar(other, Measure::Default, attr_dir, units)),
+        other => {
+            out.push_str("sel(");
+            encode_scalar_into(out, other, Measure::Default, attr_dir, units);
+            out.push(')');
+        }
     }
+}
+
+#[cfg(test)]
+fn encode_string(s: &str) -> String {
+    let mut out = String::new();
+    encode_string_into(&mut out, s);
+    out
 }
 
 // ----- human-readable rendering (report data facts) -----------------------

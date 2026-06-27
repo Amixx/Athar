@@ -1,0 +1,127 @@
+{
+  "environment": {
+    "git_commit": "b3d95d5",
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "python": "3.12.0",
+    "sample_interval_s": 0.05
+  },
+  "files": [
+    {
+      "path": "real-world-test/real-world-spanish-180mb.ifc",
+      "size_mb": 181.8
+    }
+  ],
+  "mode": "double",
+  "peak_rss_mb": {
+    "baseline_at_start": 22.8,
+    "getrusage_true_peak": 4320.0,
+    "sampler": 4242.5
+  },
+  "phases": [
+    {
+      "peak_mb": 1635.2,
+      "phase": "ifc_open",
+      "rss_delta_mb": 1536.0,
+      "rss_enter_mb": 91.0,
+      "rss_exit_mb": 1627.0,
+      "seconds": 16.022
+    },
+    {
+      "peak_mb": 1738.4,
+      "phase": "extract_properties",
+      "rss_delta_mb": -165.3,
+      "rss_enter_mb": 1627.0,
+      "rss_exit_mb": 1461.7,
+      "seconds": 13.397
+    },
+    {
+      "peak_mb": 1486.0,
+      "phase": "ifc_release",
+      "rss_delta_mb": 24.3,
+      "rss_enter_mb": 1461.7,
+      "rss_exit_mb": 1486.0,
+      "seconds": 0.891
+    },
+    {
+      "peak_mb": 4194.1,
+      "phase": "native_build",
+      "rss_delta_mb": 2707.0,
+      "rss_enter_mb": 1487.1,
+      "rss_exit_mb": 4194.1,
+      "seconds": 100.526
+    },
+    {
+      "peak_mb": 4242.5,
+      "phase": "materialize_signatures",
+      "rss_delta_mb": -49.4,
+      "rss_enter_mb": 4198.1,
+      "rss_exit_mb": 4148.7,
+      "seconds": 1.472
+    },
+    {
+      "peak_mb": 4242.5,
+      "phase": "build_first",
+      "rss_delta_mb": 4031.2,
+      "rss_enter_mb": 23.0,
+      "rss_exit_mb": 4054.2,
+      "seconds": 133.655
+    },
+    {
+      "peak_mb": 4078.2,
+      "phase": "ifc_open",
+      "rss_delta_mb": -990.8,
+      "rss_enter_mb": 4054.3,
+      "rss_exit_mb": 3063.5,
+      "seconds": 25.174
+    },
+    {
+      "peak_mb": 3083.8,
+      "phase": "extract_properties",
+      "rss_delta_mb": -545.2,
+      "rss_enter_mb": 3055.4,
+      "rss_exit_mb": 2510.2,
+      "seconds": 15.646
+    },
+    {
+      "peak_mb": 2702.3,
+      "phase": "ifc_release",
+      "rss_delta_mb": 192.1,
+      "rss_enter_mb": 2510.2,
+      "rss_exit_mb": 2702.3,
+      "seconds": 1.055
+    },
+    {
+      "peak_mb": 3512.0,
+      "phase": "native_build",
+      "rss_delta_mb": 809.6,
+      "rss_enter_mb": 2702.4,
+      "rss_exit_mb": 3512.0,
+      "seconds": 80.388
+    },
+    {
+      "peak_mb": 3852.9,
+      "phase": "materialize_signatures",
+      "rss_delta_mb": 331.9,
+      "rss_enter_mb": 3521.0,
+      "rss_exit_mb": 3852.9,
+      "seconds": 1.037
+    },
+    {
+      "peak_mb": 4078.2,
+      "phase": "build_second",
+      "rss_delta_mb": -379.3,
+      "rss_enter_mb": 4054.3,
+      "rss_exit_mb": 3675.0,
+      "seconds": 125.127
+    }
+  ],
+  "started_at": "2026-06-27T16:28:28",
+  "summary": {
+    "resident_one_bundle_mb": 4054.3,
+    "resident_two_bundles_mb": 3664.7,
+    "schema": "IFC2X3",
+    "second_bundle_marginal_mb": -389.6,
+    "signatures": 44389
+  },
+  "total_seconds": 260.222
+}

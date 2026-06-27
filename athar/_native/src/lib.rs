@@ -33,6 +33,200 @@ fn sha256_hex(payload: &[u8]) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Per-stage memory/time profiler
+// ---------------------------------------------------------------------------
+//
+// `build_bundle` is one opaque call from Python's perspective, so the
+// `profile_memory.py` phase view bottoms out at "native_build". This breaks that
+// stage open from the inside.
+//
+// Rust's std has no RSS API, and shelling to `ps` would measure OS resident
+// pages — which include the lingering ifcopenshell C++ model and freed-but-
+// unreturned pages, i.e. exactly the noise that made our RSS readings jump ~20%
+// run-to-run. Instead we install a tracking global allocator: two atomics count
+// live Rust heap bytes and a high-water mark. This measures the native
+// pipeline's *own* working set precisely and deterministically (Python's heap
+// uses its own allocator and is not counted). The OS-level RSS picture still
+// comes from `profile_memory.py`; this is the Rust-internal breakdown.
+//
+// The counting allocator is always active (a global allocator cannot be toggled
+// at runtime) and adds two relaxed atomic ops per allocation. The per-stage
+// report is opt-in via ATHAR_NATIVE_PROFILE=1 (stderr only, no FFI change).
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);
+static PEAK_BYTES: AtomicUsize = AtomicUsize::new(0);
+// Churn: cumulative bytes ever handed out and number of alloc events. Compared
+// against peak live, these answer "how much transient work are we doing" — a
+// high total-allocated / peak-live ratio means we rebuild/copy our working set
+// many times over (a better "are we doing the right thing" signal than peak).
+static ALLOC_BYTES: AtomicUsize = AtomicUsize::new(0);
+static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+struct CountingAlloc;
+
+unsafe impl GlobalAlloc for CountingAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ptr = System.alloc(layout);
+        if !ptr.is_null() {
+            let now = LIVE_BYTES.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+            PEAK_BYTES.fetch_max(now, Ordering::Relaxed);
+            ALLOC_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
+            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        ptr
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        LIVE_BYTES.fetch_sub(layout.size(), Ordering::Relaxed);
+        System.dealloc(ptr, layout);
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let new_ptr = System.realloc(ptr, layout, new_size);
+        if !new_ptr.is_null() {
+            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
+            if new_size >= layout.size() {
+                let grow = new_size - layout.size();
+                let now = LIVE_BYTES.fetch_add(grow, Ordering::Relaxed) + grow;
+                PEAK_BYTES.fetch_max(now, Ordering::Relaxed);
+                ALLOC_BYTES.fetch_add(grow, Ordering::Relaxed);
+            } else {
+                LIVE_BYTES.fetch_sub(layout.size() - new_size, Ordering::Relaxed);
+            }
+        }
+        new_ptr
+    }
+}
+
+#[global_allocator]
+static GLOBAL: CountingAlloc = CountingAlloc;
+
+fn live_mb() -> f64 {
+    LIVE_BYTES.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0)
+}
+
+/// Reset the high-water mark to the current live total, so the next interval's
+/// peak reflects only that stage.
+fn reset_peak() {
+    PEAK_BYTES.store(LIVE_BYTES.load(Ordering::Relaxed), Ordering::Relaxed);
+}
+
+fn peak_mb() -> f64 {
+    PEAK_BYTES.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0)
+}
+
+fn alloc_total_mb() -> f64 {
+    ALLOC_BYTES.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0)
+}
+
+fn alloc_count() -> u64 {
+    ALLOC_COUNT.load(Ordering::Relaxed) as u64
+}
+
+struct StageRow {
+    name: String,
+    secs: f64,
+    live_mb: f64,
+    peak_mb: f64,
+    churn_mb: f64, // bytes allocated during this stage
+    allocs: u64,   // alloc events during this stage
+}
+
+struct StageProfiler {
+    enabled: bool,
+    last: std::time::Instant,
+    prev_alloc_mb: f64,
+    prev_allocs: u64,
+    rows: Vec<StageRow>,
+}
+
+impl StageProfiler {
+    fn new() -> Self {
+        let enabled = std::env::var("ATHAR_NATIVE_PROFILE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        reset_peak();
+        Self {
+            enabled,
+            last: std::time::Instant::now(),
+            prev_alloc_mb: alloc_total_mb(),
+            prev_allocs: alloc_count(),
+            rows: Vec::new(),
+        }
+    }
+
+    /// Record the stage that just finished: wall time, live heap now, peak live
+    /// during it, and the allocation churn (bytes + events) it produced.
+    fn mark(&mut self, name: &str) {
+        if !self.enabled {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let secs = now.duration_since(self.last).as_secs_f64();
+        self.last = now;
+        let alloc_mb = alloc_total_mb();
+        let allocs = alloc_count();
+        self.rows.push(StageRow {
+            name: name.to_string(),
+            secs,
+            live_mb: live_mb(),
+            peak_mb: peak_mb(),
+            churn_mb: alloc_mb - self.prev_alloc_mb,
+            allocs: allocs - self.prev_allocs,
+        });
+        self.prev_alloc_mb = alloc_mb;
+        self.prev_allocs = allocs;
+        reset_peak();
+    }
+
+    fn report(&self) {
+        if !self.enabled {
+            return;
+        }
+        eprintln!("[native-profile] Rust heap (tracking allocator), per internal stage:");
+        eprintln!(
+            "[native-profile] {:<20}{:>8}{:>11}{:>11}{:>11}{:>11}{:>12}",
+            "stage", "sec", "live_mb", "peak_mb", "Δlive_mb", "churn_mb", "allocs"
+        );
+        let mut prev = 0.0_f64;
+        for r in &self.rows {
+            eprintln!(
+                "[native-profile] {:<20}{:>8.3}{:>11.1}{:>11.1}{:>+11.1}{:>11.1}{:>12}",
+                r.name, r.secs, r.live_mb, r.peak_mb, r.live_mb - prev, r.churn_mb, r.allocs
+            );
+            prev = r.live_mb;
+        }
+        // Efficiency proxies: total churn vs the peak working set it built.
+        let total_churn = alloc_total_mb();
+        let total_allocs = alloc_count();
+        let peak_live = self
+            .rows
+            .iter()
+            .map(|r| r.peak_mb)
+            .fold(0.0_f64, f64::max);
+        let churn_factor = if peak_live > 0.0 { total_churn / peak_live } else { 0.0 };
+        // Deterministic memory-cost: integrate live heap (exact, allocator-noise
+        // free) over stage wall time. Trapezoidal between marks. Unlike the
+        // RSS-based GB·s in profile_memory.py, the memory factor here does not
+        // vary run-to-run — only the time factor does, so it is a far cleaner
+        // "GB·s" proxy for the native pipeline.
+        let mut heap_mb_s = 0.0_f64;
+        let mut prev_live = 0.0_f64;
+        for r in &self.rows {
+            heap_mb_s += (prev_live + r.live_mb) / 2.0 * r.secs;
+            prev_live = r.live_mb;
+        }
+        eprintln!(
+            "[native-profile] TOTAL  churn={:.0} MB  allocs={}  peak_live={:.0} MB  churn_factor={:.1}x  heap={:.1} GB·s",
+            total_churn, total_allocs, peak_live, churn_factor, heap_mb_s / 1024.0
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Merkle pass
 // ---------------------------------------------------------------------------
 
@@ -75,29 +269,41 @@ fn hash_entity(
 
     visiting.insert(step_id);
 
-    let mut payload_parts: Vec<String> = Vec::new();
-    payload_parts.push(format!("class={class}"));
-    if let Some(entity_parts) = parts.get(&step_id) {
-        payload_parts.extend(entity_parts.iter().cloned());
-    }
-
-    let mut child_entries: Vec<(String, String)> = Vec::new();
+    // Collect child hashes first (recursion); borrow labels rather than clone.
+    let mut child_entries: Vec<(&str, String)> = Vec::new();
     if let Some(children) = adj.get(&step_id) {
         for (label, child_step) in children {
             let child_hash =
                 hash_entity(*child_step, domain, classes, parts, adj, cache, visiting, cycles);
-            child_entries.push((label.clone(), child_hash));
+            child_entries.push((label.as_str(), child_hash));
         }
     }
     // Re-sort by (label, child_hash); identical to Python's
     // child_entries.sort(key=lambda item: (item[0], item[1])).
     child_entries.sort();
-    for (label, child_hash) in &child_entries {
-        payload_parts.push(format!("edge={label}:{child_hash}"));
-    }
 
-    let payload = payload_parts.join("\u{1f}");
-    let digest = sha256_hex(payload.as_bytes());
+    // Stream the canonical payload directly into the hasher instead of building
+    // a `Vec<String>` and joining on U+001F. Byte-identical to
+    // `parts.join("\u{1f}")` — same bytes, same digest — but without the
+    // per-part `format!`/clone and the joined `String`, which were the bulk of
+    // the merkle stage's allocation churn.
+    let mut hasher = Sha256::new();
+    hasher.update(b"class=");
+    hasher.update(class.as_bytes());
+    if let Some(entity_parts) = parts.get(&step_id) {
+        for part in entity_parts {
+            hasher.update([0x1f]);
+            hasher.update(part.as_bytes());
+        }
+    }
+    for (label, child_hash) in &child_entries {
+        hasher.update([0x1f]);
+        hasher.update(b"edge=");
+        hasher.update(label.as_bytes());
+        hasher.update(b":");
+        hasher.update(child_hash.as_bytes());
+    }
+    let digest = hex::encode(hasher.finalize());
     cache.insert(step_id, digest.clone());
     visiting.remove(&step_id);
     digest
@@ -182,17 +388,24 @@ fn compute_merkle_hashes(
 // WL topology gossip
 // ---------------------------------------------------------------------------
 
-/// BFS neighborhood up to `depth` hops (inclusive of `start`).
-/// Mirrors `wl_gossip._neighbors_within_k`.
-fn neighbors_within_k(adj: &HashMap<i64, Vec<i64>>, start: i64, depth: i64) -> HashSet<i64> {
-    if depth <= 0 {
-        let mut single = HashSet::with_capacity(1);
-        single.insert(start);
-        return single;
-    }
-    let mut seen: HashSet<i64> = HashSet::new();
+/// BFS neighborhood up to `depth` hops (inclusive of `start`), written into
+/// caller-owned scratch buffers. Mirrors `wl_gossip._neighbors_within_k`. The
+/// result is left in `seen`; `queue` is scratch. Both are cleared on entry so
+/// topology_compute can reuse one pair across ~1M nodes instead of allocating a
+/// fresh `HashSet` + `VecDeque` per call (the dominant WL allocation source).
+fn neighbors_within_k_into(
+    adj: &HashMap<i64, Vec<i64>>,
+    start: i64,
+    depth: i64,
+    seen: &mut HashSet<i64>,
+    queue: &mut VecDeque<(i64, i64)>,
+) {
+    seen.clear();
+    queue.clear();
     seen.insert(start);
-    let mut queue: VecDeque<(i64, i64)> = VecDeque::new();
+    if depth <= 0 {
+        return;
+    }
     queue.push_back((start, 0));
     while let Some((node, d)) = queue.pop_front() {
         if d >= depth {
@@ -200,15 +413,14 @@ fn neighbors_within_k(adj: &HashMap<i64, Vec<i64>>, start: i64, depth: i64) -> H
         }
         if let Some(neighbors) = adj.get(&node) {
             for &next in neighbors {
-                if seen.contains(&next) {
-                    continue;
+                // `insert` returns false if already present — one lookup instead
+                // of contains + insert.
+                if seen.insert(next) {
+                    queue.push_back((next, d + 1));
                 }
-                seen.insert(next);
-                queue.push_back((next, d + 1));
             }
         }
     }
-    seen
 }
 
 fn topology_compute(
@@ -221,34 +433,53 @@ fn topology_compute(
     let mut sorted_ids: Vec<i64> = seeds.keys().copied().collect();
     sorted_ids.sort_unstable();
 
+    // Scratch buffers reused across every node (cleared per use), so the BFS
+    // does not allocate per call. `tokens` is also reused; its `&str`s borrow
+    // `seeds`, which outlives the loop.
+    let mut seen: HashSet<i64> = HashSet::new();
+    let mut queue: VecDeque<(i64, i64)> = VecDeque::new();
+    let mut tokens: Vec<(&str, &str)> = Vec::new();
+
     let mut out: HashMap<i64, String> = HashMap::with_capacity(seeds.len());
     for &step_id in &sorted_ids {
-        let context_neighbors = neighbors_within_k(context_adj, step_id, context_k);
-        let spatial_neighbors = neighbors_within_k(spatial_adj, step_id, spatial_k);
+        tokens.clear();
 
-        let mut tokens: Vec<String> = Vec::new();
-        for neigh in &context_neighbors {
+        // Tokens are (prefix, seed) tuples rather than `format!("context:{seed}")`
+        // strings. Sorting tuples by (prefix, seed) is byte-identical to sorting
+        // the concatenated strings (the fixed prefixes "context:" < "spatial:"
+        // decide cross-prefix order; equal prefixes fall through to the seed) —
+        // but with no per-neighbour String allocation. Context tokens are read
+        // out of `seen` before it is reused for the spatial BFS.
+        neighbors_within_k_into(context_adj, step_id, context_k, &mut seen, &mut queue);
+        for neigh in seen.iter() {
             if *neigh == step_id {
                 continue;
             }
             let seed = seeds.get(neigh).map(String::as_str).unwrap_or("");
-            tokens.push(format!("context:{seed}"));
+            tokens.push(("context:", seed));
         }
-        for neigh in &spatial_neighbors {
+        neighbors_within_k_into(spatial_adj, step_id, spatial_k, &mut seen, &mut queue);
+        for neigh in seen.iter() {
             if *neigh == step_id {
                 continue;
             }
             let seed = seeds.get(neigh).map(String::as_str).unwrap_or("");
-            tokens.push(format!("spatial:{seed}"));
+            tokens.push(("spatial:", seed));
         }
         tokens.sort();
 
         let self_seed = seeds.get(&step_id).map(String::as_str).unwrap_or("");
-        let mut payload_parts: Vec<String> = Vec::with_capacity(tokens.len() + 1);
-        payload_parts.push(format!("self:{self_seed}"));
-        payload_parts.extend(tokens);
-        let payload = payload_parts.join("\u{1f}");
-        out.insert(step_id, sha256_hex(payload.as_bytes()));
+        // Stream "self:<seed>" + sorted tokens (U+001F separated) into the
+        // hasher; byte-identical to the join, without the payload_parts/join.
+        let mut hasher = Sha256::new();
+        hasher.update(b"self:");
+        hasher.update(self_seed.as_bytes());
+        for (prefix, seed) in &tokens {
+            hasher.update([0x1f]);
+            hasher.update(prefix.as_bytes());
+            hasher.update(seed.as_bytes());
+        }
+        out.insert(step_id, hex::encode(hasher.finalize()));
     }
     out
 }
@@ -309,23 +540,40 @@ fn build_bundle(
     schema_json: &str,
     unit_factors: &HashMap<String, f64>,
 ) -> Result<NativeBundle, String> {
+    let mut prof = StageProfiler::new();
+    prof.mark("enter");
     let bytes = std::fs::read(path).map_err(|e| format!("read {path}: {e}"))?;
+    prof.mark("read_bytes");
     let records = step::Parser::new(&bytes).parse()?;
+    // STEP tokens are owned (Record holds Strings), so the raw file bytes are
+    // dead the moment tokenization finishes; free them before the heavier stages.
+    drop(bytes);
+    prof.mark("tokenize");
     let schema = descriptor::parse_schema(schema_json)?;
-    let parsed = canon::canonicalize(&records, &schema, unit_factors);
+    let mut parsed = canon::canonicalize(&records, &schema, unit_factors);
+    // canonicalize() copied everything it needs into `parsed`; the token records
+    // (the second-largest intermediate) are dead through the rest of the pipeline.
+    drop(records);
+    prof.mark("canonicalize");
     let edge_list = edges::build_edges(&parsed.entities, &parsed.id_to_keyword);
+    prof.mark("build_edges");
 
     // ---- Merkle inputs -----------------------------------------------------
     let mut classes: HashMap<i64, String> = HashMap::with_capacity(parsed.entities.len());
     let mut geom_parts: HashMap<i64, Vec<String>> = HashMap::new();
     let mut data_parts: HashMap<i64, Vec<String>> = HashMap::new();
-    for e in &parsed.entities {
+    // `geom_parts`/`data_parts` are not read off the entities again after this,
+    // so move them into the merkle maps instead of cloning (avoids duplicating
+    // the per-entity attribute strings — the bulk of the old +900 MB here).
+    // `canonical_class` is still needed downstream (WL seeds, assemble), so it
+    // stays a (small) clone.
+    for e in &mut parsed.entities {
         classes.insert(e.step_id, e.canonical_class.clone());
         if !e.geom_parts.is_empty() {
-            geom_parts.insert(e.step_id, e.geom_parts.clone());
+            geom_parts.insert(e.step_id, std::mem::take(&mut e.geom_parts));
         }
         if !e.data_parts.is_empty() {
-            data_parts.insert(e.step_id, e.data_parts.clone());
+            data_parts.insert(e.step_id, std::mem::take(&mut e.data_parts));
         }
     }
     let mut geom_adj: HashMap<i64, Vec<(String, i64)>> = HashMap::new();
@@ -366,6 +614,9 @@ fn build_bundle(
             context_adj.entry(edge.target).or_default().insert(edge.source);
         }
     }
+    // The flat edge list has been fully projected into the adjacency maps above;
+    // it is dead for the rest of the pipeline.
+    drop(edge_list);
     for v in geom_adj.values_mut() {
         v.sort();
     }
@@ -376,7 +627,18 @@ fn build_bundle(
         v.sort();
     }
 
+    prof.mark("merkle_inputs");
     let (merkle_out, cycles) = merkle_compute(&classes, &geom_parts, &data_parts, &geom_adj, &data_adj);
+    // Merkle consumed these; only `geometry_adj`, `data_children`, `context_adj`,
+    // and `spatial_adj` are still needed (WL + spatial). Free the rest — the
+    // moved attribute-part strings (`geom_parts`/`data_parts`) and the
+    // domain-labelled adjacency are the bulk of it.
+    drop(classes);
+    drop(geom_parts);
+    drop(data_parts);
+    drop(geom_adj);
+    drop(data_adj);
+    prof.mark("merkle");
 
     // ---- WL topology -------------------------------------------------------
     let mut seeds: HashMap<i64, String> = HashMap::with_capacity(parsed.entities.len());
@@ -385,14 +647,18 @@ fn build_bundle(
             .get(&e.step_id)
             .map(|(g, _)| g.as_str())
             .unwrap_or("");
-        seeds.insert(
-            e.step_id,
-            sha256_hex(format!("{}|{}", e.canonical_class, vh_geom).as_bytes()),
-        );
+        // Stream "<class>|<vh_geom>" into the hasher (byte-identical to the
+        // former format!); one fewer String per entity across the whole file.
+        let mut hasher = Sha256::new();
+        hasher.update(e.canonical_class.as_bytes());
+        hasher.update(b"|");
+        hasher.update(vh_geom.as_bytes());
+        seeds.insert(e.step_id, hex::encode(hasher.finalize()));
     }
     let context_vec: HashMap<i64, Vec<i64>> = sorted_adj(context_adj);
     let spatial_vec: HashMap<i64, Vec<i64>> = sorted_adj(spatial_adj);
     let topo = topology_compute(&seeds, &context_vec, &spatial_vec, 1, 2);
+    prof.mark("wl_topology");
 
     // ---- Spatial -----------------------------------------------------------
     let by_id: HashMap<i64, &canon::Entity> =
@@ -413,6 +679,7 @@ fn build_bundle(
         dir_ratios: &parsed.dir_ratios,
     };
     let spatial_feats = spatial::build_spatial_features(&parsed.entities, &ctx);
+    prof.mark("spatial");
 
     // ---- Assemble signatures ----------------------------------------------
     let mut signatures: Vec<SigTuple> = Vec::new();
@@ -446,6 +713,7 @@ fn build_bundle(
         ));
     }
     signatures.sort_by_key(|s| s.0);
+    prof.mark("assemble_signatures");
 
     // ---- Diagnostics -------------------------------------------------------
     let mut dangling_refs: i64 = 0;
@@ -462,6 +730,8 @@ fn build_bundle(
         .map(|kw| format!("No schema descriptor for {kw}; entities of this class were skipped."))
         .collect();
     warnings.sort();
+    prof.mark("diagnostics");
+    prof.report();
 
     Ok(NativeBundle {
         signatures,
@@ -520,22 +790,27 @@ fn fact_label(ent: &canon::Entity) -> String {
 }
 
 /// Sort + disambiguate repeated paths with `[n]` suffixes, matching
-/// `signatures._dedupe_fact_paths`.
+/// `signatures._dedupe_fact_paths`. Once sorted, equal paths are adjacent, so a
+/// single pass over runs reproduces the per-path numbering without the `counts`
+/// / `seen` maps — and moves each `(path, value)` through instead of cloning it
+/// (the old version cloned every fact a second time into `out`).
 fn dedupe_fact_paths(mut facts: Vec<(String, String)>) -> Vec<(String, String)> {
     facts.sort();
-    let mut counts: HashMap<&str, i32> = HashMap::new();
-    for (path, _) in &facts {
-        *counts.entry(path.as_str()).or_insert(0) += 1;
-    }
-    let mut seen: HashMap<String, i32> = HashMap::new();
     let mut out: Vec<(String, String)> = Vec::with_capacity(facts.len());
-    for (path, value) in &facts {
-        if counts.get(path.as_str()).copied().unwrap_or(0) == 1 {
-            out.push((path.clone(), value.clone()));
+    let mut iter = facts.into_iter().peekable();
+    while let Some((path, value)) = iter.next() {
+        if iter.peek().map_or(true, |(next, _)| *next != path) {
+            // Unique path: move through untouched.
+            out.push((path, value));
         } else {
-            let n = seen.entry(path.clone()).or_insert(0);
-            *n += 1;
-            out.push((format!("{path}[{n}]"), value.clone()));
+            // Run of duplicates: emit "path[1]", "path[2]", ... in order.
+            let mut n = 1;
+            out.push((format!("{path}[{n}]"), value));
+            while iter.peek().map_or(false, |(next, _)| *next == path) {
+                let (_, dup_value) = iter.next().unwrap();
+                n += 1;
+                out.push((format!("{path}[{n}]"), dup_value));
+            }
         }
     }
     out
