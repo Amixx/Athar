@@ -16,6 +16,7 @@ import importlib.metadata
 import importlib.util
 import json
 import math
+import os
 import platform
 import re
 import resource
@@ -24,6 +25,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -331,7 +333,7 @@ def main() -> int:
             "old": _input_summary(old_path),
             "new": _input_summary(new_path),
             "runs": {
-                "athar": _repeat(lambda: _run_athar(old_path, new_path), args.repeats),
+                "athar": _repeat(lambda: _run_athar(old_path, new_path, args.timeout_s), args.repeats),
                 "ifcdiff_default": _repeat(
                     lambda: _run_ifcdiff(old_path, new_path, pair_workdir / "ifcdiff_default", args.timeout_s),
                     args.repeats,
@@ -349,7 +351,7 @@ def main() -> int:
             },
         }
         if tools.get("ifcfast", {}).get("available"):
-            entry["runs"]["ifcfast"] = _repeat(lambda: _run_ifcfast(old_path, new_path), args.repeats)
+            entry["runs"]["ifcfast"] = _repeat(lambda: _run_ifcfast(old_path, new_path, args.timeout_s), args.repeats)
         entry["assessment"] = _assess_pair(entry, pair.expected)
         results["pairs"].append(entry)
         results["summary"].append(_summary_row(entry))
@@ -367,6 +369,9 @@ def _repeat(fn: Callable[[], dict], repeats: int) -> dict:
     peak_rss_values = [
         run["peak_rss_mb"] for run in runs if run.get("peak_rss_mb") is not None and isinstance(run.get("peak_rss_mb"), (int, float))
     ]
+    gb_seconds_values = [
+        run["gb_seconds"] for run in runs if run.get("gb_seconds") is not None and isinstance(run.get("gb_seconds"), (int, float))
+    ]
     result = dict(runs[-1])
     result["runs"] = runs
     result["repeat_count"] = repeats
@@ -376,24 +381,37 @@ def _repeat(fn: Callable[[], dict], repeats: int) -> dict:
         result["seconds_max"] = round(max(ok_seconds), 3)
     if peak_rss_values:
         result["peak_rss_mb_max"] = round(max(peak_rss_values), 1)
+    if gb_seconds_values:
+        result["gb_seconds_median"] = round(statistics.median(gb_seconds_values), 3)
     if best_counts is not None:
         result["counts"] = best_counts
     return result
 
 
-def _run_athar(old_path: str, new_path: str) -> dict:
+def _run_athar(old_path: str, new_path: str, timeout_s: int) -> dict:
+    # Run via the CLI as a subprocess, sampled by the same mechanism as every
+    # other tool (no in-process special-casing) — same startup cost, same RSS
+    # sampling, same GB·s definition. `python -m athar old new` prints the report
+    # JSON to stdout.
+    argv = [sys.executable, "-m", "athar", old_path, new_path]
     start = time.perf_counter()
+    completed = _run_subprocess(argv, timeout_s)
+    seconds = round(time.perf_counter() - start, 3)
+    mem = {"peak_rss_mb": completed.get("peak_rss_mb"), "gb_seconds": completed.get("gb_seconds")}
+    if completed.get("status") != "completed":
+        return completed | {"seconds": seconds}
+    if completed["returncode"] != 0:
+        return {"status": "error", "seconds": seconds, "error": completed.get("stderr", "")[:500], **mem}
     try:
-        athar_engine._BUNDLE_CACHE.clear()
-        report = athar_engine.diff_files(old_path, new_path)
+        report = json.loads(completed["stdout"])
         assert_report_invariants(report)
+        stats = report["stats"]
     except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "seconds": round(time.perf_counter() - start, 3), "error": f"{type(exc).__name__}: {exc}"}
-    stats = report["stats"]
+        return {"status": "error", "seconds": seconds, "error": f"{type(exc).__name__}: {exc}", **mem}
     return {
         "status": "ok",
-        "seconds": round(time.perf_counter() - start, 3),
-        "peak_rss_mb": _current_peak_rss_mb(),
+        "seconds": seconds,
+        **mem,
         "sections": {name: stats[name] for name in ("added", "deleted", "modified", "unchanged")},
         "counts": {name: stats[name] for name in ("added", "deleted", "modified", "unchanged")},
         "signatures": {"old": stats["old_signatures"], "new": stats["new_signatures"]},
@@ -443,6 +461,7 @@ def _run_ifcdiff(
         "returncode": completed["returncode"],
         "seconds": round(time.perf_counter() - start, 3),
         "peak_rss_mb": completed.get("peak_rss_mb"),
+        "gb_seconds": completed.get("gb_seconds"),
         "relationships": relationships or "default",
         "counts": _ifcdiff_counts(payload),
         "output": str(output_path),
@@ -451,65 +470,72 @@ def _run_ifcdiff(
     }
 
 
-def _run_ifcfast(old_path: str, new_path: str) -> dict:
+_IFCFAST_RUNNER = (
+    "import sys, json, ifcfast; "
+    "m = ifcfast.open(sys.argv[1], use_cache=False, write_cache=False); "
+    "print(json.dumps(m.diff(sys.argv[2], sample=5), default=str))"
+)
+
+
+def _run_ifcfast(old_path: str, new_path: str, timeout_s: int) -> dict:
     if importlib.util.find_spec("ifcfast") is None:
         return {"status": "error", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
-    import ifcfast
-
+    # Subprocess, sampled identically to the other tools (was in-process before).
+    argv = [sys.executable, "-c", _IFCFAST_RUNNER, old_path, new_path]
     start = time.perf_counter()
+    completed = _run_subprocess(argv, timeout_s)
+    seconds = round(time.perf_counter() - start, 3)
+    mem = {"peak_rss_mb": completed.get("peak_rss_mb"), "gb_seconds": completed.get("gb_seconds")}
+    if completed.get("status") != "completed":
+        return completed | {"seconds": seconds}
+    if completed["returncode"] != 0:
+        return {"status": "error", "seconds": seconds, "error": completed.get("stderr", "")[:500], **mem}
     try:
-        model = ifcfast.open(old_path, use_cache=False, write_cache=False)
-        payload = model.diff(new_path, sample=5)
+        payload = json.loads(completed["stdout"])
     except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "seconds": round(time.perf_counter() - start, 3), "error": f"{type(exc).__name__}: {exc}"}
+        return {"status": "error", "seconds": seconds, "error": f"{type(exc).__name__}: {exc}", **mem}
     return {
         "status": "ok",
-        "seconds": round(time.perf_counter() - start, 3),
-        "peak_rss_mb": _current_peak_rss_mb(),
+        "seconds": seconds,
+        **mem,
         "counts": _ifcfast_counts(payload),
-        "parse_seconds_left": getattr(model, "parse_seconds", None),
         "output_preview": payload,
     }
 
 
 def _run_subprocess(argv: list[str], timeout_s: int) -> dict:
-    time_bin = shutil.which("time")
-    time_output_path = None
-    timed_argv = argv
-    if time_bin and platform.system() == "Darwin":
-        fd, name = tempfile.mkstemp(prefix="athar-benchmark-time-", suffix=".txt")
-        Path(name).unlink(missing_ok=True)
-        time_output_path = Path(name)
-        timed_argv = [time_bin, "-l", "-o", str(time_output_path), *argv]
-        try:
-            import os
-
-            os.close(fd)
-        except OSError:
-            pass
+    # Run the tool directly under Popen and sample its RSS over time, so the
+    # same mechanism yields both peak RSS and GB·s. (Replaces the previous
+    # `/usr/bin/time -l` wrapper, whose exact peak we trade for a sampled one —
+    # acceptable since peak RSS is itself noisy and GB·s is the better metric.)
     try:
-        completed = subprocess.run(
-            timed_argv,
-            check=False,
-            capture_output=True,
+        proc = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout_s,
         )
-    except subprocess.TimeoutExpired:
-        return {"status": "timeout", "seconds": timeout_s}
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
-    stderr = completed.stderr
-    peak_rss_mb = None
-    if time_output_path is not None and time_output_path.exists():
-        peak_rss_mb = _parse_time_peak_rss(time_output_path.read_text(encoding="utf-8"))
-        time_output_path.unlink(missing_ok=True)
+
+    sampler = _RssTimeSampler(proc.pid)
+    timed_out = False
+    with sampler:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            timed_out = True
+    if timed_out:
+        return {"status": "timeout", "seconds": timeout_s}
     return {
         "status": "completed",
-        "returncode": completed.returncode,
-        "stdout": completed.stdout,
+        "returncode": proc.returncode,
+        "stdout": stdout,
         "stderr": stderr,
-        "peak_rss_mb": peak_rss_mb,
+        "peak_rss_mb": sampler.peak_mb(),
+        "gb_seconds": sampler.gb_seconds(0.0),
     }
 
 
@@ -592,6 +618,7 @@ def _summary_row(entry: dict) -> dict:
             "counts": _run_counts(run),
             "seconds_median": run.get("seconds_median", run.get("seconds")),
             "peak_rss_mb_max": run.get("peak_rss_mb_max", run.get("peak_rss_mb")),
+            "gb_seconds_median": run.get("gb_seconds_median", run.get("gb_seconds")),
         }
     return row
 
@@ -610,7 +637,7 @@ def _first_counts(runs: list[dict]) -> dict | None:
 
 def _tool_inventory(*, include_ifcfast: bool) -> dict:
     tools = {
-        "athar": {"status": "in_process", "version": athar_engine._package_version()},
+        "athar": {"status": "subprocess", "version": athar_engine._package_version()},
         "ifcopenshell": {"version": _package_version("ifcopenshell")},
         "ifcdiff": {
             "module": "ifcdiff",
@@ -681,6 +708,72 @@ def _current_peak_rss_mb() -> float | None:
         return None
     # macOS reports bytes; Linux reports KiB.
     return round(rss / (1024 * 1024), 1) if platform.system() == "Darwin" else round(rss / 1024, 1)
+
+
+def _read_rss_mb(pid: int) -> float | None:
+    """Current RSS of `pid` in MiB via `ps` (KiB on macOS and Linux).
+
+    Every tool runs as a subprocess and is sampled this way, so the sampling
+    harness stays small — `ps` is only ever forked from the lightweight parent,
+    never from a process holding gigabytes (which is what inflated timings when
+    Athar ran in-process). Same mechanism for every tool, by design.
+    """
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    return int(out) / 1024.0 if out else None
+
+
+class _RssTimeSampler:
+    """Background thread that records (t, rss_mb) for a pid, to integrate GB·s.
+
+    GB·s (the area under the RSS curve) fuses "how much memory" and "for how
+    long" into the unit cloud platforms bill — a fairer cost metric than a
+    one-point peak. For in-process tools pass the harness baseline to
+    ``gb_seconds`` so only the diff's marginal memory is counted; subprocess
+    tools start near zero so their raw integral is already the diff's cost.
+    """
+
+    def __init__(self, pid: int, interval: float = 0.03) -> None:
+        self.pid = pid
+        self.interval = interval
+        self.samples: list[tuple[float, float]] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            mb = _read_rss_mb(self.pid)
+            if mb is not None:
+                self.samples.append((time.perf_counter(), mb))
+            self._stop.wait(self.interval)
+
+    def __enter__(self) -> "_RssTimeSampler":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        self._thread.join(timeout=1.0)
+
+    def gb_seconds(self, baseline_mb: float = 0.0) -> float | None:
+        if len(self.samples) < 2:
+            return None
+        total = 0.0
+        for (t0, m0), (t1, m1) in zip(self.samples, self.samples[1:]):
+            a = max(m0 - baseline_mb, 0.0)
+            b = max(m1 - baseline_mb, 0.0)
+            total += (a + b) / 2.0 / 1024.0 * (t1 - t0)  # MB->GB, * dt
+        return round(total, 3)
+
+    def peak_mb(self) -> float | None:
+        return round(max(m for _, m in self.samples), 1) if self.samples else None
 
 
 def _parse_time_peak_rss(stderr: str) -> float | None:

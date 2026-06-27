@@ -76,7 +76,7 @@ pub fn build_spatial_features(
 }
 
 fn first_ref_target(ent: &Entity, attr: &str) -> Option<i64> {
-    ent.refs.iter().find(|r| r.attr_name == attr).map(|r| r.target)
+    ent.refs.iter().find(|r| &*r.attr_name == attr).map(|r| r.target)
 }
 
 fn placement_matrix_for_entity(
@@ -292,7 +292,7 @@ mod tests {
             data_parts: Vec::new(),
             refs: refs
                 .iter()
-                .map(|(a, t)| RefOut { attr_name: a.to_string(), target: *t })
+                .map(|(a, t)| RefOut { attr_name: std::rc::Rc::from(*a), target: *t })
                 .collect(),
             data_facts: Vec::new(),
         }

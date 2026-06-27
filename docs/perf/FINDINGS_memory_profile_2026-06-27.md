@@ -211,14 +211,120 @@ Measured on the 180 MB file (post-drops):
 (a fresh 64-char hex `String` per entity per domain). The 56 s merkle *time* and
 the memory churn share one root cause: transient string building.
 
-### Next refactor (real gain, both axes)
+### Refactor #1 (done): stream payloads into the hasher (merkle / WL / seed)
 
-Rewrite the canon/merkle/WL hashing path to **hash bytes directly into `Sha256`**
-(`hasher.update(part); hasher.update(&[SEP])`) instead of building `String`
-payloads, and keep digests as `[u8; 32]` rather than hex `String` map keys. This
-deletes most of the ~150 M allocations in those stages, which should cut **both**
-the 56 s merkle time and the churn/GB·s together. Contained to `merkle`,
-`wl_gossip` (Rust `lib.rs`), and `canon.rs`. Track via allocs + GB·s, not RSS.
+`hash_entity`, `topology_compute`, and the WL seed were rewritten to feed each
+payload part straight into `Sha256` with a `0x1F` separator byte instead of
+building a `Vec<String>` and `join`-ing it. **Byte-identical** output (verified:
+signature-hash checksums on BasicHouse + AdvancedProject match the pre-rewrite
+checkpoint exactly), so zero correctness risk.
+
+| metric | before | after | Δ |
+|---|---:|---:|---:|
+| merkle allocs | 48.0 M | 12.2 M | −75% |
+| merkle time | 56.6 s | 34.7 s | −39% |
+| wl_topology allocs | 31.5 M | 14.8 M | −53% |
+| total allocs | 221.3 M | 168.8 M | −24% |
+| native_build time (Σ) | ~92 s | ~67 s | −27% |
+| churn factor | 3.1× | 2.6× | leaner |
+
+Both axes moved together by deleting transient strings — fewer `malloc` calls
+*is* the time win.
+
+Caveat learned: **GB·s rose (168 → 192) despite shorter wall time**, because it
+integrates *RSS* and RSS was noisy-high that run (3,587 vs 2,396 MB). GB·s
+inherits RSS noise; to be a real KPI it should integrate live heap (deterministic),
+not RSS. The trustworthy proxies remain **allocation count** and stage time.
+
+### Refactor #2 (done): canonicalize encode-into-buffer + deterministic heap·s
+
+Two changes:
+
+- **`canon.rs` encode path** rewritten to append into one `&mut String` buffer
+  (`encode_*_into`) instead of returning a `String` per node and `join`-ing
+  aggregates; STEP-logical detection uses `eq_ignore_ascii_case` instead of
+  `to_uppercase()` (allocation-free). Byte-identical (verified vs checkpoint;
+  21/21 Rust unit tests pass).
+- **Deterministic heap·s** added to the native report: live heap (exact) ×
+  stage time, trapezoidal. Unlike RSS-based GB·s it doesn't inherit allocator
+  noise. (`heap=150.4 GB·s` on the 180 MB file.)
+
+| metric | before | after | Δ |
+|---|---:|---:|---:|
+| canonicalize allocs | 79.6 M | 67.6 M | −15% |
+| canonicalize time | 9.1 s | 7.9 s | −13% |
+
+Modest vs merkle's −75% because canon's allocations are spread across several
+sources; the encode path was only one. **Remaining canon levers** (untouched):
+`collect_refs` does `attr_name.to_string()` per reference (millions);
+`human_value` rebuilds a report string per data attribute (all `format!`);
+`nfc_strip` allocates an NFC `String` per string value (largely inherent).
+
+### Cumulative (both refactors, byte-identical throughout)
+
+| metric | baseline | now | Δ |
+|---|---:|---:|---:|
+| total allocs | 221.3 M | 156.7 M | −29% |
+| merkle time | 56.6 s | 36.0 s | −36% |
+| native_build (Σ stages) | ~92 s | ~67 s | −27% |
+| churn factor | 3.1× | 2.5× | leaner |
+
+Correctness proven by signature-hash checksum (BasicHouse + AdvancedProject)
+matching the pre-refactor checkpoint, plus the Rust unit suite.
+
+### Refactor #3 (batch): attr-name interning + WL tuples + dedupe-consume
+
+Three churn sites in one pass (all byte-identical, now including `data_facts`
+in the checksum; 21/21 Rust tests pass):
+
+| change | stage allocs | Δ |
+|---|---|---:|
+| dedupe consume (`dedupe_fact_paths` moves instead of cloning into `out`) | assemble 29.8M → 21.0M | −8.8M |
+| attr-name interning (`RefOut.attr_name: Rc<str>`) | canon 67.6M → 63.9M | −3.7M |
+| WL neighbour tuples (`(prefix, seed)` not `format!`) | wl 14.8M → 14.5M | −0.3M |
+| **total** | 156.7M → **143.9M** | **−12.8M (−8%)** |
+
+**Two estimates were wrong, and the misses are the useful finding:**
+
+- attr interning expected tens of millions of refs; there are only a few million
+  — IFC's geometry *mass* is coordinate **lists** (`IfcCartesianPoint` reals),
+  not references, so the ceiling was lower.
+- WL tuples barely moved because WL churn is **not** the token strings (most mesh
+  entities have no neighbours). It is `neighbours_within_k` allocating a fresh
+  `HashSet` + `VecDeque` **per node across ~1M nodes**. That per-node scratch
+  allocation — reuse one cleared buffer across the loop — is the real WL lever
+  (~10M+ allocs and a chunk of WL's ~12 s), still untouched.
+
+### Refactor #4: WL BFS scratch reuse (the corrected lever)
+
+Acting on #3's finding: `neighbors_within_k` allocated a fresh `HashSet` +
+`VecDeque` per call, twice per node, across ~1M nodes. Replaced with
+`neighbors_within_k_into` writing into one cleared scratch pair (plus a reused
+`tokens` buffer) hoisted out of the loop. Byte-identical (tokens are sorted, so
+set iteration order is irrelevant); 21/21 tests pass.
+
+| metric | before | after | Δ |
+|---|---:|---:|---:|
+| wl_topology allocs | 14.5 M | 4.84 M | **−67%** |
+| total allocs | 143.9 M | 134.3 M | −7% |
+
+One contained edit ≈ the whole previous 3-change batch. WL *time* was too noisy
+to read in one run (11.7↔14.2 s, while merkle swung 35↔39 s); the deterministic
+alloc count is the trustworthy signal that the work dropped.
+
+### Cumulative (all refactors, byte-identical throughout)
+
+Total allocs **221.3M → 134.3M (−39%)**; merkle 56.6s → ~35s; churn factor
+3.1× → 2.3×. Metric lesson reinforced: model *where* allocations are before
+optimizing (`ATHAR_NATIVE_PROFILE=1` per-stage allocs), and trust the
+deterministic alloc count over noisy time/RSS for whether a change helped.
+
+### Remaining largest sources (for next time)
+
+`canonicalize` 63.9 M (inherent part `String`s + `nfc_strip` + `human_value`
+report strings), `assemble` 21.0 M, `tokenize` 15.1 M (keyword interning is the
+obvious lever there). Diminishing returns from here — much of canon/tokenize is
+the actual signature/token data, not transient waste.
 
 Artifacts: `mem_single_spanish_180mb.json` (before),
 `mem_single_spanish_180mb_optimized.json` (after).

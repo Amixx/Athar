@@ -148,7 +148,7 @@ pub fn build_edges(entities: &[Entity], id_to_keyword: &HashMap<i64, String>) ->
             if !id_to_keyword.contains_key(&r.target) {
                 continue; // drop dangling relationship members
             }
-            by_attr.entry(r.attr_name.as_str()).or_default().push(r.target);
+            by_attr.entry(&*r.attr_name).or_default().push(r.target);
         }
         for rule in POLICY {
             if rule.relationship != ent.keyword {
@@ -200,6 +200,7 @@ mod tests {
     use super::*;
     use crate::canon::{Entity, RefOut};
     use std::collections::HashSet;
+    use std::rc::Rc;
 
     fn ent(step_id: i64, keyword: &str, refs: &[(&str, i64)]) -> Entity {
         Entity {
@@ -214,7 +215,7 @@ mod tests {
             data_parts: Vec::new(),
             refs: refs
                 .iter()
-                .map(|(a, t)| RefOut { attr_name: a.to_string(), target: *t })
+                .map(|(a, t)| RefOut { attr_name: Rc::from(*a), target: *t })
                 .collect(),
             data_facts: Vec::new(),
         }
