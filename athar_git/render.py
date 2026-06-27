@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections import Counter, defaultdict
+from collections import Counter
 from typing import Iterable
 
 DEFAULT_MAX_ITEMS = 80
