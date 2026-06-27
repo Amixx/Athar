@@ -13,7 +13,7 @@ import json
 import sys
 from typing import Any
 
-from athar.check import load_policy
+from athar.check import resolve_policy
 
 from .store import BaselineStore, StoreError
 
@@ -41,7 +41,7 @@ def build_store_parser() -> argparse.ArgumentParser:
     p_review.add_argument("model_key")
     p_review.add_argument("ifc", help="Path to the candidate IFC file")
     p_review.add_argument("--actor", required=True, help="Who submitted the review")
-    p_review.add_argument("--policy", help="Path to a JSON policy file (CI gate)")
+    p_review.add_argument("--policy", help="A JSON policy file path or shipped policy pack name (CI gate)")
     p_review.set_defaults(func=_cmd_review)
 
     p_approve = sub.add_parser("approve", help="Promote a reviewed candidate to the new baseline")
@@ -68,6 +68,9 @@ def build_store_parser() -> argparse.ArgumentParser:
     p_history = sub.add_parser("history", help="Print the append-only event log")
     p_history.add_argument("project_id")
     p_history.add_argument("--model-key", help="Filter to one model lineage")
+    p_history.add_argument(
+        "--format", choices=("json", "text"), default="json", help="Output format (default: json)"
+    )
     p_history.set_defaults(func=_cmd_history)
 
     p_projects = sub.add_parser("projects", help="List registered projects")
@@ -96,7 +99,7 @@ def _cmd_set_baseline(store: BaselineStore, args: argparse.Namespace) -> int:
 
 
 def _cmd_review(store: BaselineStore, args: argparse.Namespace) -> int:
-    policy = load_policy(args.policy) if args.policy else None
+    policy = resolve_policy(args.policy) if args.policy else None
     event = store.review(args.project_id, args.model_key, args.ifc, actor=args.actor, policy=policy)
     _emit(event)
     return 0 if event["verdict"] == "pass" else 2
@@ -123,7 +126,13 @@ def _cmd_baseline(store: BaselineStore, args: argparse.Namespace) -> int:
 
 
 def _cmd_history(store: BaselineStore, args: argparse.Namespace) -> int:
-    return _emit(store.history(args.project_id, args.model_key))
+    events = store.history(args.project_id, args.model_key)
+    if args.format == "text":
+        from athar_qa import render_history
+
+        print(render_history(events), end="")
+        return 0
+    return _emit(events)
 
 
 def _cmd_projects(store: BaselineStore, args: argparse.Namespace) -> int:

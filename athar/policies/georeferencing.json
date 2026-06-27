@@ -1,0 +1,9 @@
+{
+  "description": "Georeferencing stability: site placement and project coordinates must not move.",
+  "forbid_schema_change": true,
+  "forbid_site_placement_change": true,
+  "max_placement_delta_mm_by_class": {
+    "IfcSite": 0,
+    "IfcProject": 0
+  }
+}
