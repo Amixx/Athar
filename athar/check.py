@@ -10,7 +10,6 @@ from typing import Any
 
 
 ASPECTS = {"geometry", "data", "topology", "placement"}
-SECTIONS = ("added", "deleted", "modified", "unchanged")
 
 
 def load_policy(path: str | Path) -> dict[str, Any]:

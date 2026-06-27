@@ -34,12 +34,6 @@ def build_git_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def add_git_parser(subparsers: argparse._SubParsersAction) -> None:
-    git_parser = subparsers.add_parser("git", help="Git integration helpers")
-    git_sub = git_parser.add_subparsers(dest="git_command", required=True)
-    _add_git_subcommands(git_sub)
-
-
 def _add_git_subcommands(git_sub: argparse._SubParsersAction) -> None:
     from .pr_bot import add_pr_comment_parser
 
