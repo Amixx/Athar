@@ -44,3 +44,9 @@ acceptance numbers.
 - No disk cache exists in the current engine; if repeat-diff latency on large
   files becomes a real workflow problem, a content-hash-keyed bundle cache is
   the obvious first move.
+- Memory: `FINDINGS_memory_profile_2026-06-27.md` profiles peak RSS per phase on
+  the 180 MB file via `scripts/explore/profile_memory.py`. The Rust
+  `native_build` stage owns ~3 GB of the ~4.6 GB peak; ifcopenshell's open adds
+  ~1.5 GB that does not return on `del`. The competitor note's projected ~11 GB
+  two-file ceiling is retired — a second same-size bundle adds only ~430 MB peak,
+  so the real ceiling is ~`T`, not `2T`.
