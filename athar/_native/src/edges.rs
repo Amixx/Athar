@@ -194,3 +194,114 @@ pub fn build_edges(entities: &[Entity], id_to_keyword: &HashMap<i64, String>) ->
     edges.dedup();
     edges
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::canon::{Entity, RefOut};
+    use std::collections::HashSet;
+
+    fn ent(step_id: i64, keyword: &str, refs: &[(&str, i64)]) -> Entity {
+        Entity {
+            step_id,
+            keyword: keyword.to_string(),
+            canonical_class: keyword.to_string(),
+            is_product: false,
+            is_spatial: false,
+            guid: None,
+            name: None,
+            geom_parts: Vec::new(),
+            data_parts: Vec::new(),
+            refs: refs
+                .iter()
+                .map(|(a, t)| RefOut { attr_name: a.to_string(), target: *t })
+                .collect(),
+            data_facts: Vec::new(),
+        }
+    }
+
+    fn keyword_map(entities: &[Entity]) -> HashMap<i64, String> {
+        entities.iter().map(|e| (e.step_id, e.keyword.clone())).collect()
+    }
+
+    #[test]
+    fn rel_defines_by_type_projects_context_and_data_edges() {
+        // Type linkage is both neighborhood context (topology) and inherited
+        // data: the include/data edge carries type-level psets into the
+        // occurrence's vh_data.
+        let entities = vec![
+            ent(1, "IFCWALL", &[]),
+            ent(2, "IFCWALLTYPE", &[]),
+            ent(3, "IFCRELDEFINESBYTYPE", &[("RelatedObjects", 1), ("RelatingType", 2)]),
+        ];
+        let edges = build_edges(&entities, &keyword_map(&entities));
+        let mut projected: Vec<(&str, &str)> = edges
+            .iter()
+            .filter(|e| e.source == 1 && e.target == 2)
+            .map(|e| (e.classification, e.domain))
+            .collect();
+        projected.sort();
+        assert_eq!(projected, vec![(CONTEXT, TOPOLOGY), (INCLUDE, DATA)]);
+    }
+
+    #[test]
+    fn direct_ref_to_geometry_target_is_geometry_edge() {
+        // An otherwise-unhinted attribute whose target is a geometry class
+        // still classifies as include/geometry by target prefix.
+        let entities = vec![ent(1, "IFCWALL", &[("Foo", 2)]), ent(2, "IFCCARTESIANPOINT", &[])];
+        let edges = build_edges(&entities, &keyword_map(&entities));
+        assert!(edges
+            .iter()
+            .any(|e| e.source == 1 && e.target == 2 && e.classification == INCLUDE && e.domain == GEOMETRY));
+    }
+
+    #[test]
+    fn dangling_relationship_members_are_dropped() {
+        // RelatingType points at a nonexistent entity -> no projected edge.
+        let entities = vec![
+            ent(1, "IFCWALL", &[]),
+            ent(3, "IFCRELDEFINESBYTYPE", &[("RelatedObjects", 1), ("RelatingType", 999)]),
+        ];
+        let edges = build_edges(&entities, &keyword_map(&entities));
+        assert!(edges.iter().all(|e| e.target != 999));
+    }
+
+    #[test]
+    fn policy_table_covers_required_relationships() {
+        let present: HashSet<&str> = POLICY.iter().map(|r| r.relationship).collect();
+        for required in [
+            "IFCRELDEFINESBYPROPERTIES",
+            "IFCRELASSOCIATESMATERIAL",
+            "IFCRELCONTAINEDINSPATIALSTRUCTURE",
+            "IFCRELAGGREGATES",
+            "IFCRELVOIDSELEMENT",
+            "IFCRELFILLSELEMENT",
+            "IFCRELCONNECTSPATHELEMENTS",
+            "IFCRELCONNECTSELEMENTS",
+            "IFCRELDEFINESBYTYPE",
+        ] {
+            assert!(present.contains(required), "policy missing {required}");
+        }
+    }
+
+    #[test]
+    fn policy_table_has_no_duplicate_rule_keys() {
+        let mut keys: Vec<(&str, &str, &str, &str, &str, bool)> = POLICY
+            .iter()
+            .map(|r| {
+                (
+                    r.relationship,
+                    r.source_attr,
+                    r.target_attr,
+                    r.classification,
+                    r.domain,
+                    r.bidirectional,
+                )
+            })
+            .collect();
+        let total = keys.len();
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), total, "duplicate rule keys in POLICY");
+    }
+}

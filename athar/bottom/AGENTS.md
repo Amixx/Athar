@@ -4,25 +4,27 @@
 self-contained and should not depend on matcher, delta, Git, or presentation
 code.
 
-## Pipeline
+## Pipeline (native-only)
 
-- `index.py` builds a byte-offset STEP index for random-access diagnostics.
-- `parser.py` parses through `ifcopenshell` into `ParsedEntity` records.
-  Canonicalize scalar attributes, preserve numeric string literals such as
-  `"0"` and `"1"` as strings, normalize text to NFC, and normalize/quantize
-  lengths through unit handling.
-- Spatial tagging supports IFC4 `IfcSpatialElement` and IFC2X3
-  `IfcSpatialStructureElement` roots.
-- `link_inversion.py` owns reverse-reference maps.
-- `edge_policy.py` is the declarative relationship classification table.
-- `merkle.py` computes bottom-up sha256 Merkle hashes for geometry and data
-  domains. `GlobalId` and `OwnerHistory` never enter hashes.
-- `wl_gossip.py` computes topology hashes from `class|vh_geometry|vh_data`
-  self seeds plus context and spatial neighbor seeds.
-- `spatial.py` resolves `ObjectPlacement` chains and emits quantized
-  world-space placement matrices, centroids, and AABBs.
-- `signatures.py` assembles product/spatial `SignatureVector` objects and
-  diagnostics. Do not retain the full parse result in the bundle.
+The bottom layer is implemented in Rust (`athar/_native`, exposed as
+`athar_native`). It is required — there is no Python fallback. The Python
+surface is thin glue:
+
+- `_native.py` — discovers the compiled module (`native()`).
+- `parser.py` — file-independent schema/unit glue only: schema-support guard,
+  measure-type helpers, `IfcUnitAssignment` factor extraction.
+- `native_schema.py` — builds the per-class descriptor map (JSON, cached per
+  schema) that Rust applies to the STEP records.
+- `signatures.py` — opens the file once via `ifcopenshell` for the schema name
+  and unit factors, releases it, runs the native pipeline, and wraps the result
+  in `SignatureVector` / `SignatureBundle`.
+
+The Rust side (`athar/_native/src/`): `step.rs` tokenize → `canon.rs`
+canonicalize (NFC, banker's-rounded quantization, `data_facts`) → `edges.rs`
+relationship/attribute classification → Merkle (geometry/data) → WL topology
+gossip → `spatial.rs` placement/centroid/AABB. The edge-policy table lives in
+`edges.rs`. `GlobalId` and `OwnerHistory` never enter hashes; spatial tagging
+supports IFC4 `IfcSpatialElement` and IFC2X3 `IfcSpatialStructureElement` roots.
 
 ## Edge Policy Contracts
 

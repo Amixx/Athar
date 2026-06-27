@@ -36,11 +36,11 @@ acceptance numbers.
 
 ## Next perf steps (when needed)
 
-- The bundle build (parse → merkle → WL → spatial) is the only hot path that
-  matters at large scale; profile it before optimizing anything else.
-- `scripts/explore/profile_signature_bundle.py` provides the current per-stage
-  profiler for that bundle path. Latest measurements are in
-  `FINDINGS_signature_stage_profile_2026-06-26.md`.
+- The bundle build is native (Rust, `athar/_native`): tokenize → canonicalize →
+  edges → merkle → WL → spatial, returning only signatures. ~4.4× faster with
+  lower peak RSS than a pure-Python pipeline — see
+  `DESIGN_native_stage_b_2026-06-26.md` for measured numbers. Profile on the
+  Rust side.
 - No disk cache exists in the current engine; if repeat-diff latency on large
   files becomes a real workflow problem, a content-hash-keyed bundle cache is
   the obvious first move.

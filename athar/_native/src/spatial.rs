@@ -273,3 +273,63 @@ fn orthogonalize(v: [f64; 3], axis: [f64; 3]) -> [f64; 3] {
         v[2] - dot * axis[2],
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::canon::{Entity, RefOut};
+
+    fn ent(step_id: i64, keyword: &str, is_product: bool, refs: &[(&str, i64)]) -> Entity {
+        Entity {
+            step_id,
+            keyword: keyword.to_string(),
+            canonical_class: keyword.to_string(),
+            is_product,
+            is_spatial: false,
+            guid: None,
+            name: None,
+            geom_parts: Vec::new(),
+            data_parts: Vec::new(),
+            refs: refs
+                .iter()
+                .map(|(a, t)| RefOut { attr_name: a.to_string(), target: *t })
+                .collect(),
+            data_facts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn placement_chain_yields_world_space_geometry() {
+        // Wall placed at (10,0,0); its geometry point is local (1,2,3). The
+        // centroid/AABB must be in world space (11,2,3) and the placement's
+        // X translation must quantize to 10 * 1e6.
+        let entities = vec![
+            ent(1, "IFCWALL", true, &[("ObjectPlacement", 2)]),
+            ent(2, "IFCLOCALPLACEMENT", false, &[("RelativePlacement", 3)]),
+            ent(3, "IFCAXIS2PLACEMENT3D", false, &[("Location", 4)]),
+            ent(4, "IFCCARTESIANPOINT", false, &[]),
+            ent(5, "IFCCARTESIANPOINT", false, &[]),
+        ];
+        let by_id: HashMap<i64, &Entity> = entities.iter().map(|e| (e.step_id, e)).collect();
+        let mut geometry_adj: HashMap<i64, Vec<i64>> = HashMap::new();
+        geometry_adj.insert(1, vec![5]);
+        let mut point_coords: HashMap<i64, [f64; 3]> = HashMap::new();
+        point_coords.insert(4, [10.0, 0.0, 0.0]);
+        point_coords.insert(5, [1.0, 2.0, 3.0]);
+        let dir_ratios: HashMap<i64, [f64; 3]> = HashMap::new();
+
+        let ctx = SpatialCtx {
+            by_id: &by_id,
+            geometry_adj: &geometry_adj,
+            point_coords: &point_coords,
+            dir_ratios: &dir_ratios,
+        };
+        let feats = build_spatial_features(&entities, &ctx);
+        let f = feats.get(&1).expect("wall feature");
+
+        assert_eq!(f.centroid, Some([11.0, 2.0, 3.0]));
+        assert_eq!(f.aabb, Some([11.0, 2.0, 3.0, 11.0, 2.0, 3.0]));
+        let placement = f.placement.as_ref().expect("placement matrix");
+        assert_eq!(placement[3], 10_000_000); // row 0, col 3 = X translation * 1e6
+    }
+}

@@ -2,13 +2,10 @@
 //! domain-filtered Merkle "parts", collected refs, and the numeric point/
 //! direction coordinates the spatial stage needs.
 //!
-//! This is the Rust replacement for `parser._extract_entity` +
-//! `merkle._attribute_parts`. It is *not* byte-identical with the Python
-//! `json.dumps` encoding (back-compat is intentionally dropped); it produces a
-//! self-consistent, deterministic, discriminating canonical string per
-//! attribute value. The quantization (length/area/volume/angle/direction
-//! scales, banker's rounding via `round`) matches the Python parser so
-//! geometry comparison keeps its float-noise robustness.
+//! Produces a self-consistent, deterministic, discriminating canonical string
+//! per attribute value. Reals are quantized (length/area/volume/angle/direction
+//! scales, banker's rounding via `round`) so geometry comparison is robust to
+//! float noise.
 
 use std::collections::HashMap;
 
@@ -514,5 +511,61 @@ fn human_select(token: &Token, attr_dir: bool, units: &HashMap<String, f64>) -> 
             format!("{}: {}", kw, human_scalar(&inner[0], m, attr_dir, units))
         }
         other => human_scalar(other, Measure::Default, attr_dir, units),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn units(pairs: &[(&str, f64)]) -> HashMap<String, f64> {
+        pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    #[test]
+    fn string_scalars_preserve_numeric_literals() {
+        // Numeric string literals stay strings (never coerced to int/bool).
+        assert_eq!(encode_string("0"), "s'0");
+        assert_eq!(encode_string("1"), "s'1");
+        assert_eq!(encode_string("My Wall"), "s'My Wall");
+    }
+
+    #[test]
+    fn only_explicit_step_logicals_become_booleans() {
+        assert_eq!(encode_string(".TRUE."), "b1");
+        assert_eq!(encode_string(".T."), "b1");
+        assert_eq!(encode_string(".FALSE."), "b0");
+        assert_eq!(encode_string(".F."), "b0");
+        // Plain words are not logicals.
+        assert_eq!(encode_string("TRUE"), "s'TRUE");
+        assert_eq!(encode_string("FALSE"), "s'FALSE");
+    }
+
+    #[test]
+    fn length_quantization_is_unit_normalized() {
+        // 3000 mm (LENGTHUNIT=0.001) and 3 m (LENGTHUNIT=1.0) must agree.
+        let mm = units(&[("LENGTHUNIT", 0.001)]);
+        let m = units(&[("LENGTHUNIT", 1.0)]);
+        assert_eq!(quantize_real(3000.0, Measure::Length, false, &mm), 3_000_000);
+        assert_eq!(quantize_real(3.0, Measure::Length, false, &m), 3_000_000);
+    }
+
+    #[test]
+    fn direction_uses_its_own_scale() {
+        // A default-measure real on a direction-named attribute uses 1e5.
+        let none = units(&[]);
+        assert_eq!(quantize_real(1.0, Measure::Default, true, &none), 100_000);
+        assert_eq!(quantize_real(1.0, Measure::Default, false, &none), 1_000_000);
+    }
+
+    #[test]
+    fn round_half_even_matches_python_round() {
+        // Ties go to the even neighbor, like Python's round().
+        assert_eq!(round_half_even(0.5), 0);
+        assert_eq!(round_half_even(1.5), 2);
+        assert_eq!(round_half_even(2.5), 2);
+        assert_eq!(round_half_even(-0.5), 0);
+        assert_eq!(round_half_even(2.4), 2);
+        assert_eq!(round_half_even(2.6), 3);
     }
 }

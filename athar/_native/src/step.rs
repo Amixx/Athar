@@ -418,4 +418,83 @@ END-ISO-10303-21;
         assert_eq!(recs[0].attrs[0], Token::Str("it's".to_string()));
         assert_eq!(recs[1].attrs[0], Token::Enum("T".to_string()));
     }
+
+    #[test]
+    fn parses_number_forms() {
+        // Per ISO-10303-21 a real always has a digit before the '.', so `4.` is
+        // valid but `.5` is not — the grammar this tokenizer targets.
+        let src = b"DATA;\n#1=T((1,-2,+3,1.5,-0.25,2.5E-3,4.));\nENDSEC;";
+        let recs = Parser::new(src).parse().expect("ok");
+        let items = match &recs[0].attrs[0] {
+            Token::List(items) => items,
+            other => panic!("expected list, got {other:?}"),
+        };
+        assert_eq!(items[0], Token::Int(1));
+        assert_eq!(items[1], Token::Int(-2));
+        assert_eq!(items[2], Token::Int(3));
+        assert_eq!(items[3], Token::Real(1.5));
+        assert_eq!(items[4], Token::Real(-0.25));
+        assert_eq!(items[5], Token::Real(0.0025));
+        assert_eq!(items[6], Token::Real(4.0));
+    }
+
+    #[test]
+    fn parses_nested_lists_null_and_derived() {
+        let src = b"DATA;\n#1=IFCX((#2,#3),$,*,());\nENDSEC;";
+        let rec = &Parser::new(src).parse().expect("ok")[0];
+        match &rec.attrs[0] {
+            Token::List(inner) => {
+                assert_eq!(inner[0], Token::Ref(2));
+                assert_eq!(inner[1], Token::Ref(3));
+            }
+            other => panic!("expected nested list, got {other:?}"),
+        }
+        assert_eq!(rec.attrs[1], Token::Null);
+        assert_eq!(rec.attrs[2], Token::Derived);
+        assert_eq!(rec.attrs[3], Token::List(vec![]));
+    }
+
+    #[test]
+    fn record_can_span_multiple_lines() {
+        let src = b"DATA;\n#1=IFCWALL('g',\n  $,\n  'Name'\n);\nENDSEC;";
+        let rec = &Parser::new(src).parse().expect("ok")[0];
+        assert_eq!(rec.keyword, "IFCWALL");
+        assert_eq!(rec.attrs.len(), 3);
+        assert_eq!(rec.attrs[2], Token::Str("Name".to_string()));
+    }
+
+    #[test]
+    fn skips_reference_only_lines() {
+        // A bare `#id;` with no `= KEYWORD(...)` is not a record.
+        let src = b"DATA;\n#5;\n#1=IFCWALL('g');\nENDSEC;";
+        let recs = Parser::new(src).parse().expect("ok");
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].step_id, 1);
+    }
+
+    #[test]
+    fn oversized_ref_becomes_sentinel() {
+        // A 23-digit id overflows i64; it parses to the i64::MIN sentinel so it
+        // later resolves as a dangling reference rather than crashing.
+        let src = b"DATA;\n#1=IFCWALL(#99999999999999999999999);\nENDSEC;";
+        let rec = &Parser::new(src).parse().expect("ok")[0];
+        assert_eq!(rec.attrs[0], Token::Ref(i64::MIN));
+    }
+
+    #[test]
+    fn stops_at_endsec_and_ignores_header() {
+        let src = b"\
+ISO-10303-21;
+HEADER;
+FILE_NAME('skip',$);
+ENDSEC;
+DATA;
+#1=IFCPROJECT('g');
+ENDSEC;
+END-ISO-10303-21;
+";
+        let recs = Parser::new(src).parse().expect("ok");
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].keyword, "IFCPROJECT");
+    }
 }

@@ -573,6 +573,60 @@ fn build_signature_bundle(
     ))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn classes() -> HashMap<i64, String> {
+        let mut c = HashMap::new();
+        c.insert(1i64, "IfcWall".to_string());
+        c.insert(2i64, "IfcPropertySet".to_string());
+        c
+    }
+
+    #[test]
+    fn merkle_is_deterministic_and_content_sensitive() {
+        let classes = classes();
+        let geom_parts: HashMap<i64, Vec<String>> = HashMap::new();
+        let geom_adj: HashMap<i64, Vec<(String, i64)>> = HashMap::new();
+        let mut data_parts: HashMap<i64, Vec<String>> = HashMap::new();
+        data_parts.insert(2, vec!["attr=Name:s'Pset".to_string()]);
+        let mut data_adj: HashMap<i64, Vec<(String, i64)>> = HashMap::new();
+        data_adj.insert(1, vec![("IFCRELDEFINESBYPROPERTIES".to_string(), 2)]);
+
+        let (a, _) = merkle_compute(&classes, &geom_parts, &data_parts, &geom_adj, &data_adj);
+        let (b, _) = merkle_compute(&classes, &geom_parts, &data_parts, &geom_adj, &data_adj);
+        assert_eq!(a, b, "merkle must be deterministic");
+
+        // Editing a child's data part must change the parent's vh_data.
+        let mut data_parts2 = data_parts.clone();
+        data_parts2.insert(2, vec!["attr=Name:s'Changed".to_string()]);
+        let (c, _) = merkle_compute(&classes, &geom_parts, &data_parts2, &geom_adj, &data_adj);
+        assert_ne!(a.get(&1).unwrap().1, c.get(&1).unwrap().1);
+    }
+
+    #[test]
+    fn topology_is_deterministic_and_neighbor_order_independent() {
+        let mut seeds: HashMap<i64, String> = HashMap::new();
+        seeds.insert(1, "s1".to_string());
+        seeds.insert(2, "s2".to_string());
+        seeds.insert(3, "s3".to_string());
+        let spatial: HashMap<i64, Vec<i64>> = HashMap::new();
+
+        let mut ctx_a: HashMap<i64, Vec<i64>> = HashMap::new();
+        ctx_a.insert(1, vec![2, 3]);
+        let mut ctx_b: HashMap<i64, Vec<i64>> = HashMap::new();
+        ctx_b.insert(1, vec![3, 2]); // reversed neighbor order
+
+        let h_a = topology_compute(&seeds, &ctx_a, &spatial, 1, 2);
+        let h_b = topology_compute(&seeds, &ctx_b, &spatial, 1, 2);
+        let h_a2 = topology_compute(&seeds, &ctx_a, &spatial, 1, 2);
+
+        assert_eq!(h_a, h_a2, "topology must be deterministic");
+        assert_eq!(h_a.get(&1), h_b.get(&1), "neighbor token order must not matter");
+    }
+}
+
 #[pymodule]
 fn athar_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

@@ -83,26 +83,36 @@ significant in either implementation).
 
 ## Status (2026-06-27) — COMPLETE
 
-Stage B is **landed and green**. The native pipeline is the canonical
-implementation; Python remains as an automatic fallback (`ATHAR_NO_NATIVE=1`).
+Stage B is **landed and green**. The native pipeline is the *only*
+implementation: the pure-Python parse/canonicalize/hash pipeline (and the
+`ATHAR_NO_NATIVE` fallback switch) has been removed. `athar_native` is required;
+when it is not built, `build_signature_bundle` raises.
 
-- Stage A (Merkle + WL hashing in Rust): landed, perf-neutral by design — see
-  `FINDINGS_native_stage_a_2026-06-26.md`.
-- `step.rs` tokenizer, `descriptor.rs`, `canon.rs` (incl. `data_facts`),
-  `edges.rs`, `spatial.rs`, `lib.rs` orchestration: **all built + unit-tested**
-  (`cargo test --no-default-features`).
-- Python `native_schema.py` descriptor builder + `signatures.py` native
-  dispatch (threading `data_facts` back to `SignatureVector`): **done**.
-- Full suite green through the native path: **154 passed, 31 skipped, 1
-  xfailed**. The two structural failures that surfaced during the port are
-  fixed: corrupted/oversized refs (lenient `i64` parse + drop of dangling refs
-  in `edges.rs`) and the rename-is-a-data-change case (native `data_facts`).
+- Modules: `step.rs` tokenizer, `descriptor.rs`, `canon.rs` (incl.
+  `data_facts`), `edges.rs`, `spatial.rs`, `lib.rs` orchestration; Python glue
+  in `native_schema.py` (descriptor builder) and `signatures.py` (native
+  dispatch threading `data_facts` into `SignatureVector`).
+
+### Test split
+
+Rust logic is tested in Rust; Python glue and end-to-end behavior in pytest.
+
+- `cargo test --no-default-features` — tokenizer grammar (`step.rs`), scalar
+  canonicalization + unit-normalized quantization + banker's rounding
+  (`canon.rs`), edge policy projection/classification + table contracts
+  (`edges.rs`), world-space placement/centroid/AABB (`spatial.rs`), Merkle/WL
+  determinism + content/order sensitivity (`lib.rs`).
+- pytest — schema/unit introspection (`test_native_schema.py`: measure-type
+  determinism, descriptor spatial/product flags), end-to-end metamorphic
+  invariance (`test_metamorphic.py`: STEP-id renumbering and record reordering
+  produce identical signatures), plus the corpus/semantic/engine suites driving
+  the native pipeline.
 
 ### Measured (uni-project-house-50mb.ifc, IFC2X3, 6,385 signatures)
 
 | path | bundle time | peak RSS | signatures |
 |---|---:|---:|---:|
-| Python (`ATHAR_NO_NATIVE=1`) | 61.9s | 2431 MB | 6385 |
+| Python (former pipeline) | 61.9s | 2431 MB | 6385 |
 | **native** | **14.0s** | **1987 MB** | 6385 |
 
 ≈4.4× faster, ~450 MB lower peak, identical signature count. The residual peak
