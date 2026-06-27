@@ -273,13 +273,14 @@ def _tool_cell(row: dict[str, Any], tool: str) -> str:
     counts = result.get("counts") or {}
     time_s = result.get("seconds_median")
     rss = result.get("peak_rss_mb_max")
+    gb_s = result.get("gb_seconds_median")
     title = _assessment_title(assessment)
     output = f'<div class="small"><a href="/tool-output/{_url(row.get("name", "unknown"))}/{_url(tool)}">output</a></div>'
     return f"""
     <td class="tool-cell">
       <span class="badge {_badge_class(assessment)}" title="{_e(title)}">{_label(assessment)}</span>
       <div class="font-monospace small mt-1">+{counts.get("added", "?")} −{counts.get("deleted", "?")} ~{counts.get("modified", "?")} ={counts.get("unchanged", "—")}</div>
-      <div class="text-secondary small">{_metric(time_s, "s")} · {_metric(rss, "MB")}</div>
+      <div class="text-secondary small">{_metric(time_s, "s")} · {_metric(rss, "MB")} · {_metric(gb_s, "GB·s")}</div>
       {output}
     </td>
     """
@@ -297,6 +298,7 @@ def _tool_averages(rows: list[dict[str, Any]]) -> str:
         "unexpected": [stat["unexpected"] for stat in stats],
         "avg_time": [stat["avg_time_value"] for stat in stats if stat["avg_time_value"] is not None],
         "avg_rss": [stat["avg_rss_value"] for stat in stats if stat["avg_rss_value"] is not None],
+        "avg_gbs": [stat["avg_gbs_value"] for stat in stats if stat["avg_gbs_value"] is not None],
     }
     body = "".join(_tool_average_row(stat, ranges) for stat in stats)
     return f"""
@@ -312,6 +314,7 @@ def _tool_averages(rows: list[dict[str, Any]]) -> str:
               <th>Unexpected</th>
               <th>Avg median time</th>
               <th>Avg peak RSS</th>
+              <th>Avg GB·s</th>
             </tr>
           </thead>
           <tbody>{body}</tbody>
@@ -327,6 +330,7 @@ def _tool_average_stats(rows: list[dict[str, Any]], tool: str) -> dict[str, Any]
     unexpected = 0
     times: list[float] = []
     rss_values: list[float] = []
+    gbs_values: list[float] = []
     for row in rows:
         result = row.get(tool)
         if not isinstance(result, dict):
@@ -342,10 +346,14 @@ def _tool_average_stats(rows: list[dict[str, Any]], tool: str) -> dict[str, Any]
         rss = result.get("peak_rss_mb_max")
         if isinstance(rss, (int, float)) and not (isinstance(rss, float) and math.isnan(rss)):
             rss_values.append(float(rss))
+        gb_s = result.get("gb_seconds_median")
+        if isinstance(gb_s, (int, float)) and not (isinstance(gb_s, float) and math.isnan(gb_s)):
+            gbs_values.append(float(gb_s))
 
     correctness_value = None if judged == 0 else expected / judged
     avg_time_value = None if not times else sum(times) / len(times)
     avg_rss_value = None if not rss_values else sum(rss_values) / len(rss_values)
+    avg_gbs_value = None if not gbs_values else sum(gbs_values) / len(gbs_values)
     return {
         "tool": tool,
         "judged": judged,
@@ -354,6 +362,8 @@ def _tool_average_stats(rows: list[dict[str, Any]], tool: str) -> dict[str, Any]
         "correctness": "—" if correctness_value is None else f"{correctness_value:.0%}",
         "avg_time_value": avg_time_value,
         "avg_time": "—" if avg_time_value is None else f"{avg_time_value:.3g} s",
+        "avg_gbs_value": avg_gbs_value,
+        "avg_gbs": "—" if avg_gbs_value is None else f"{avg_gbs_value:.3g} GB·s",
         "avg_rss_value": avg_rss_value,
         "avg_rss": "—" if avg_rss_value is None else f"{avg_rss_value:.3g} MB",
     }
@@ -368,6 +378,7 @@ def _tool_average_row(stat: dict[str, Any], ranges: dict[str, list[float | int]]
       <td class="{_range_class(stat["unexpected"], ranges["unexpected"], higher_is_better=False)}">{stat["unexpected"]}</td>
       <td class="font-monospace {_range_class(stat["avg_time_value"], ranges["avg_time"], higher_is_better=False)}">{_e(stat["avg_time"])}</td>
       <td class="font-monospace {_range_class(stat["avg_rss_value"], ranges["avg_rss"], higher_is_better=False)}">{_e(stat["avg_rss"])}</td>
+      <td class="font-monospace {_range_class(stat["avg_gbs_value"], ranges["avg_gbs"], higher_is_better=False)}">{_e(stat["avg_gbs"])}</td>
     </tr>
     """
 
