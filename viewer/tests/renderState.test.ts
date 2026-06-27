@@ -9,6 +9,7 @@ import {
   isPlacementOnly,
   placementDeltaNorm,
   SNAP,
+  TRANSITIVE_OPACITY,
 } from '../src/lib/renderState'
 import type { Aspects, AtharReport, EntitySummary, MatchedItem } from '../src/lib/types'
 
@@ -33,14 +34,19 @@ function aspects(overrides: Partial<Aspects> = {}): Aspects {
   }
 }
 
-function matched(oldId: number, newId: number, asp: Aspects): MatchedItem {
+function matched(
+  oldId: number,
+  newId: number,
+  asp: Aspects,
+  changeScope: MatchedItem['change_scope'] = 'intrinsic',
+): MatchedItem {
   return {
     old: summary(oldId),
     new: summary(newId),
     match: { score: 0.9, reason: 'guid' },
     aspects: asp,
     data_hash: { old: 'a', new: 'b' },
-    change_scope: 'intrinsic',
+    change_scope: changeScope,
   }
 }
 
@@ -48,6 +54,8 @@ const movedPair = matched(10, 110, aspects({ placement: 'changed', placement_del
 const reshapedPair = matched(11, 111, aspects({ geometry: 'changed' }))
 const dataOnlyPair = matched(12, 112, aspects({ data: 'changed' }))
 const topologyOnlyPair = matched(13, 113, aspects({ topology: 'changed' }))
+// Transitive-only: flagged purely because a dependency changed (no intrinsic edit).
+const transitivePair = matched(14, 114, aspects({ data: 'changed' }), 'transitive')
 const unchangedPair = matched(20, 120, aspects())
 
 const report: AtharReport = {
@@ -57,14 +65,14 @@ const report: AtharReport = {
   stats: {
     added: 1,
     deleted: 1,
-    modified: 4,
+    modified: 5,
     unchanged: 1,
-    old_signatures: 6,
-    new_signatures: 6,
+    old_signatures: 7,
+    new_signatures: 7,
   },
   added: [summary(100)],
   deleted: [summary(1)],
-  modified: [movedPair, reshapedPair, dataOnlyPair, topologyOnlyPair],
+  modified: [movedPair, reshapedPair, dataOnlyPair, topologyOnlyPair, transitivePair],
   unchanged: [unchangedPair],
 }
 
@@ -121,6 +129,11 @@ describe('bucketFor', () => {
     expect(bucketFor('new', index.new.get(112))).toBe('modifiedStatic')
     expect(bucketFor('old', index.old.get(13))).toBeNull()
     expect(bucketFor('new', index.new.get(113))).toBe('modifiedStatic')
+  })
+
+  it('routes transitive-only modifications to the transitive bucket, new side', () => {
+    expect(bucketFor('old', index.old.get(14))).toBeNull()
+    expect(bucketFor('new', index.new.get(114))).toBe('transitive')
   })
 
   it('renders unchanged once, from the new side', () => {
@@ -183,6 +196,20 @@ describe('computeAppearances', () => {
     expect(app.added.visible).toBe(true)
   })
 
+  it('renders transitive subordinate and toggles it independently of direct edits', () => {
+    const on = computeAppearances(SNAP.both, DEFAULT_TOGGLES)
+    expect(on.transitive.visible).toBe(true)
+    expect(on.transitive.opacity).toBe(TRANSITIVE_OPACITY)
+    // Hiding transitive leaves direct modifications untouched.
+    const transitiveOff = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, transitive: false })
+    expect(transitiveOff.transitive.visible).toBe(false)
+    expect(transitiveOff.modifiedStatic.visible).toBe(true)
+    // Hiding direct modifications leaves transitive untouched.
+    const modifiedOff = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, modified: false })
+    expect(modifiedOff.transitive.visible).toBe(true)
+    expect(modifiedOff.modifiedStatic.visible).toBe(false)
+  })
+
   it('renders unchanged solid when ghosting is off', () => {
     const app = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, ghostUnchanged: false })
     expect(app.unchanged.opacity).toBe(1)
@@ -199,7 +226,7 @@ describe('computeAppearances', () => {
 describe('classBreakdown', () => {
   it('rolls up per-class counts, busiest first', () => {
     const rows = classBreakdown(report)
-    expect(rows[0]).toEqual({ klass: 'IfcWall', added: 1, deleted: 1, modified: 4 })
+    expect(rows[0]).toEqual({ klass: 'IfcWall', added: 1, deleted: 1, modified: 5 })
     expect(rows).toHaveLength(1)
   })
 

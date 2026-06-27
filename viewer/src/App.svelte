@@ -61,7 +61,7 @@
   const classes = $derived(index ? classBreakdown(index.report) : [])
   const modifiedScope = $derived(index?.report.stats.modified_change_scope ?? null)
   const directModified = $derived((modifiedScope?.intrinsic ?? 0) + (modifiedScope?.mixed ?? 0))
-  const rippleModified = $derived(modifiedScope?.transitive ?? 0)
+  const transitiveModified = $derived(modifiedScope?.transitive ?? 0)
   const selectedRecord = $derived.by<EntityRecord | null>(() => {
     if (!selection || !index) return null
     const map = selection.side === 'old' ? index.old : index.new
@@ -294,7 +294,7 @@
           <div class="num">~{index.report.stats.modified}</div>
           <div class="microlabel">
             {#if modifiedScope && index.report.stats.modified > 0}
-              {directModified} direct · {rippleModified} ripple
+              {directModified} direct · {transitiveModified} indirect
             {:else}
               modified
             {/if}
@@ -393,7 +393,14 @@
         <i class="dot del"></i>Deleted
       </button>
       <button class:off={!toggles.modified} onclick={() => (toggles.modified = !toggles.modified)}>
-        <i class="dot mod"></i>Modified
+        <i class="dot mod"></i>Direct
+      </button>
+      <button
+        class:off={!toggles.transitive}
+        title="Indirect changes caused only by a changed dependency"
+        onclick={() => (toggles.transitive = !toggles.transitive)}
+      >
+        <i class="dot transitive"></i>Indirect
       </button>
       <button class:off={!toggles.unchanged} onclick={() => (toggles.unchanged = !toggles.unchanged)}>
         <i class="dot unch"></i>Unchanged

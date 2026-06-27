@@ -14,6 +14,7 @@
   --c-del: #e5484d;
   --c-add: #30a46c;
   --c-mod: #5472e4;
+  --c-transitive: #a87a3c;
   --c-unch: #8b8d98;
 
   --sans: -apple-system, 'Segoe UI', 'Inter', Roboto, sans-serif;
@@ -197,6 +198,7 @@ button.active {
 .dot.del { background: var(--c-del); }
 .dot.add { background: var(--c-add); }
 .dot.mod { background: var(--c-mod); }
+.dot.transitive { background: var(--c-transitive); opacity: 0.6; }
 .dot.unch { background: var(--c-unch); opacity: 0.55; }
 
 /* ---------- slider bar ---------- */

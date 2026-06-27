@@ -15,6 +15,12 @@
  *                and placement are both unchanged (data/topology-only edits);
  *                old+new meshes would be coincident and crossfading two
  *                identical transparent meshes just z-fights.
+ * - transitive   new side, bronze, constant + semi-transparent — modified pairs
+ *                with change_scope 'transitive', i.e. flagged only because a
+ *                dependency changed (no intrinsic edit). Kept visually
+ *                subordinate (and separately toggleable) so a diff doesn't read
+ *                as "everything changed" when one source edit propagates outward.
+ *                Surfaced to users as "Indirect".
  * - unchanged    new side only (old copy is geometrically identical), gray,
  *                ghosted, constant across the slider
  * - extra        new-side meshes with no report record (e.g. products the
@@ -33,6 +39,7 @@ export type Bucket =
   | 'modifiedOld'
   | 'modifiedNew'
   | 'modifiedStatic'
+  | 'transitive'
   | 'unchanged'
   | 'extra'
 
@@ -42,6 +49,7 @@ export const ALL_BUCKETS: Bucket[] = [
   'modifiedOld',
   'modifiedNew',
   'modifiedStatic',
+  'transitive',
   'unchanged',
   'extra',
 ]
@@ -53,6 +61,7 @@ export const BUCKET_SIDE: Record<Bucket, Side> = {
   added: 'new',
   modifiedNew: 'new',
   modifiedStatic: 'new',
+  transitive: 'new',
   unchanged: 'new',
   extra: 'new',
 }
@@ -63,6 +72,8 @@ export const BUCKET_COLORS: Record<Bucket, string> = {
   modifiedOld: '#3e63dd',
   modifiedNew: '#3e63dd',
   modifiedStatic: '#3e63dd',
+  // Transitive (indirect) changes: warm bronze, distinct from the blue of direct edits.
+  transitive: '#a87a3c',
   unchanged: '#8b8d98',
   extra: '#8b8d98',
 }
@@ -72,6 +83,8 @@ export const SNAP = { old: 0, both: 0.5, new: 1 } as const
 
 const VISIBILITY_EPS = 0.02
 export const GHOST_OPACITY = 0.15
+/** Transitive (indirect) changes render subordinate (semi-transparent) to direct edits. */
+export const TRANSITIVE_OPACITY = 0.5
 
 /**
  * Assign the visual bucket for one side's mesh of an entity.
@@ -92,6 +105,12 @@ export function bucketFor(side: Side, rec: EntityRecord | undefined): Bucket | n
     case 'unchanged':
       return side === 'new' ? 'unchanged' : null
     case 'modified': {
+      // Transitive-only change: the entity itself did not change; it is flagged
+      // only because something it depends on did. Render once from the new side
+      // as a subordinate bucket so demos don't read as "everything changed".
+      if (rec.pair?.change_scope === 'transitive') {
+        return side === 'new' ? 'transitive' : null
+      }
       const aspects = rec.pair?.aspects
       const moved = aspects?.placement === 'changed'
       const reshaped = aspects?.geometry === 'changed'
@@ -107,6 +126,8 @@ export interface Toggles {
   deleted: boolean
   added: boolean
   modified: boolean
+  /** Transitive-only changes (entities flagged only because a dependency changed). */
+  transitive: boolean
   unchanged: boolean
   /** Ghost (translucent) unchanged geometry instead of solid gray. */
   ghostUnchanged: boolean
@@ -116,6 +137,7 @@ export const DEFAULT_TOGGLES: Toggles = {
   deleted: true,
   added: true,
   modified: true,
+  transitive: true,
   unchanged: true,
   ghostUnchanged: false,
 }
@@ -146,6 +168,7 @@ export function computeAppearances(t: number, toggles: Toggles): Record<Bucket, 
     modifiedOld: appearance('modifiedOld', toggles.modified, oldWeight),
     modifiedNew: appearance('modifiedNew', toggles.modified, newWeight),
     modifiedStatic: appearance('modifiedStatic', toggles.modified, 1),
+    transitive: appearance('transitive', toggles.transitive, TRANSITIVE_OPACITY),
     unchanged: appearance('unchanged', toggles.unchanged, ghost),
     extra: appearance('extra', toggles.unchanged, ghost),
   }
