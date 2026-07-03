@@ -15,3 +15,12 @@ Scripts are for inspection and repeatable investigation.
     pair + report under `viewer/e2e/fixtures/`.
   - `explore/corpus_survey.py` regenerates the corpus survey JSON behind
     `docs/corpus/`.
+  - `explore/benchmark_competitors.py` benchmarks Athar against other IFC
+    diff tools on curated pairs with known ground truth.
+  - `explore/speckle_diff_runner.py` runs Speckle's diff semantics locally:
+    speckleifc conversion (ships in `specklepy`) + serializer hashes +
+    applicationId/id classification. No Speckle server involved.
+  - `explore/ifcgit_diff_runner.py` is a headless port of Bonsai IfcGit's
+    diff (git text diff of STEP lines, propagated to products); the original
+    is Blender-bound. Both runners print one JSON object to stdout and are
+    invoked as subprocess tools by `benchmark_competitors.py`.
