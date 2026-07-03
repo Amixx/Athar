@@ -17,6 +17,16 @@ Scripts are for inspection and repeatable investigation.
     `docs/corpus/`.
   - `explore/benchmark_competitors.py` benchmarks Athar against other IFC
     diff tools on curated pairs with known ground truth.
+    - Count-level ground truth goes in `Expected.counts` (aggregate
+      added/deleted/modified, with `_min`/`_max` suffixes for bounds).
+    - GlobalId-level ground truth goes in `Expected.changed_guids`
+      (`{"added": [...], "deleted": [...], "modified": [...]}`). When present,
+      every runner that emits `reported_guids` is scored for precision/recall/
+      F1 against it via `athar_dev.changeset_scoring.score_changeset`; results
+      land in each pair's `changeset_scores`. Only Athar emits `reported_guids`
+      today. Precision counts a transitive/indirect change as a false positive
+      unless the truth set names it, so a real revision's ground truth must
+      enumerate every genuinely-changed entity, not just the primary edit.
   - `explore/speckle_diff_runner.py` runs Speckle's diff semantics locally:
     speckleifc conversion (ships in `specklepy`) + serializer hashes +
     applicationId/id classification. No Speckle server involved.
