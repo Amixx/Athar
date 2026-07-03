@@ -17,6 +17,7 @@ benchmark = [
   "ifcdiff",
   "ifcfast",
   "pytest",
+  "specklepy",
 ]
 benchmark-ui = [
   "fastapi",
