@@ -37,6 +37,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import athar.engine as athar_engine  # noqa: E402
 from athar_dev import ifc_mutations as mutations  # noqa: E402
+from athar_dev.changeset_scoring import score_changeset  # noqa: E402
 from tests.corpus import CORPUS, acceptance_path, assert_report_invariants, corpus_path  # noqa: E402
 
 _SCRAMBLE_NAMESPACE = uuid.UUID("f43a7c2b-8fd4-4d2d-9898-8891d75432b2")
@@ -52,6 +53,7 @@ class Expected:
 
     counts: Counts | None = None
     athar: dict[str, Any] | None = None
+    changed_guids: dict[str, list[str]] | None = None
     note: str = ""
 
 
@@ -389,6 +391,7 @@ def main() -> int:
                 lambda: _run_json_runner(_IFCGIT_RUNNER, old_path, new_path, args.timeout_s), args.repeats
             )
         entry["assessment"] = _assess_pair(entry, pair.expected)
+        entry["changeset_scores"] = _score_pair(entry, pair.expected)
         results["pairs"].append(entry)
         results["summary"].append(_summary_row(entry))
         _write_json(Path(args.out), results)
@@ -450,10 +453,30 @@ def _run_athar(old_path: str, new_path: str, timeout_s: int) -> dict:
         **mem,
         "sections": {name: stats[name] for name in ("added", "deleted", "modified", "unchanged")},
         "counts": {name: stats[name] for name in ("added", "deleted", "modified", "unchanged")},
+        "reported_guids": _athar_reported_guids(report),
         "signatures": {"old": stats["old_signatures"], "new": stats["new_signatures"]},
         "matched_by_tier": stats["matcher_diagnostics"]["matched_by_tier"],
         "modified_change_scope": stats["modified_change_scope"],
         "guid_collisions": stats["guid_collisions"],
+    }
+
+
+def _athar_reported_guids(report: dict) -> dict[str, list[str]]:
+    def flat_guids(section: str) -> list[str]:
+        return [entry["guid"] for entry in report.get(section, []) if entry.get("guid")]
+
+    def modified_guids() -> list[str]:
+        out = []
+        for entry in report.get("modified", []):
+            guid = (entry.get("new") or entry.get("old") or {}).get("guid")
+            if guid:
+                out.append(guid)
+        return out
+
+    return {
+        "added": flat_guids("added"),
+        "deleted": flat_guids("deleted"),
+        "modified": modified_guids(),
     }
 
 
@@ -661,6 +684,17 @@ def _assess_run(name: str, run: dict, expected: Expected) -> str:
     return "expected"
 
 
+def _score_pair(entry: dict, expected: Expected | None) -> dict[str, dict]:
+    if expected is None or not expected.changed_guids:
+        return {}
+    scores = {}
+    for name, run in entry.get("runs", {}).items():
+        reported = run.get("reported_guids")
+        if run.get("status") == "ok" and reported is not None:
+            scores[name] = score_changeset(reported, expected.changed_guids)
+    return scores
+
+
 def _summary_row(entry: dict) -> dict:
     row = {
         "name": entry.get("name"),
@@ -671,6 +705,7 @@ def _summary_row(entry: dict) -> dict:
     if entry.get("error"):
         row["error"] = entry["error"]
         return row
+    scores = entry.get("changeset_scores", {})
     for name, run in entry.get("runs", {}).items():
         row[name] = {
             "status": run.get("status"),
@@ -679,6 +714,9 @@ def _summary_row(entry: dict) -> dict:
             "peak_rss_mb_max": run.get("peak_rss_mb_max", run.get("peak_rss_mb")),
             "gb_seconds_median": run.get("gb_seconds_median", run.get("gb_seconds")),
         }
+        score = scores.get(name)
+        if score is not None:
+            row[name]["changeset"] = {key: score[key] for key in ("precision", "recall", "f1", "tp", "fp", "fn")}
     return row
 
 
@@ -777,7 +815,12 @@ def _input_summary(path: str) -> dict:
 def _expected_json(expected: Expected | None) -> dict | None:
     if expected is None:
         return None
-    return {"counts": expected.counts, "athar": expected.athar, "note": expected.note}
+    return {
+        "counts": expected.counts,
+        "athar": expected.athar,
+        "changed_guids": expected.changed_guids,
+        "note": expected.note,
+    }
 
 
 def _current_peak_rss_mb() -> float | None:
