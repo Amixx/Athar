@@ -32,7 +32,15 @@ from athar_view.server import MANIFEST_SCHEMA_VERSION, build_report_bytes, find_
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BENCHMARK = REPO_ROOT / ".athar-benchmark" / "competitor-benchmark.json"
-TOOLS = ("athar", "ifcdiff_default", "ifcdiff_relationships", "ifcfast")
+TOOLS = ("athar", "ifcdiff_default", "ifcdiff_relationships", "ifcfast", "speckle_local", "ifcgit_port")
+TOOL_LABELS = {
+    "athar": "Athar",
+    "ifcdiff_default": "IfcDiff",
+    "ifcdiff_relationships": "IfcDiff + relationships",
+    "ifcfast": "IfcFast",
+    "speckle_local": "Speckle (local)",
+    "ifcgit_port": "IfcGit (port)",
+}
 
 
 def create_app(benchmark_path: str | Path | None = None):
@@ -235,10 +243,7 @@ def _table(rows: list[dict[str, Any]]) -> str:
           <tr>
             <th>Pair</th>
             <th>Expectation</th>
-            <th>Athar</th>
-            <th>IfcDiff</th>
-            <th>IfcDiff + relationships</th>
-            <th>IfcFast</th>
+            {"".join(f"<th>{_e(TOOL_LABELS.get(tool, tool))}</th>" for tool in TOOLS)}
           </tr>
         </thead>
         <tbody>{body}</tbody>
@@ -257,10 +262,7 @@ def _row(row: dict[str, Any]) -> str:
         <div class="small"><a href="/viewer/{_url(name)}" target="_blank" rel="noreferrer">viewer</a> · <a href="/pair/{_url(name)}">outputs</a></div>
       </td>
       <td class="text-secondary">{_e(row.get("expectation", ""))}</td>
-      {_tool_cell(row, "athar")}
-      {_tool_cell(row, "ifcdiff_default")}
-      {_tool_cell(row, "ifcdiff_relationships")}
-      {_tool_cell(row, "ifcfast")}
+      {"".join(_tool_cell(row, tool) for tool in TOOLS)}
     </tr>
     """
 
