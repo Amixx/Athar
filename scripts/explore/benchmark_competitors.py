@@ -37,6 +37,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import athar.engine as athar_engine  # noqa: E402
 from athar_dev import ifc_mutations as mutations  # noqa: E402
+from athar_dev.changeset_scoring import score_changeset  # noqa: E402
 from tests.corpus import CORPUS, acceptance_path, assert_report_invariants, corpus_path  # noqa: E402
 
 _SCRAMBLE_NAMESPACE = uuid.UUID("f43a7c2b-8fd4-4d2d-9898-8891d75432b2")
@@ -52,6 +53,7 @@ class Expected:
 
     counts: Counts | None = None
     athar: dict[str, Any] | None = None
+    changed_guids: dict[str, list[str]] | None = None
     note: str = ""
 
 
@@ -87,6 +89,21 @@ def _ifcopenshell_rewrite_pair(key: str) -> PairBuilder:
         ifcopenshell.open(src).write(old_path)
         ifcopenshell.open(src).write(new_path)
         return str(old_path), str(new_path)
+
+    return build
+
+
+def _asymmetric_rewrite_pair(key: str) -> PairBuilder:
+    """Original file vs its IfcOpenShell rewrite — the export-churn scenario."""
+
+    def build(workdir: Path) -> tuple[str, str]:
+        import ifcopenshell
+
+        src = corpus_path(key)
+        workdir.mkdir(parents=True, exist_ok=True)
+        new_path = workdir / f"{key}-rewritten.ifc"
+        ifcopenshell.open(src).write(new_path)
+        return src, str(new_path)
 
     return build
 
@@ -179,6 +196,13 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
         kind="reserialize",
         builder=_ifcopenshell_rewrite_pair("gni_190"),
         expectation="zero semantic changes after IfcOpenShell rewrite",
+        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+    ),
+    Pair(
+        name="reserialize_asymmetric_gni_190",
+        kind="reserialize_asymmetric",
+        builder=_asymmetric_rewrite_pair("gni_190"),
+        expectation="zero semantic changes when only one side is rewritten (line order/formatting churn)",
         expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
     ),
     Pair(
@@ -287,13 +311,19 @@ def main() -> int:
     parser.add_argument("--repeats", type=int, default=3, help="runs per tool; medians are reported")
     parser.add_argument("--large", action="store_true", help="include opt-in large corpus pairs")
     parser.add_argument("--no-ifcfast", action="store_true", help="disable optional ifcfast runner even if installed")
+    parser.add_argument("--no-speckle", action="store_true", help="disable optional Speckle runner even if installed")
+    parser.add_argument("--no-ifcgit", action="store_true", help="disable the IfcGit-port runner")
     args = parser.parse_args()
 
     if args.repeats < 1:
         parser.error("--repeats must be >= 1")
 
     workdir = Path(args.workdir)
-    tools = _tool_inventory(include_ifcfast=not args.no_ifcfast)
+    tools = _tool_inventory(
+        include_ifcfast=not args.no_ifcfast,
+        include_speckle=not args.no_speckle,
+        include_ifcgit=not args.no_ifcgit,
+    )
     results = {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "repo": str(REPO_ROOT),
@@ -352,7 +382,16 @@ def main() -> int:
         }
         if tools.get("ifcfast", {}).get("available"):
             entry["runs"]["ifcfast"] = _repeat(lambda: _run_ifcfast(old_path, new_path, args.timeout_s), args.repeats)
+        if tools.get("speckle_local", {}).get("available"):
+            entry["runs"]["speckle_local"] = _repeat(
+                lambda: _run_json_runner(_SPECKLE_RUNNER, old_path, new_path, args.timeout_s), args.repeats
+            )
+        if tools.get("ifcgit_port", {}).get("available"):
+            entry["runs"]["ifcgit_port"] = _repeat(
+                lambda: _run_json_runner(_IFCGIT_RUNNER, old_path, new_path, args.timeout_s), args.repeats
+            )
         entry["assessment"] = _assess_pair(entry, pair.expected)
+        entry["changeset_scores"] = _score_pair(entry, pair.expected)
         results["pairs"].append(entry)
         results["summary"].append(_summary_row(entry))
         _write_json(Path(args.out), results)
@@ -414,10 +453,30 @@ def _run_athar(old_path: str, new_path: str, timeout_s: int) -> dict:
         **mem,
         "sections": {name: stats[name] for name in ("added", "deleted", "modified", "unchanged")},
         "counts": {name: stats[name] for name in ("added", "deleted", "modified", "unchanged")},
+        "reported_guids": _athar_reported_guids(report),
         "signatures": {"old": stats["old_signatures"], "new": stats["new_signatures"]},
         "matched_by_tier": stats["matcher_diagnostics"]["matched_by_tier"],
         "modified_change_scope": stats["modified_change_scope"],
         "guid_collisions": stats["guid_collisions"],
+    }
+
+
+def _athar_reported_guids(report: dict) -> dict[str, list[str]]:
+    def flat_guids(section: str) -> list[str]:
+        return [entry["guid"] for entry in report.get(section, []) if entry.get("guid")]
+
+    def modified_guids() -> list[str]:
+        out = []
+        for entry in report.get("modified", []):
+            guid = (entry.get("new") or entry.get("old") or {}).get("guid")
+            if guid:
+                out.append(guid)
+        return out
+
+    return {
+        "added": flat_guids("added"),
+        "deleted": flat_guids("deleted"),
+        "modified": modified_guids(),
     }
 
 
@@ -468,6 +527,29 @@ def _run_ifcdiff(
         "stdout_preview": completed.get("stdout", "")[:2000],
         "stderr_preview": completed.get("stderr", "")[:2000],
     }
+
+
+_SPECKLE_RUNNER = REPO_ROOT / "scripts" / "explore" / "speckle_diff_runner.py"
+_IFCGIT_RUNNER = REPO_ROOT / "scripts" / "explore" / "ifcgit_diff_runner.py"
+
+
+def _run_json_runner(runner: Path, old_path: str, new_path: str, timeout_s: int) -> dict:
+    argv = [sys.executable, str(runner), old_path, new_path]
+    start = time.perf_counter()
+    completed = _run_subprocess(argv, timeout_s)
+    seconds = round(time.perf_counter() - start, 3)
+    mem = {"peak_rss_mb": completed.get("peak_rss_mb"), "gb_seconds": completed.get("gb_seconds")}
+    if completed.get("status") != "completed":
+        return completed | {"seconds": seconds}
+    try:
+        payload = json.loads(completed["stdout"])
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "seconds": seconds, "error": f"{type(exc).__name__}: {exc}", **mem}
+    if completed["returncode"] != 0 or "error" in payload:
+        error = str(payload.get("error") or completed.get("stderr", ""))[:500]
+        return {"status": "error", "seconds": seconds, "error": error, **mem}
+    extras = {key: value for key, value in payload.items() if key not in ("tool", "counts")}
+    return {"status": "ok", "seconds": seconds, **mem, "counts": payload.get("counts"), "extras": extras}
 
 
 _IFCFAST_RUNNER = (
@@ -602,6 +684,17 @@ def _assess_run(name: str, run: dict, expected: Expected) -> str:
     return "expected"
 
 
+def _score_pair(entry: dict, expected: Expected | None) -> dict[str, dict]:
+    if expected is None or not expected.changed_guids:
+        return {}
+    scores = {}
+    for name, run in entry.get("runs", {}).items():
+        reported = run.get("reported_guids")
+        if run.get("status") == "ok" and reported is not None:
+            scores[name] = score_changeset(reported, expected.changed_guids)
+    return scores
+
+
 def _summary_row(entry: dict) -> dict:
     row = {
         "name": entry.get("name"),
@@ -612,6 +705,7 @@ def _summary_row(entry: dict) -> dict:
     if entry.get("error"):
         row["error"] = entry["error"]
         return row
+    scores = entry.get("changeset_scores", {})
     for name, run in entry.get("runs", {}).items():
         row[name] = {
             "status": run.get("status"),
@@ -620,6 +714,9 @@ def _summary_row(entry: dict) -> dict:
             "peak_rss_mb_max": run.get("peak_rss_mb_max", run.get("peak_rss_mb")),
             "gb_seconds_median": run.get("gb_seconds_median", run.get("gb_seconds")),
         }
+        score = scores.get(name)
+        if score is not None:
+            row[name]["changeset"] = {key: score[key] for key in ("precision", "recall", "f1", "tp", "fp", "fn")}
     return row
 
 
@@ -635,7 +732,7 @@ def _first_counts(runs: list[dict]) -> dict | None:
     return None
 
 
-def _tool_inventory(*, include_ifcfast: bool) -> dict:
+def _tool_inventory(*, include_ifcfast: bool, include_speckle: bool = True, include_ifcgit: bool = True) -> dict:
     tools = {
         "athar": {"status": "subprocess", "version": athar_engine._package_version()},
         "ifcopenshell": {"version": _package_version("ifcopenshell")},
@@ -651,6 +748,26 @@ def _tool_inventory(*, include_ifcfast: bool) -> dict:
             "available": importlib.util.find_spec("ifcfast") is not None,
             "version": _package_version("ifcfast"),
             "notes": "Model.diff is GUID/product-table based; output normalized to added/deleted/modified counts.",
+        }
+    if include_speckle:
+        tools["speckle_local"] = {
+            "runner": str(_SPECKLE_RUNNER.relative_to(REPO_ROOT)),
+            "available": importlib.util.find_spec("speckleifc") is not None,
+            "version": _package_version("specklepy"),
+            "notes": (
+                "speckleifc (Speckle's production IFC importer, ships in specklepy) converts locally; "
+                "specklepy serializer computes object hashes; Speckle version-diff semantics "
+                "(applicationId=GlobalId correlation, hash equality) — no server involved."
+            ),
+        }
+    if include_ifcgit:
+        tools["ifcgit_port"] = {
+            "runner": str(_IFCGIT_RUNNER.relative_to(REPO_ROOT)),
+            "available": _IFCGIT_RUNNER.exists() and shutil.which("git") is not None,
+            "notes": (
+                "Faithful port of Bonsai tool.ifcgit (ifc_diff_ids + get_modified_step_ids): "
+                "git text diff of STEP lines, propagated to products. Original is Blender-bound."
+            ),
         }
     return tools
 
@@ -698,7 +815,12 @@ def _input_summary(path: str) -> dict:
 def _expected_json(expected: Expected | None) -> dict | None:
     if expected is None:
         return None
-    return {"counts": expected.counts, "athar": expected.athar, "note": expected.note}
+    return {
+        "counts": expected.counts,
+        "athar": expected.athar,
+        "changed_guids": expected.changed_guids,
+        "note": expected.note,
+    }
 
 
 def _current_peak_rss_mb() -> float | None:

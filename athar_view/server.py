@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -129,7 +130,15 @@ class ViewerRequestHandler(BaseHTTPRequestHandler):
         self._respond(head_only=False)
 
     def _respond(self, *, head_only: bool) -> None:
-        path = self.path.split("?", 1)[0]
+        path, _, query = self.path.partition("?")
+        if path == "/" and self.server.dist_dir is not None and "src=" not in query:
+            # This server holds exactly one loaded diff; the bare root would
+            # show the SPA's empty drag-drop landing instead of it.
+            self.send_response(HTTPStatus.TEMPORARY_REDIRECT)
+            self._cors_headers()
+            self.send_header("Location", f"/?src={urllib.parse.quote(self.server.origin, safe='')}")
+            self.end_headers()
+            return
         resolved = self._resolve(path)
         if resolved is None:
             self.send_response(HTTPStatus.NOT_FOUND)
