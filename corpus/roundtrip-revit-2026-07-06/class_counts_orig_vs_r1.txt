@@ -1,0 +1,26 @@
+old products: 44389  (44389 unique guids)
+new products: 886  (886 unique guids)
+guid overlap: 688  (1.5% of old)
+
+class                                         old      new
+IfcBeam                                       201      198
+IfcBuilding                                     1        1
+IfcBuildingElementPart                       1342        0
+IfcBuildingElementProxy                        26      121
+IfcBuildingStorey                              13       13
+IfcColumn                                     158      158
+IfcCovering                                 16120       25
+IfcCurtainWall                                 21       21
+IfcDoor                                        57       57
+IfcFooting                                     12        8
+IfcGrid                                         2        2
+IfcMechanicalFastener                        6024        0
+IfcMember                                   18939        0
+IfcOpeningElement                              91       45
+IfcPlate                                     1112        0
+IfcRailing                                     26       26
+IfcSite                                         1        1
+IfcSlab                                        64       55
+IfcStairFlight                                 24        0
+IfcWall                                         1        1
+IfcWallStandardCase                           154      154
