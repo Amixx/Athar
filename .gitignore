@@ -157,3 +157,6 @@ athar_view/static/
 !viewer/src/lib/**
 
 .playwright-mcp
+
+# Decompressed roundtrip corpus exports (only the .zst files are committed)
+corpus/*/exports/*.ifc

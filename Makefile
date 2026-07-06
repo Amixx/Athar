@@ -62,13 +62,12 @@ test:
 test-large-acceptance:
 	ATHAR_RUN_LARGE_ACCEPTANCE=1 $(PYTHON) -m pytest tests/test_acceptance_large_ifc.py -q --durations=5
 
-# Optional native accelerator (Stage A: Merkle + WL gossip). Builds the Rust
-# extension straight into the active venv via maturin; pure-Python users never
-# need to run this — athar.bottom falls back automatically when it is absent.
+# Required native extension (parse -> canonicalize -> Merkle -> WL -> spatial).
+# Builds the Rust module straight into the active venv via maturin.
 native-build:
 	@$(PYTHON) -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('maturin') else 1)" \
 		|| $(PYTHON) -m pip install "maturin>=1.5,<2.0"
-	$(PYTHON) -m maturin develop --release --manifest-path athar/_native/Cargo.toml --interpreter $(PYTHON)
+	$(PYTHON) -m maturin develop --release --manifest-path athar/_native/Cargo.toml
 
 native-clean:
 	rm -rf athar/_native/target
