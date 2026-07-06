@@ -373,8 +373,9 @@ REVIT_ROUNDTRIP_PAIRS: tuple[Pair, ...] = (
         kind="revit_roundtrip_noop",
         builder=_revit_pair("r2", "r3"),
         expectation=(
-            "IFC4 no-op re-export (+ 'keep GUIDs' option, zero model edits): ~177 modified "
-            "reported today is a known engine noise floor, not a real change; ground truth is empty."
+            "IFC4 no-op re-export (+ 'keep GUIDs' option, zero model edits): ground truth is "
+            "empty; the residual ~2 modified are Revit's nondeterministic mesh re-serialization "
+            "(tessellation reorder wobble), counted as false positives."
         ),
         expected=_revit_expected("r2_r3"),
         revit=True,
@@ -445,8 +446,9 @@ REVIT_ROUNDTRIP_PAIRS: tuple[Pair, ...] = (
         kind="revit_roundtrip_noop",
         builder=_revit_pair("r8", "r9"),
         expectation=(
-            "Same-settings determinism pair, zero model edits: ~177 modified reported today "
-            "is a known engine noise floor, not a real change; ground truth is empty."
+            "Same-settings determinism pair, zero model edits: ground truth is empty; the "
+            "residual ~2 modified are Revit's nondeterministic mesh re-serialization "
+            "(tessellation reorder wobble), counted as false positives."
         ),
         expected=_revit_expected("r8_r9"),
         revit=True,
