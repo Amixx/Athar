@@ -9,7 +9,7 @@
  * Expected counts are facts of the committed fixture (walls carry meshes,
  * spatial containers do not):
  *   deleted=WallC, added=WallE, modifiedOld/New=WallB (moved +1 m),
- *   modifiedStatic=WallA (transitive) + WallD (data-only),
+ *   modifiedStatic=WallD (data-only), transitive=WallA,
  *   meshless: modified=Building+Storey, unchanged=Site; 1 displacement line.
  */
 
@@ -27,7 +27,8 @@ const EXPECTED_BUCKETS = {
   added: 1,
   modifiedOld: 1,
   modifiedNew: 1,
-  modifiedStatic: 2,
+  modifiedStatic: 1,
+  transitive: 1,
 }
 const EXPECTED_MESHLESS = { added: 0, deleted: 0, modified: 2, unchanged: 1 }
 
@@ -138,14 +139,19 @@ test('slider snaps and section toggles drive bucket appearances', async ({ page 
   expect(state.appearances.added.visible).toBe(true)
   expect(state.appearances.modifiedNew.visible).toBe(true)
 
-  // Section toggle hides every modified bucket.
-  await page.getByRole('button', { name: 'Modified' }).click()
+  // Section toggle hides every direct-modified bucket; indirect has its own.
+  await page.getByRole('button', { name: 'Direct', exact: true }).click()
   await page.waitForFunction(
     () => (window as any).__athar_viewer?.appearances.modifiedStatic.visible === false,
   )
   state = await debug()
   expect(state.appearances.modifiedNew.visible).toBe(false)
   expect(state.appearances.modifiedOld.visible).toBe(false)
+  expect(state.appearances.transitive.visible).toBe(true)
+  await page.getByRole('button', { name: 'Indirect', exact: true }).click()
+  await page.waitForFunction(
+    () => (window as any).__athar_viewer?.appearances.transitive.visible === false,
+  )
 
   // Unchanged ghosting toggle.
   expect(state.appearances.unchanged.opacity).toBe(1)
