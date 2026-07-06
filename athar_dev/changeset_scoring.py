@@ -8,6 +8,14 @@ manual review of a real v1->v2 pair).
 The comparison unit is the (category, guid) pair, so reporting a product as
 `added` when ground truth says `modified` is scored as both a false positive
 (in `added`) and a false negative (in `modified`).
+
+Ground truth may also carry ``optional_<category>`` sets: entities whose
+membership in the changeset is legitimately reportable but not required —
+canonically the direct spatial containers of an added/deleted element, whose
+child set factually changed. Reporting an optional entity is not a false
+positive; omitting it is not a false negative. Optional sets are derived from
+the edit itself (which containers' membership changed), never from any tool's
+output.
 """
 
 from __future__ import annotations
@@ -31,22 +39,25 @@ def _f1(precision: float | None, recall: float | None) -> float | None:
     return round(2 * precision * recall / (precision + recall), 4)
 
 
-def _category_score(reported: set[str], truth: set[str]) -> dict:
+def _category_score(reported: set[str], truth: set[str], optional: set[str]) -> dict:
     tp = len(reported & truth)
-    fp = len(reported - truth)
+    fp = len(reported - truth - optional)
     fn = len(truth - reported)
     precision = _ratio(tp, tp + fp)
     recall = _ratio(tp, tp + fn)
-    return {
+    score = {
         "tp": tp,
         "fp": fp,
         "fn": fn,
         "precision": precision,
         "recall": recall,
         "f1": _f1(precision, recall),
-        "false_positives": sorted(reported - truth),
+        "false_positives": sorted(reported - truth - optional),
         "false_negatives": sorted(truth - reported),
     }
+    if optional:
+        score["optional_reported"] = sorted(reported & optional)
+    return score
 
 
 def score_changeset(reported: Changeset, truth: Changeset) -> dict:
@@ -61,7 +72,8 @@ def score_changeset(reported: Changeset, truth: Changeset) -> dict:
     for category in CATEGORIES:
         reported_set = {guid for guid in reported.get(category, ()) if guid}
         truth_set = {guid for guid in truth.get(category, ()) if guid}
-        score = _category_score(reported_set, truth_set)
+        optional_set = {guid for guid in truth.get(f"optional_{category}", ()) if guid}
+        score = _category_score(reported_set, truth_set, optional_set)
         per_category[category] = score
         tp += score["tp"]
         fp += score["fp"]

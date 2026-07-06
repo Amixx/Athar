@@ -53,3 +53,30 @@ def test_falsy_guids_are_ignored():
     score = score_changeset(reported, truth)
     assert score["precision"] == 1.0
     assert score["recall"] == 1.0
+
+
+def test_optional_members_are_neither_fp_nor_fn():
+    truth = {"deleted": ["D"], "modified": [], "optional_modified": ["STOREY"]}
+    reported_with = {"deleted": ["D"], "modified": ["STOREY"]}
+    reported_without = {"deleted": ["D"], "modified": []}
+    for reported in (reported_with, reported_without):
+        score = score_changeset(reported, truth)
+        assert (score["tp"], score["fp"], score["fn"]) == (1, 0, 0), reported
+        assert score["precision"] == 1.0
+        assert score["recall"] == 1.0
+    assert score_changeset(reported_with, truth)["per_category"]["modified"]["optional_reported"] == ["STOREY"]
+
+
+def test_optional_membership_is_category_scoped():
+    truth = {"modified": [], "optional_modified": ["STOREY"], "added": []}
+    reported = {"added": ["STOREY"], "modified": []}
+    score = score_changeset(reported, truth)
+    assert score["fp"] == 1
+
+
+def test_optional_does_not_shield_unrelated_extras():
+    truth = {"modified": ["A"], "optional_modified": ["STOREY"]}
+    reported = {"modified": ["A", "STOREY", "NOISE1", "NOISE2"]}
+    score = score_changeset(reported, truth)
+    assert (score["tp"], score["fp"], score["fn"]) == (1, 2, 0)
+    assert score["per_category"]["modified"]["false_positives"] == ["NOISE1", "NOISE2"]

@@ -31,6 +31,12 @@ Scripts are for inspection and repeatable investigation.
       transitive/indirect change as a false positive
       unless the truth set names it, so a real revision's ground truth must
       enumerate every genuinely-changed entity, not just the primary edit.
+      Truth sets may carry `optional_<category>` GUIDs — direct containers
+      whose membership factually changed (derived from the files, never from
+      a tool's output): reporting one is not a false positive, omitting one
+      is not a false negative. `counts.modified` bounds derive from the truth
+      sets (`|required|`..`|required|+|optional|`), so a tool that inflates
+      `modified` fails assessment even where GUID scoring is absent.
     - Each `Pair` carries a `set_name` (JSON key `"set"`); the default set is
       `"synthetic"`. The `"revit"` set is 9 same-schema pairs built from the
       real Revit round-trip corpus at `corpus/roundtrip-revit-2026-07-06/`
