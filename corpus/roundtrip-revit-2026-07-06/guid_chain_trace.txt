@@ -1,0 +1,15 @@
+sample trace (guid -> express id per file):
+  IfcColumn 1wu0IBZLX5YRfizgb_RsEq ()  real-world-spanish-180mb.ifc:#85382  r1.ifc:#664732  r2.ifc:#487379  r3.ifc:#487379  r4.ifc:#519817  r5.ifc:#519820  r6.ifc:#515081  r7.ifc:#515081  r8.ifc:#515081
+  IfcCurtainWall 2UFR6JDlX8gO7rek5v0ZH_ (CW-002)  real-world-spanish-180mb.ifc:#470588  r1.ifc:#35123  r2.ifc:#10217  r3.ifc:#10217  r4.ifc:#35945  r5.ifc:#35947  r6.ifc:#35947  r7.ifc:#35947  r8.ifc:#35947
+  IfcDoor 1GiSdGDDP58v2YsH7DIGot (D007)  real-world-spanish-180mb.ifc:#85156  r1.ifc:#666411  r2.ifc:#488684  r3.ifc:#488684  r4.ifc:#521532  r5.ifc:#521535  r6.ifc:#516796  r7.ifc:#516796  r8.ifc:#516796
+  IfcWallStandardCase 1maJdZo7r7wwvJJox1CBIy ()  real-world-spanish-180mb.ifc:#49791  r1.ifc:#665837  r2.ifc:#488428  r3.ifc:#488428  r4.ifc:#521241  r5.ifc:#521244  r6.ifc:#516505  r7.ifc:#516505  r8.ifc:#516505
+
+pairwise guid-set + numbering stability:
+  real-world-spanish-180mb.ifc -> r1.ifc: shared 688/44389->886, express-id changed 688, class changed 0
+  r1.ifc -> r2.ifc: shared 886/886->886, express-id changed 871, class changed 154
+  r2.ifc -> r3.ifc: shared 886/886->886, express-id changed 0, class changed 0
+  r3.ifc -> r4.ifc: shared 886/886->886, express-id changed 871, class changed 0
+  r4.ifc -> r5.ifc: shared 886/886->886, express-id changed 868, class changed 0
+  r5.ifc -> r6.ifc: shared 885/886->885, express-id changed 656, class changed 0
+  r6.ifc -> r7.ifc: shared 885/885->885, express-id changed 77, class changed 0
+  r7.ifc -> r8.ifc: shared 885/885->889, express-id changed 132, class changed 0
