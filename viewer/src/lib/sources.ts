@@ -3,40 +3,127 @@
  * `?src=<origin>` manifest fetch used by the `athar view` CLI hand-off.
  *
  * Manifest contract (served by athar_view at <src>/manifest.json):
+ *
+ * Schema 1 — single pair:
  * {
  *   "athar_viewer_manifest": 1,
  *   "schema_version": 1,
- *   "generator": "athar_view/0.1.0",
  *   "old":    {"name": "old.ifc", "url": "/files/old.ifc"},
  *   "new":    {"name": "new.ifc", "url": "/files/new.ifc"},
  *   "report": {"url": "/files/report.json"}
  * }
+ *
+ * Schema 2 — revision chain (a schema-1 manifest is one step):
+ * {
+ *   "athar_viewer_manifest": 1,
+ *   "schema_version": 2,
+ *   "steps": [
+ *     {"label": "r5 → r6",
+ *      "old": {...}, "new": {...}, "report": {...}}, ...],
+ *   "active_step": 0
+ * }
+ *
+ * Adjacent steps share a file (rN is new-side of one step, old-side of the
+ * next); the server gives that file one stable url, so a per-url mesh cache in
+ * App.svelte tessellates each revision once.
  */
 
-export const MANIFEST_SCHEMA_VERSION = 1
-
-export interface LoadedInputs {
-  oldBytes: ArrayBuffer
-  newBytes: ArrayBuffer
-  reportJson: unknown
-  oldName: string
-  newName: string
-  /** Non-fatal handshake warning (e.g. CLI/app schema version mismatch). */
-  warning?: string
-}
+export const MANIFEST_SCHEMA_VERSION = 2
 
 interface ManifestFile {
   name?: string
   url: string
 }
 
-interface ViewerManifest {
-  athar_viewer_manifest: number
-  schema_version: number
-  generator?: string
+interface ParsedStep {
+  label: string
   old: ManifestFile
   new: ManifestFile
   report: ManifestFile
+}
+
+export interface ParsedManifest {
+  steps: ParsedStep[]
+  activeStep: number
+  /** Non-fatal handshake warning (e.g. CLI newer than the viewer). */
+  warning?: string
+}
+
+/**
+ * One diff step ready to load: names for display, keys for the mesh cache, and
+ * byte/report resolvers that are only invoked when the step becomes active.
+ */
+export interface StepSource {
+  label: string
+  oldName: string
+  newName: string
+  oldKey: string
+  newKey: string
+  fetchOldBytes: () => Promise<ArrayBuffer>
+  fetchNewBytes: () => Promise<ArrayBuffer>
+  fetchReport: () => Promise<unknown>
+}
+
+export interface LoadedChain {
+  steps: StepSource[]
+  activeStep: number
+  warning?: string
+}
+
+class ManifestFormatError extends Error {}
+
+function parseFile(value: unknown, ctx: string): ManifestFile {
+  if (typeof value !== 'object' || value === null || typeof (value as ManifestFile).url !== 'string') {
+    throw new ManifestFormatError(`manifest ${ctx} is missing a url.`)
+  }
+  const file = value as Record<string, unknown>
+  return { url: file.url as string, name: typeof file.name === 'string' ? file.name : undefined }
+}
+
+function parseStep(value: unknown, i: number): ParsedStep {
+  if (typeof value !== 'object' || value === null) {
+    throw new ManifestFormatError(`manifest step ${i} is not an object.`)
+  }
+  const step = value as Record<string, unknown>
+  return {
+    label: typeof step.label === 'string' ? step.label : `step ${i + 1}`,
+    old: parseFile(step.old, `step ${i} old`),
+    new: parseFile(step.new, `step ${i} new`),
+    report: parseFile(step.report, `step ${i} report`),
+  }
+}
+
+/** Pure manifest validation, unit-tested without any network. */
+export function parseManifest(json: unknown): ParsedManifest {
+  if (typeof json !== 'object' || json === null) {
+    throw new ManifestFormatError('manifest is not a JSON object.')
+  }
+  const m = json as Record<string, unknown>
+  if (m.athar_viewer_manifest !== 1) {
+    throw new ManifestFormatError('not an Athar viewer manifest.')
+  }
+  let warning: string | undefined
+  if (typeof m.schema_version === 'number' && m.schema_version > MANIFEST_SCHEMA_VERSION) {
+    warning =
+      `CLI manifest schema v${m.schema_version} > viewer v${MANIFEST_SCHEMA_VERSION}; ` +
+      `update the viewer if something looks off.`
+  }
+
+  let steps: ParsedStep[]
+  if ('steps' in m && m.steps !== undefined) {
+    if (!Array.isArray(m.steps) || m.steps.length === 0) {
+      throw new ManifestFormatError('manifest chain has no steps.')
+    }
+    steps = m.steps.map((step, i) => parseStep(step, i))
+  } else {
+    steps = [parseStep({ old: m.old, new: m.new, report: m.report }, 0)]
+  }
+
+  let activeStep = 0
+  if (typeof m.active_step === 'number' && m.active_step >= 0 && m.active_step < steps.length) {
+    activeStep = Math.floor(m.active_step)
+  }
+  return { steps, activeStep, warning }
 }
 
 async function fetchOk(url: string): Promise<Response> {
@@ -52,32 +139,32 @@ async function fetchOk(url: string): Promise<Response> {
   return response
 }
 
-export async function loadFromSrc(src: string): Promise<LoadedInputs> {
+export async function loadChainFromSrc(src: string): Promise<LoadedChain> {
   const base = src.replace(/\/+$/, '')
-  const manifest = (await (await fetchOk(`${base}/manifest.json`)).json()) as ViewerManifest
-  if (manifest.athar_viewer_manifest !== 1 || !manifest.old || !manifest.new || !manifest.report) {
-    throw new Error(`${base}/manifest.json is not an Athar viewer manifest.`)
-  }
-  let warning: string | undefined
-  if (manifest.schema_version !== MANIFEST_SCHEMA_VERSION) {
-    warning =
-      `CLI manifest schema v${manifest.schema_version} != viewer v${MANIFEST_SCHEMA_VERSION}; ` +
-      `update athar or the viewer if something looks off.`
+  const json = await (await fetchOk(`${base}/manifest.json`)).json()
+  let parsed: ParsedManifest
+  try {
+    parsed = parseManifest(json)
+  } catch (error) {
+    throw new Error(`${base}/manifest.json is not an Athar viewer manifest. (${error})`)
   }
   const resolve = (file: ManifestFile) => new URL(file.url, `${base}/`).toString()
-  const [oldBytes, newBytes, reportJson] = await Promise.all([
-    fetchOk(resolve(manifest.old)).then((r) => r.arrayBuffer()),
-    fetchOk(resolve(manifest.new)).then((r) => r.arrayBuffer()),
-    fetchOk(resolve(manifest.report)).then((r) => r.json()),
-  ])
-  return {
-    oldBytes,
-    newBytes,
-    reportJson,
-    oldName: manifest.old.name ?? 'old.ifc',
-    newName: manifest.new.name ?? 'new.ifc',
-    warning,
-  }
+  const steps: StepSource[] = parsed.steps.map((step) => {
+    const oldUrl = resolve(step.old)
+    const newUrl = resolve(step.new)
+    const reportUrl = resolve(step.report)
+    return {
+      label: step.label,
+      oldName: step.old.name ?? 'old.ifc',
+      newName: step.new.name ?? 'new.ifc',
+      oldKey: oldUrl,
+      newKey: newUrl,
+      fetchOldBytes: () => fetchOk(oldUrl).then((r) => r.arrayBuffer()),
+      fetchNewBytes: () => fetchOk(newUrl).then((r) => r.arrayBuffer()),
+      fetchReport: () => fetchOk(reportUrl).then((r) => r.json()),
+    }
+  })
+  return { steps, activeStep: parsed.activeStep, warning: parsed.warning }
 }
 
 export interface DroppedFiles {
@@ -107,23 +194,23 @@ export function classifyDrop(files: File[], current: DroppedFiles): DroppedFiles
   return next
 }
 
-export async function loadFromFiles(files: Required<DroppedFiles>): Promise<LoadedInputs> {
-  const [oldBytes, newBytes, reportText] = await Promise.all([
-    files.oldFile.arrayBuffer(),
-    files.newFile.arrayBuffer(),
-    files.reportFile.text(),
-  ])
-  let reportJson: unknown
-  try {
-    reportJson = JSON.parse(reportText)
-  } catch {
-    throw new Error(`${files.reportFile.name} is not valid JSON.`)
-  }
-  return {
-    oldBytes,
-    newBytes,
-    reportJson,
+export function chainFromFiles(files: Required<DroppedFiles>): LoadedChain {
+  const step: StepSource = {
+    label: `${files.oldFile.name} → ${files.newFile.name}`,
     oldName: files.oldFile.name,
     newName: files.newFile.name,
+    oldKey: `file:${files.oldFile.name}`,
+    newKey: `file:${files.newFile.name}`,
+    fetchOldBytes: () => files.oldFile.arrayBuffer(),
+    fetchNewBytes: () => files.newFile.arrayBuffer(),
+    fetchReport: () =>
+      files.reportFile.text().then((text) => {
+        try {
+          return JSON.parse(text)
+        } catch {
+          throw new Error(`${files.reportFile.name} is not valid JSON.`)
+        }
+      }),
   }
+  return { steps: [step], activeStep: 0 }
 }

@@ -21,6 +21,10 @@ export interface ViewerDebugState {
   appearances?: Record<Bucket, Appearance>
   displacementLines?: number
   selection?: { side: string; stepId: number } | null
+  /** Chain navigation: total steps, active index, and its label. */
+  stepCount?: number
+  activeStep?: number
+  stepLabel?: string
 }
 
 declare global {

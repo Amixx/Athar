@@ -46,6 +46,16 @@ highlight overlay.
    (`athar_viewer_manifest: 1`, `schema_version` handshake) and the files it
    points at. This is what `athar view` (in `athar_view/`) serves.
 
+   The manifest has two forms. **v1** is a single pair (`old`, `new`, `report`
+   at the top level). **v2** is a revision chain: `steps: [{label, old, new,
+   report}, ...]` plus `active_step`, where each step is one consecutive pair
+   (`athar view a.ifc b.ifc c.ifc …`). A v1 manifest is treated as a one-step
+   chain, so single-pair loads are unchanged. When a chain has more than one
+   step the app shows a prev/next navigator (`[` / `]`) and a `n/N: label`
+   indicator; adjacent steps share a file url, so a per-url mesh cache and one
+   chain-wide RTC offset mean switching a step re-tessellates only the new
+   revision.
+
 ## Commands
 
 ```bash
