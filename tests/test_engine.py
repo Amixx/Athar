@@ -24,9 +24,9 @@ def _corpus_files_present():
 
 def test_engine_diff_detects_changes_between_versions():
     # Pins observed behavior on the frozen Building-Landscaping v1/v2 exports:
-    # one proxy element was deleted; the deletion ripples through the spatial
-    # topology hashes of everything else, so the rest report as transitive
-    # modifications matched by GlobalId.
+    # one proxy element was deleted; with radius-1 class-only WL gossip the
+    # deletion ripples only to its direct spatial container, which reports as
+    # the single transitive modification. Everything else stays unchanged.
     report = diff_files(OLD_IFC, NEW_IFC)
     assert report["engine"] == "athar"
     assert report["schemas"] == {"old": "IFC4", "new": "IFC4"}
@@ -34,10 +34,10 @@ def test_engine_diff_detects_changes_between_versions():
     assert report["stats"]["new_signatures"] == 7
     assert report["stats"]["added"] == 0
     assert report["stats"]["deleted"] == 1
-    assert report["stats"]["modified"] == 7
-    assert report["stats"]["unchanged"] == 0
+    assert report["stats"]["modified"] == 1
+    assert report["stats"]["unchanged"] == 6
     assert report["stats"]["matcher_diagnostics"]["matched_by_tier"] == {"guid": 7, "geometry_hash": 0}
-    assert report["stats"]["modified_change_scope"] == {"intrinsic": 0, "transitive": 7, "mixed": 0}
+    assert report["stats"]["modified_change_scope"] == {"intrinsic": 0, "transitive": 1, "mixed": 0}
 
 
 def test_engine_schema_support_includes_ifc4_and_ifc2x3():

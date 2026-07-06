@@ -486,11 +486,11 @@ fn topology_compute(
 
 /// Compute `vh_topology` per entity from context + spatial neighbor gossip.
 ///
-/// `seeds[step] = sha256("class|vh_geometry|vh_data")` is precomputed in
-/// Python (cheap, one hash each); Rust does the expensive BFS expansion and
-/// token assembly. `*_adj` are undirected neighbor lists.
+/// `seeds[step] = sha256(canonical_class)` is precomputed by the caller;
+/// Rust does the BFS expansion and token assembly. `*_adj` are undirected
+/// neighbor lists.
 #[pyfunction]
-#[pyo3(signature = (seeds, context_adj, spatial_adj, context_k=1, spatial_k=2))]
+#[pyo3(signature = (seeds, context_adj, spatial_adj, context_k=1, spatial_k=1))]
 fn compute_topology_hashes(
     py: Python<'_>,
     seeds: HashMap<i64, String>,
@@ -641,23 +641,23 @@ fn build_bundle(
     prof.mark("merkle");
 
     // ---- WL topology -------------------------------------------------------
+    let mut class_seeds: HashMap<&str, String> = HashMap::new();
+    for e in &parsed.entities {
+        class_seeds
+            .entry(e.canonical_class.as_str())
+            .or_insert_with(|| {
+                let mut hasher = Sha256::new();
+                hasher.update(e.canonical_class.as_bytes());
+                hex::encode(hasher.finalize())
+            });
+    }
     let mut seeds: HashMap<i64, String> = HashMap::with_capacity(parsed.entities.len());
     for e in &parsed.entities {
-        let vh_geom = merkle_out
-            .get(&e.step_id)
-            .map(|(g, _)| g.as_str())
-            .unwrap_or("");
-        // Stream "<class>|<vh_geom>" into the hasher (byte-identical to the
-        // former format!); one fewer String per entity across the whole file.
-        let mut hasher = Sha256::new();
-        hasher.update(e.canonical_class.as_bytes());
-        hasher.update(b"|");
-        hasher.update(vh_geom.as_bytes());
-        seeds.insert(e.step_id, hex::encode(hasher.finalize()));
+        seeds.insert(e.step_id, class_seeds[e.canonical_class.as_str()].clone());
     }
     let context_vec: HashMap<i64, Vec<i64>> = sorted_adj(context_adj);
     let spatial_vec: HashMap<i64, Vec<i64>> = sorted_adj(spatial_adj);
-    let topo = topology_compute(&seeds, &context_vec, &spatial_vec, 1, 2);
+    let topo = topology_compute(&seeds, &context_vec, &spatial_vec, 1, 1);
     prof.mark("wl_topology");
 
     // ---- Spatial -----------------------------------------------------------

@@ -39,6 +39,19 @@ supports IFC4 `IfcSpatialElement` and IFC2X3 `IfcSpatialStructureElement` roots.
 - Placement is excluded from `vh_geometry`; identical components at different
   locations should share the same geometry hash.
 
+## WL Topology Contract
+
+`vh_topology` answers "did the class-multiset of my direct relationship
+neighborhood change": WL seeds are canonical-class-only and both gossip radii
+are 1 (direct context neighbors, direct spatial parents/children). Neighbor
+*content* (geometry/data) must never enter the seeds — a neighbor's content
+change is already reported on that neighbor as intrinsic, and content-bearing
+seeds fan a single change out storey-wide (2026-07 Revit round-trip corpus:
+2 re-tessellated elements false-flagged 175 storey siblings per export pair).
+Consequences to preserve: a pure content edit keeps the victim's own topology
+aspect `unchanged`; add/delete flips only direct containers and directly
+connected elements, not siblings.
+
 ## Known Limitation: Representation Equivalence
 
 `vh_geometry` hashes the geometry-domain subgraph (representation items,
