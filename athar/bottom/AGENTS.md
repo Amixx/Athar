@@ -38,6 +38,24 @@ supports IFC4 `IfcSpatialElement` and IFC2X3 `IfcSpatialStructureElement` roots.
   semantic reason and coverage proving the change.
 - Placement is excluded from `vh_geometry`; identical components at different
   locations should share the same geometry hash.
+- `IfcPolygonalFaceSet.Faces` is an include/geometry edge (canon-v6): before
+  it, face `CoordIndex` edits were invisible to `vh_geometry` because the
+  face entities never reached the product Merkle. Face-list order stays
+  neutral through the Merkle's sorted child hashing.
+
+## Tessellated-Mesh Canonicalization (canon-v6)
+
+`IfcTriangulatedFaceSet` is hashed as order-canonical expanded triangles:
+each triangle becomes its three quantized vertex triples (Coordinates and
+PnIndex resolved away, no edge to the point list), cyclically rotated to the
+lexicographically-smallest form and emitted one part per triangle so the
+sorted parts make the triangle list a set. Vertex order and triangle order
+are serialization noise (Revit permutes both between otherwise-identical
+exports — 2026-07 round-trip corpus), but a reversed winding is a real
+orientation change and must stay visible. Facesets carrying `Normals` fall
+back to the raw order-sensitive encoding. Point lists consumed by
+index-order-sensitive entities (e.g. `IfcIndexedPolyCurve`) are untouched.
+Pinned by `tests/test_mesh_canonicalization.py`.
 
 ## WL Topology Contract
 

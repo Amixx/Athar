@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use unicode_normalization::UnicodeNormalization;
 
-use crate::descriptor::{Measure, SchemaDesc, Shape};
+use crate::descriptor::{ClassDesc, Measure, SchemaDesc, Shape};
 use crate::step::{Record, Token};
 
 /// A canonicalized entity, holding only what the downstream native stages need.
@@ -118,6 +118,8 @@ pub fn canonicalize(
         id_to_keyword.insert(rec.step_id, rec.keyword.clone());
     }
 
+    let tri_pointlists = collect_triangulated_pointlists(records, schema, unit_factors);
+
     let mut entities: Vec<Entity> = Vec::with_capacity(records.len());
     let mut point_coords: HashMap<i64, [f64; 3]> = HashMap::new();
     let mut dir_ratios: HashMap<i64, [f64; 3]> = HashMap::new();
@@ -153,11 +155,25 @@ pub fn canonicalize(
         let mut data_facts: Vec<(String, String)> = Vec::new();
         let mut refs: Vec<RefOut> = Vec::new();
 
+        let tri_canon = if rec.keyword == "IFCTRIANGULATEDFACESET" {
+            canonical_triangle_parts(rec, desc, &tri_pointlists)
+        } else {
+            None
+        };
+        if let Some(parts) = tri_canon.as_ref() {
+            geom_parts.extend(parts.iter().cloned());
+        }
+
         // Attributes are zipped positionally with the schema descriptor.
         let n = rec.attrs.len().min(desc.attrs.len());
         for i in 0..n {
             let attr = &desc.attrs[i];
             let token = &rec.attrs[i];
+            if tri_canon.is_some()
+                && matches!(attr.name.as_str(), "Coordinates" | "CoordIndex" | "PnIndex")
+            {
+                continue;
+            }
             let attr_rc = attr_intern
                 .entry(attr.name.as_str())
                 .or_insert_with(|| Rc::from(attr.name.as_str()))
@@ -254,6 +270,163 @@ pub fn canonicalize(
         dir_ratios,
         unknown_keywords: unknown.into_keys().collect(),
     }
+}
+
+/// Quantized vertex tables for the point lists referenced by triangulated
+/// face sets. Only those lists are materialized; point lists consumed by
+/// index-order-sensitive entities (e.g. IfcIndexedPolyCurve) are untouched.
+fn collect_triangulated_pointlists(
+    records: &[Record],
+    schema: &SchemaDesc,
+    unit_factors: &HashMap<String, f64>,
+) -> HashMap<i64, Vec<[i64; 3]>> {
+    let mut wanted: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for rec in records {
+        if rec.keyword != "IFCTRIANGULATEDFACESET" {
+            continue;
+        }
+        let Some(desc) = schema.get(&rec.keyword) else { continue };
+        let Some(idx) = desc.attrs.iter().position(|a| a.name == "Coordinates") else { continue };
+        if let Some(Token::Ref(target)) = rec.attrs.get(idx) {
+            wanted.insert(*target);
+        }
+    }
+    if wanted.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut out: HashMap<i64, Vec<[i64; 3]>> = HashMap::with_capacity(wanted.len());
+    for rec in records {
+        if rec.keyword != "IFCCARTESIANPOINTLIST3D" || !wanted.contains(&rec.step_id) {
+            continue;
+        }
+        let Some(Token::List(rows)) = rec.attrs.first() else { continue };
+        let mut points: Vec<[i64; 3]> = Vec::with_capacity(rows.len());
+        let mut ok = true;
+        'rows: for row in rows {
+            let Token::List(coords) = row else {
+                ok = false;
+                break;
+            };
+            if coords.len() < 3 {
+                ok = false;
+                break;
+            }
+            let mut point = [0i64; 3];
+            for (k, coord) in coords.iter().take(3).enumerate() {
+                let value = match coord {
+                    Token::Real(r) => *r,
+                    Token::Int(n) => *n as f64,
+                    _ => {
+                        ok = false;
+                        break 'rows;
+                    }
+                };
+                point[k] = quantize_real(value, Measure::Length, false, unit_factors);
+            }
+            points.push(point);
+        }
+        if ok {
+            out.insert(rec.step_id, points);
+        }
+    }
+    out
+}
+
+/// Order-canonical hash input for an IfcTriangulatedFaceSet: each triangle is
+/// expanded to its three quantized vertex triples (PnIndex resolved away),
+/// cyclically rotated to its lexicographically-smallest form so `(a,b,c)` and
+/// `(b,c,a)` collide while a reversed winding `(a,c,b)` stays distinct. One
+/// part per triangle; the caller's part sort makes the triangle list a set.
+/// Returns None (caller keeps the raw encoding) when Normals are present or
+/// any index/reference is irregular.
+fn canonical_triangle_parts(
+    rec: &Record,
+    desc: &ClassDesc,
+    pointlists: &HashMap<i64, Vec<[i64; 3]>>,
+) -> Option<Vec<String>> {
+    let attr_token = |name: &str| -> Option<&Token> {
+        desc.attrs
+            .iter()
+            .position(|a| a.name == name)
+            .and_then(|i| rec.attrs.get(i))
+    };
+
+    if let Some(normals) = attr_token("Normals") {
+        if !matches!(normals, Token::Null) {
+            return None;
+        }
+    }
+    let Some(Token::Ref(coords_ref)) = attr_token("Coordinates") else {
+        return None;
+    };
+    let points = pointlists.get(coords_ref)?;
+
+    let pn: Option<Vec<usize>> = match attr_token("PnIndex") {
+        None | Some(Token::Null) => None,
+        Some(Token::List(items)) => {
+            let mut mapped = Vec::with_capacity(items.len());
+            for it in items {
+                match it {
+                    Token::Int(n) if *n >= 1 => mapped.push(*n as usize),
+                    _ => return None,
+                }
+            }
+            Some(mapped)
+        }
+        Some(_) => return None,
+    };
+    let resolve = |index: i64| -> Option<[i64; 3]> {
+        if index < 1 {
+            return None;
+        }
+        let mut position = index as usize;
+        if let Some(pn) = pn.as_ref() {
+            position = *pn.get(position - 1)?;
+        }
+        points.get(position - 1).copied()
+    };
+
+    let Some(Token::List(triangles)) = attr_token("CoordIndex") else {
+        return None;
+    };
+    let mut parts: Vec<String> = Vec::with_capacity(triangles.len());
+    for triangle in triangles {
+        let Token::List(indices) = triangle else {
+            return None;
+        };
+        if indices.len() != 3 {
+            return None;
+        }
+        let mut verts = [[0i64; 3]; 3];
+        for (k, idx_token) in indices.iter().enumerate() {
+            let Token::Int(raw) = idx_token else {
+                return None;
+            };
+            verts[k] = resolve(*raw)?;
+        }
+        let rotations = [
+            [verts[0], verts[1], verts[2]],
+            [verts[1], verts[2], verts[0]],
+            [verts[2], verts[0], verts[1]],
+        ];
+        let canonical = rotations.iter().min().unwrap();
+        let mut part = String::with_capacity(64);
+        part.push_str("tri:");
+        for vertex in canonical {
+            part.push('[');
+            for (k, coord) in vertex.iter().enumerate() {
+                if k > 0 {
+                    part.push(',');
+                }
+                part.push('r');
+                let _ = write!(part, "{coord}");
+            }
+            part.push(']');
+        }
+        parts.push(part);
+    }
+    Some(parts)
 }
 
 /// Read the first attribute as a list of reals, quantize each with `measure`,
