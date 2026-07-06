@@ -6,30 +6,6 @@
     },
     "note": "Revit import destroys granularity of non-core classes; no guid-level truth (see FINDINGS.md #2)."
   },
-  "orig_r2": {
-    "athar": {
-      "refused": "schema_incompatible"
-    },
-    "note": "Cross-schema pair (IFC2X3 vs IFC4); athar must refuse rather than diff."
-  },
-  "orig_r3": {
-    "athar": {
-      "refused": "schema_incompatible"
-    },
-    "note": "Cross-schema pair (IFC2X3 vs IFC4); athar must refuse rather than diff."
-  },
-  "orig_r4": {
-    "athar": {
-      "refused": "schema_incompatible"
-    },
-    "note": "Cross-schema pair (IFC2X3 vs IFC4); athar must refuse rather than diff."
-  },
-  "r1_r2": {
-    "athar": {
-      "refused": "schema_incompatible"
-    },
-    "note": "Cross-schema pair (IFC2X3 vs IFC4); athar must refuse rather than diff."
-  },
   "r2_r3": {
     "changed_guids": {
       "added": [],
