@@ -41,6 +41,8 @@ TOOL_LABELS = {
     "speckle_local": "Speckle (local)",
     "ifcgit_port": "IfcGit (port)",
 }
+DATASETS = ("synthetic", "revit")
+DATASET_LABELS = {"synthetic": "Synthetic", "revit": "Revit round-trip"}
 
 
 def create_app(benchmark_path: str | Path | None = None):
@@ -61,17 +63,19 @@ def create_app(benchmark_path: str | Path | None = None):
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         data = _load(path)
-        rows = _filtered_rows(data, kind="all", assessment="all", tool="all")
-        return _page(data, path, _controls(data), _table(rows), _insights(data))
+        return _page(data, path, _dashboard_tabs(data))
 
     @app.get("/fragment/pairs", response_class=HTMLResponse)
     def pairs_fragment(
         kind: str = "all",
         assessment: str = "all",
         tool: str = "all",
+        set: str = "synthetic",
     ) -> str:
         data = _load(path)
-        return _table(_filtered_rows(data, kind=kind, assessment=assessment, tool=tool))
+        dataset = set if set in DATASETS else "synthetic"
+        rows = _filtered_rows(data, kind=kind, assessment=assessment, tool=tool, dataset=dataset)
+        return _table(rows, target_id=f"pair-table-{dataset}")
 
     @app.get("/api/benchmark")
     def benchmark_json() -> JSONResponse:
@@ -186,8 +190,7 @@ def main(argv: list[str] | None = None) -> int:
 def render_static(benchmark_path: str | Path) -> str:
     path = Path(benchmark_path)
     data = _load(path)
-    rows = _filtered_rows(data, kind="all", assessment="all", tool="all")
-    return _page(data, path, "", _table(rows), _insights(data))
+    return _page(data, path, _dashboard_tabs(data))
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -195,8 +198,14 @@ def _load(path: Path) -> dict[str, Any]:
         return json.load(handle)
 
 
-def _filtered_rows(data: dict[str, Any], *, kind: str, assessment: str, tool: str) -> list[dict[str, Any]]:
-    rows = list(data.get("summary", []))
+def _row_dataset(row: dict[str, Any]) -> str:
+    return "revit" if row.get("set") == "revit" else "synthetic"
+
+
+def _filtered_rows(
+    data: dict[str, Any], *, kind: str, assessment: str, tool: str, dataset: str
+) -> list[dict[str, Any]]:
+    rows = [row for row in data.get("summary", []) if _row_dataset(row) == dataset]
     if kind != "all":
         rows = [row for row in rows if row.get("kind") == kind]
     if assessment != "all":
@@ -206,38 +215,78 @@ def _filtered_rows(data: dict[str, Any], *, kind: str, assessment: str, tool: st
     return rows
 
 
-def _controls(data: dict[str, Any]) -> str:
-    kinds = sorted({row.get("kind", "unknown") for row in data.get("summary", [])})
-    tool_options = [tool for tool in TOOLS if any(tool in row for row in data.get("summary", []))]
+def _dashboard_tabs(data: dict[str, Any]) -> str:
+    rows = data.get("summary", [])
+    has_revit = any(_row_dataset(row) == "revit" for row in rows)
+    has_synthetic = not rows or any(_row_dataset(row) == "synthetic" for row in rows)
+    available = [d for d, present in (("synthetic", has_synthetic), ("revit", has_revit)) if present]
+    if not available:
+        available = ["synthetic"]
+    nav = "".join(_tab_nav_item(dataset, active=index == 0) for index, dataset in enumerate(available))
+    panes = "".join(_tab_pane(data, dataset, active=index == 0) for index, dataset in enumerate(available))
     return f"""
-    <form class="row g-3 align-items-end mb-4" hx-get="/fragment/pairs" hx-target="#pair-table" hx-trigger="change, keyup delay:200ms">
+    <ul class="nav nav-tabs mb-3" id="benchmark-tabs" role="tablist">{nav}</ul>
+    <div class="tab-content" id="benchmark-tabs-content">{panes}</div>
+    """
+
+
+def _tab_nav_item(dataset: str, *, active: bool) -> str:
+    return f"""
+    <li class="nav-item" role="presentation">
+      <button class="nav-link{" active" if active else ""}" id="tab-{dataset}-btn" data-bs-toggle="tab"
+              data-bs-target="#tab-{dataset}" type="button" role="tab" aria-controls="tab-{dataset}"
+              aria-selected="{"true" if active else "false"}">{_e(DATASET_LABELS.get(dataset, dataset))}</button>
+    </li>
+    """
+
+
+def _tab_pane(data: dict[str, Any], dataset: str, *, active: bool) -> str:
+    rows = _filtered_rows(data, kind="all", assessment="all", tool="all", dataset=dataset)
+    classes = "tab-pane fade" + (" show active" if active else "")
+    return f"""
+    <div class="{classes}" id="tab-{dataset}" role="tabpanel" aria-labelledby="tab-{dataset}-btn">
+      {_insights(rows)}
+      {_controls(rows, dataset=dataset)}
+      {_table(rows, target_id=f"pair-table-{dataset}")}
+    </div>
+    """
+
+
+def _controls(rows: list[dict[str, Any]], *, dataset: str) -> str:
+    kinds = sorted({row.get("kind", "unknown") for row in rows})
+    tool_options = [tool for tool in TOOLS if any(tool in row for row in rows)]
+    target_id = f"pair-table-{dataset}"
+    return f"""
+    <form class="row g-3 align-items-end mb-4" hx-get="/fragment/pairs" hx-target="#{target_id}" hx-trigger="change, keyup delay:200ms">
+      <input type="hidden" name="set" value="{_e(dataset)}">
       <div class="col-12 col-md-4">
-        <label class="form-label" for="kind">Pair kind</label>
-        {_select("kind", ["all", *kinds])}
+        <label class="form-label" for="kind-{dataset}">Pair kind</label>
+        {_select("kind", ["all", *kinds], dom_id=f"kind-{dataset}")}
       </div>
       <div class="col-12 col-md-4">
-        <label class="form-label" for="assessment">Assessment</label>
-        {_select("assessment", ["all", "expected", "unexpected", "observed", "not_run"])}
+        <label class="form-label" for="assessment-{dataset}">Assessment</label>
+        {_select("assessment", ["all", "expected", "unexpected", "observed", "not_run"], dom_id=f"assessment-{dataset}")}
       </div>
       <div class="col-12 col-md-4">
-        <label class="form-label" for="tool">Tool</label>
-        {_select("tool", ["all", *tool_options])}
+        <label class="form-label" for="tool-{dataset}">Tool</label>
+        {_select("tool", ["all", *tool_options], dom_id=f"tool-{dataset}")}
       </div>
     </form>
     """
 
 
-def _select(name: str, values: list[str]) -> str:
+def _select(name: str, values: list[str], *, dom_id: str | None = None) -> str:
+    dom_id = dom_id or name
     options = "".join(f'<option value="{_e(value)}">{_label(value)}</option>' for value in values)
-    return f'<select id="{_e(name)}" name="{_e(name)}" class="form-select">{options}</select>'
+    return f'<select id="{_e(dom_id)}" name="{_e(name)}" class="form-select">{options}</select>'
 
 
-def _table(rows: list[dict[str, Any]]) -> str:
+def _table(rows: list[dict[str, Any]], *, target_id: str) -> str:
     if not rows:
-        return '<section id="pair-table" class="alert alert-secondary">No benchmark pairs match those filters.</section>'
+        return f'<section id="{_e(target_id)}" class="alert alert-secondary">No benchmark pairs match those filters.</section>'
     body = "".join(_row(row) for row in rows)
     return f"""
-    <section id="pair-table" class="table-responsive" aria-live="polite">
+    <section id="{_e(target_id)}" class="table-responsive" aria-live="polite">
       <table class="table table-sm table-striped table-hover align-top">
         <thead class="table-light">
           <tr>
@@ -278,18 +327,21 @@ def _tool_cell(row: dict[str, Any], tool: str) -> str:
     gb_s = result.get("gb_seconds_median")
     title = _assessment_title(assessment)
     output = f'<div class="small"><a href="/tool-output/{_url(row.get("name", "unknown"))}/{_url(tool)}">output</a></div>'
+    if not counts and result.get("status") == "refused":
+        counts_line = '<div class="font-monospace small mt-1 text-secondary">schema refused</div>'
+    else:
+        counts_line = f'<div class="font-monospace small mt-1">+{counts.get("added", "?")} −{counts.get("deleted", "?")} ~{counts.get("modified", "?")} ={counts.get("unchanged", "—")}</div>'
     return f"""
     <td class="tool-cell">
       <span class="badge {_badge_class(assessment)}" title="{_e(title)}">{_label(assessment)}</span>
-      <div class="font-monospace small mt-1">+{counts.get("added", "?")} −{counts.get("deleted", "?")} ~{counts.get("modified", "?")} ={counts.get("unchanged", "—")}</div>
+      {counts_line}
       <div class="text-secondary small">{_metric(time_s, "s")} · {_metric(rss, "MB")} · {_metric(gb_s, "GB·s")}</div>
       {output}
     </td>
     """
 
 
-def _insights(data: dict[str, Any]) -> str:
-    rows = data.get("summary", [])
+def _insights(rows: list[dict[str, Any]]) -> str:
     return _tool_averages(rows)
 
 
@@ -397,7 +449,7 @@ def _range_class(value: float | int | None, values: list[float | int], *, higher
     return "table-warning"
 
 
-def _page(data: dict[str, Any], path: Path, controls: str, table: str, insights: str) -> str:
+def _page(data: dict[str, Any], path: Path, tabs: str) -> str:
     generated = data.get("generated_at", "unknown")
     settings = data.get("settings", {})
     tools = data.get("tools", {})
@@ -421,17 +473,30 @@ def _page(data: dict[str, Any], path: Path, controls: str, table: str, insights:
         <dt class="col-sm-2 col-lg-1">Repeats</dt><dd class="col-sm-10 col-lg-11 font-monospace">{_e(settings.get("repeats", "—"))}</dd>
       </dl>
     </header>
-    {insights}
     <section class="mb-4">{_tool_strip(tools)}</section>
-    {controls}
-    {table}
+    {tabs}
   </main>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>{_tab_activation_js()}</script>
 </body>
 </html>"""
 
 
+def _tab_activation_js() -> str:
+    return """
+    (function () {
+      var hash = window.location.hash.replace('#', '') || 'tab-synthetic';
+      var trigger = document.getElementById(hash + '-btn');
+      if (trigger && window.bootstrap) {
+        new bootstrap.Tab(trigger).show();
+      }
+    })();
+    """
+
+
 def _pair_page(data: dict[str, Any], path: Path, pair: dict[str, Any], *, viewer_available: bool) -> str:
     name = pair.get("name", "unknown")
+    dataset = _row_dataset(pair)
     old_path = _pair_input_path(pair, "old")
     new_path = _pair_input_path(pair, "new")
     viewer = (
@@ -451,9 +516,9 @@ def _pair_page(data: dict[str, Any], path: Path, pair: dict[str, Any], *, viewer
 </head>
 <body>
   <main class="container-fluid py-4">
-    <p><a href="/">← Benchmark results</a></p>
+    <p><a href="/#tab-{dataset}">← Benchmark results</a></p>
     <header class="mb-4">
-      <h1 class="h3">{_e(name)}</h1>
+      <h1 class="h3">{_e(name)} <span class="badge text-bg-info align-middle">{_e(DATASET_LABELS.get(dataset, dataset))}</span></h1>
       <p class="text-secondary mb-2">{_e(pair.get("expectation", ""))}</p>
       <div class="mb-3">{viewer}</div>
       <dl class="row small mb-0">
@@ -524,6 +589,7 @@ def _badge_class(assessment: str) -> str:
         "unexpected": "text-bg-danger",
         "observed": "text-bg-secondary",
         "not_run": "text-bg-secondary",
+        "refused": "text-bg-warning",
     }.get(assessment, "text-bg-secondary")
 
 
