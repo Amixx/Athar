@@ -55,7 +55,18 @@ corpus evidence and tests.
 - Modified items include `placement_delta_mm`, `data_hash{old,new}`, and
   `change_scope` (`intrinsic`, `transitive`, `mixed`, `none`).
 - Stats include section counts, signature counts, parse diagnostics, edge
-  stats, modified change-scope counts, dropped matches, GUID collisions, and
-  matcher diagnostics.
+  stats, modified change-scope counts, placement cohorts, dropped matches,
+  GUID collisions, and matcher diagnostics.
+- `stats.placement_cohorts` groups placement-changed pairs by
+  `placement_delta_mm` quantized to a fixed 0.1 mm grid: cohorts of 2+ members
+  (`{delta_mm, count, members}`, `delta_mm` = the grid key, members = new-side
+  step ids, largest cohort first) mark coherent group moves. It is a derived
+  pattern, deliberately not a structural claim — exporters (Revit, 2026-07
+  round-trip corpus) bake group moves into per-element placements, so no moved
+  container exists in the file. The grid absorbs sub-0.1 mm exporter noise (a
+  1 um rounding artifact split a real 45-element move) while staying
+  deterministic: fixed grid, no adaptive tolerance, no chained near-matches.
+  Zero-delta-on-grid placement changes (pure rotation / chain restructuring)
+  and singletons never join a cohort.
 - Because `geometry_hash` requires equal full vectors, every modified item is
   a GUID match by construction.

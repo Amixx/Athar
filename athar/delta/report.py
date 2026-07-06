@@ -79,6 +79,7 @@ def build_delta_report(
             "old_edge_stats": old_bundle.edge_stats,
             "new_edge_stats": new_bundle.edge_stats,
             "modified_change_scope": _scope_stats(modified),
+            "placement_cohorts": _placement_cohorts(modified),
             "dropped_matches": dropped_matches,
         },
         "added": added,
@@ -159,6 +160,40 @@ def _change_scope(aspects: dict) -> str:
     if transitive_changed:
         return "transitive"
     return "none"
+
+
+def _placement_cohorts(modified: list[dict]) -> list[dict]:
+    """Group placement-changed pairs by exact quantized translation delta.
+
+    A cohort of 2+ members sharing one delta vector is a coherent group move —
+    a derived pattern, not a structural claim (exporters like Revit bake group
+    moves into per-element placements, so no container may exist in the file).
+    The key is the delta quantized to a fixed 0.1 mm grid: sub-grid exporter
+    noise (2026-07 Revit corpus: one group move split by a 1 um rounding
+    artifact) must not fracture a cohort, while the grid stays deterministic —
+    no adaptive tolerance, no chained near-matches. Pairs with no delta or a
+    zero net translation on the grid (pure rotation / chain restructuring)
+    never join a cohort.
+    """
+    groups: dict[tuple[float, float, float], list[int]] = {}
+    for item in modified:
+        aspects = item["aspects"]
+        if aspects.get("placement") != "changed":
+            continue
+        delta = aspects.get("placement_delta_mm")
+        if delta is None:
+            continue
+        key = (round(delta[0], 1) + 0.0, round(delta[1], 1) + 0.0, round(delta[2], 1) + 0.0)
+        if key == (0.0, 0.0, 0.0):
+            continue
+        groups.setdefault(key, []).append(item["new"]["step_id"])
+    cohorts = [
+        {"delta_mm": list(delta), "count": len(members), "members": sorted(members)}
+        for delta, members in groups.items()
+        if len(members) >= 2
+    ]
+    cohorts.sort(key=lambda cohort: (-cohort["count"], cohort["delta_mm"]))
+    return cohorts
 
 
 def _scope_stats(modified: list[dict]) -> dict[str, int]:

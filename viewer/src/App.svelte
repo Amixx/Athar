@@ -69,6 +69,7 @@
   const appearances = $derived(computeAppearances(sliderT, toggles))
   const classes = $derived(index ? classBreakdown(index.report) : [])
   const modifiedScope = $derived(index?.report.stats.modified_change_scope ?? null)
+  const cohorts = $derived(index?.report.stats.placement_cohorts ?? [])
   const directModified = $derived((modifiedScope?.intrinsic ?? 0) + (modifiedScope?.mixed ?? 0))
   const transitiveModified = $derived(modifiedScope?.transitive ?? 0)
   const selectedRecord = $derived.by<EntityRecord | null>(() => {
@@ -389,6 +390,17 @@
       {#if modifiedScope}
         <div class="footnote">
           scope: {modifiedScope.intrinsic ?? 0} intrinsic · {modifiedScope.transitive ?? 0} transitive · {modifiedScope.mixed ?? 0} mixed
+        </div>
+      {/if}
+      {#if cohorts.length}
+        <span class="microlabel">group moves</span>
+        <div class="classrows">
+          {#each cohorts as cohort (cohort.delta_mm.join(','))}
+            <div class="classrow cohort" title={fmtDelta(cohort.delta_mm)}>
+              <span class="cls">{cohort.count} moved together</span>
+              <span class="nums mono">Δ {(Math.hypot(...cohort.delta_mm) / 1000).toFixed(2)} m</span>
+            </div>
+          {/each}
         </div>
       {/if}
       {#if classes.length}
