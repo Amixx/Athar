@@ -151,6 +151,19 @@ def _product_ids(model, step_ids: set[int]) -> set[int]:
     return products
 
 
+def _guids(model, step_ids: set[int]) -> list[str]:
+    guids = []
+    for step_id in step_ids:
+        try:
+            entity = model.by_id(step_id)
+        except Exception:
+            continue
+        guid = getattr(entity, "GlobalId", None)
+        if guid:
+            guids.append(guid)
+    return guids
+
+
 def run(path_old: str, path_new: str) -> dict:
     step_ids = ifc_diff_ids(path_old, path_new)
 
@@ -168,6 +181,11 @@ def run(path_old: str, path_new: str) -> dict:
             "added": len(added_products),
             "deleted": len(removed_products),
             "modified": len(modified_products),
+        },
+        "reported_guids": {
+            "added": _guids(model_new, added_products),
+            "deleted": _guids(model_old, removed_products),
+            "modified": _guids(model_new, modified_products),
         },
         "step_ids": {
             "added": len(step_ids["added"]),

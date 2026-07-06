@@ -373,9 +373,9 @@ REVIT_ROUNDTRIP_PAIRS: tuple[Pair, ...] = (
         kind="revit_roundtrip_noop",
         builder=_revit_pair("r2", "r3"),
         expectation=(
-            "IFC4 no-op re-export (+ 'keep GUIDs' option, zero model edits): the true diff is "
-            "empty. Athar's ~2 reported modified are Revit tessellation-reorder wobble - an open "
-            "engine gap, judged unexpected until fixed."
+            "IFC4 no-op re-export (+ 'keep GUIDs' option, zero model edits): the true diff "
+            "is empty. Revit permutes tessellated-mesh serialization between exports; canon-v6 "
+            "canonicalizes mesh order, so any reported change is a false positive."
         ),
         expected=_revit_expected("r2_r3"),
         revit=True,
@@ -447,8 +447,8 @@ REVIT_ROUNDTRIP_PAIRS: tuple[Pair, ...] = (
         builder=_revit_pair("r8", "r9"),
         expectation=(
             "Same-settings determinism pair, zero model edits: the true diff is empty. "
-            "Athar's ~2 reported modified are Revit tessellation-reorder wobble - an open "
-            "engine gap, judged unexpected until fixed."
+            "Revit permutes tessellated-mesh serialization between exports; canon-v6 "
+            "canonicalizes mesh order, so any reported change is a false positive."
         ),
         expected=_revit_expected("r8_r9"),
         revit=True,
@@ -717,6 +717,7 @@ def _run_ifcdiff(
         "gb_seconds": completed.get("gb_seconds"),
         "relationships": relationships or "default",
         "counts": _ifcdiff_counts(payload),
+        "reported_guids": _ifcdiff_reported_guids(payload),
         "output": str(output_path),
         "stdout_preview": completed.get("stdout", "")[:2000],
         "stderr_preview": completed.get("stderr", "")[:2000],
@@ -742,14 +743,21 @@ def _run_json_runner(runner: Path, old_path: str, new_path: str, timeout_s: int)
     if completed["returncode"] != 0 or "error" in payload:
         error = str(payload.get("error") or completed.get("stderr", ""))[:500]
         return {"status": "error", "seconds": seconds, "error": error, **mem}
-    extras = {key: value for key, value in payload.items() if key not in ("tool", "counts")}
-    return {"status": "ok", "seconds": seconds, **mem, "counts": payload.get("counts"), "extras": extras}
+    extras = {key: value for key, value in payload.items() if key not in ("tool", "counts", "reported_guids")}
+    return {
+        "status": "ok",
+        "seconds": seconds,
+        **mem,
+        "counts": payload.get("counts"),
+        "reported_guids": payload.get("reported_guids"),
+        "extras": extras,
+    }
 
 
 _IFCFAST_RUNNER = (
     "import sys, json, ifcfast; "
     "m = ifcfast.open(sys.argv[1], use_cache=False, write_cache=False); "
-    "print(json.dumps(m.diff(sys.argv[2], sample=5), default=str))"
+    "print(json.dumps(m.diff(sys.argv[2], sample=0), default=str))"
 )
 
 
@@ -775,6 +783,7 @@ def _run_ifcfast(old_path: str, new_path: str, timeout_s: int) -> dict:
         "seconds": seconds,
         **mem,
         "counts": _ifcfast_counts(payload),
+        "reported_guids": _ifcfast_reported_guids(payload),
         "output_preview": payload,
     }
 
@@ -826,6 +835,17 @@ def _ifcdiff_counts(payload: object) -> dict | None:
     }
 
 
+def _ifcdiff_reported_guids(payload: object) -> dict[str, list[str]] | None:
+    if not isinstance(payload, dict):
+        return None
+    changed = payload.get("changed")
+    return {
+        "added": list(payload.get("added") or []),
+        "deleted": list(payload.get("deleted") or []),
+        "modified": list(changed.keys()) if isinstance(changed, dict) else [],
+    }
+
+
 def _ifcfast_counts(payload: object) -> dict | None:
     if not isinstance(payload, dict):
         return None
@@ -837,6 +857,24 @@ def _ifcfast_counts(payload: object) -> dict | None:
         "deleted": int(products.get("removed_count") or 0),
         "modified": int(products.get("changed_count") or 0),
         "unchanged": int(products.get("kept") or 0) - int(products.get("changed_count") or 0),
+    }
+
+
+def _ifcfast_reported_guids(payload: object) -> dict[str, list[str]] | None:
+    if not isinstance(payload, dict):
+        return None
+    products = payload.get("products")
+    if not isinstance(products, dict):
+        return None
+    modified = [
+        entry["guid"]
+        for entry in (products.get("changed") or [])
+        if isinstance(entry, dict) and entry.get("guid")
+    ]
+    return {
+        "added": list(products.get("added") or []),
+        "deleted": list(products.get("removed") or []),
+        "modified": modified,
     }
 
 
