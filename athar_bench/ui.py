@@ -415,11 +415,11 @@ def _tool_average_stats(rows: list[dict[str, Any]], tool: str) -> dict[str, Any]
         "correctness_value": correctness_value,
         "correctness": "—" if correctness_value is None else f"{correctness_value:.0%}",
         "avg_time_value": avg_time_value,
-        "avg_time": "—" if avg_time_value is None else f"{avg_time_value:.3g} s",
+        "avg_time": "—" if avg_time_value is None else f"{_fmt_num(avg_time_value)} s",
         "avg_gbs_value": avg_gbs_value,
-        "avg_gbs": "—" if avg_gbs_value is None else f"{avg_gbs_value:.3g} GB·s",
+        "avg_gbs": "—" if avg_gbs_value is None else f"{_fmt_num(avg_gbs_value)} GB·s",
         "avg_rss_value": avg_rss_value,
-        "avg_rss": "—" if avg_rss_value is None else f"{avg_rss_value:.3g} MB",
+        "avg_rss": "—" if avg_rss_value is None else _metric(avg_rss_value, "MB"),
     }
 
 
@@ -572,7 +572,17 @@ def _tool_strip(tools: dict[str, Any]) -> str:
 def _metric(value: Any, suffix: str) -> str:
     if not isinstance(value, (int, float)) or (isinstance(value, float) and math.isnan(value)):
         return f"— {suffix}"
-    return f"{value:g} {suffix}"
+    if suffix == "MB" and value >= 1024:
+        return f"{_fmt_num(value / 1024)} GB"
+    return f"{_fmt_num(value)} {suffix}"
+
+
+def _fmt_num(value: float) -> str:
+    if value >= 100:
+        return f"{value:,.0f}"
+    if value >= 10:
+        return f"{value:.1f}"
+    return f"{value:.2f}"
 
 
 def _label(value: Any) -> str:
