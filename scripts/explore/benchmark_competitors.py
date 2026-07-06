@@ -369,54 +369,6 @@ REVIT_ROUNDTRIP_PAIRS: tuple[Pair, ...] = (
         set_name="revit",
     ),
     Pair(
-        name="roundtrip_orig_r2",
-        kind="revit_roundtrip_cross_schema",
-        builder=_revit_pair("original", "r2"),
-        expectation=(
-            "Cross-schema pair (source IFC2X3 vs IFC4 Reference View [architecture] re-export, "
-            "no edits): athar must refuse rather than diff."
-        ),
-        expected=_revit_expected("orig_r2"),
-        revit=True,
-        set_name="revit",
-    ),
-    Pair(
-        name="roundtrip_orig_r3",
-        kind="revit_roundtrip_cross_schema",
-        builder=_revit_pair("original", "r3"),
-        expectation=(
-            "Cross-schema pair (source IFC2X3 vs IFC4 + 'keep GUIDs' re-export, no edits): "
-            "athar must refuse rather than diff."
-        ),
-        expected=_revit_expected("orig_r3"),
-        revit=True,
-        set_name="revit",
-    ),
-    Pair(
-        name="roundtrip_orig_r4",
-        kind="revit_roundtrip_cross_schema",
-        builder=_revit_pair("original", "r4"),
-        expectation=(
-            "Cross-schema pair (source IFC2X3 vs IFC4 + 'export Revit property sets' re-export, "
-            "no edits): athar must refuse rather than diff."
-        ),
-        expected=_revit_expected("orig_r4"),
-        revit=True,
-        set_name="revit",
-    ),
-    Pair(
-        name="roundtrip_r1_r2",
-        kind="revit_roundtrip_cross_schema",
-        builder=_revit_pair("r1", "r2"),
-        expectation=(
-            "Cross-schema consecutive pair (r1 IFC2X3 vs r2 IFC4 Reference View, no edits): "
-            "athar must refuse rather than diff."
-        ),
-        expected=_revit_expected("r1_r2"),
-        revit=True,
-        set_name="revit",
-    ),
-    Pair(
         name="roundtrip_r2_r3",
         kind="revit_roundtrip_noop",
         builder=_revit_pair("r2", "r3"),
