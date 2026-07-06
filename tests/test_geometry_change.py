@@ -10,9 +10,8 @@ the path that actually feeds the hash: an explicit mesh vertex.
 Both files are the same tessellated cube at the same GlobalId, name, and
 placement, with no properties; they differ only in one vertex coordinate. Truth:
 exactly one product, modified, geometry changed, data and placement unchanged.
-And because the WL topology self-seed hashes `vh_geometry`, the victim's
-topology necessarily ripples too — so this is also the positive proof of the
-`mixed` change_scope (intrinsic geometry + transitive topology).
+WL topology seeds are class-only, so a pure content edit must not touch the
+victim's own topology aspect: the change_scope is `intrinsic`, not `mixed`.
 """
 
 from __future__ import annotations
@@ -113,8 +112,9 @@ def test_single_vertex_move_is_a_clean_geometry_change(tmp_path):
     assert item["aspects"]["geometry"] == "changed"
     assert item["aspects"]["data"] == "unchanged"
     assert item["aspects"]["placement"] == "unchanged"
-    # The geometry change feeds the WL self-seed, so topology ripples too.
-    assert item["aspects"]["topology"] == "changed"
-    assert item["change_scope"] == "mixed"
+    # Class-only WL seeds: a content edit must not flip the victim's own
+    # topology aspect.
+    assert item["aspects"]["topology"] == "unchanged"
+    assert item["change_scope"] == "intrinsic"
     # Data untouched: the data hash must be stable through a geometry edit.
     assert item["data_hash"]["old"] == item["data_hash"]["new"]

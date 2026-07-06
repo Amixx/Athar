@@ -50,8 +50,8 @@ Run the full default suite before committing.
   heterogeneous to target reliably:
   - `test_geometry_change.py` moves one explicit mesh vertex (the path that
     feeds `vh_geometry` — parametric scalars like extrusion `Depth` deliberately
-    do not) to prove a clean geometry change, which is also the positive case
-    for `mixed` change_scope (intrinsic geometry + transitive topology self-seed).
+    do not) to prove a clean geometry change stays `intrinsic`: class-only WL
+    seeds mean a content edit never flips the victim's own topology aspect.
   - `test_unit_normalization.py` builds the same model in metres and millimetres
     to prove length quantization is unit-normalized (zero diff).
 
