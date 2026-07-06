@@ -23,8 +23,12 @@ Scripts are for inspection and repeatable investigation.
       (`{"added": [...], "deleted": [...], "modified": [...]}`). When present,
       every runner that emits `reported_guids` is scored for precision/recall/
       F1 against it via `athar_dev.changeset_scoring.score_changeset`; results
-      land in each pair's `changeset_scores`. Only Athar emits `reported_guids`
-      today. Precision counts a transitive/indirect change as a false positive
+      land in each pair's `changeset_scores`. Athar, `speckle_local`,
+      `ifcgit_port`, `ifcdiff_default`/`ifcdiff_relationships`, and `ifcfast`
+      all emit `reported_guids` (ifcfast's runner passes `sample=0` so its
+      added/removed/changed arrays are unclipped, since its `sample=5` default
+      truncates them while counts stay exact). Precision counts a
+      transitive/indirect change as a false positive
       unless the truth set names it, so a real revision's ground truth must
       enumerate every genuinely-changed entity, not just the primary edit.
     - Each `Pair` carries a `set_name` (JSON key `"set"`); the default set is

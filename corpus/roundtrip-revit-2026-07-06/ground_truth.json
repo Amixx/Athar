@@ -17,7 +17,7 @@
       "deleted": 0,
       "modified": 0
     },
-    "note": "Zero model edits: the true diff is empty. Athar currently reports ~2 false modified from Revit's tessellation reorder wobble - a real engine gap (open), not tolerated by this truth."
+    "note": "Zero model edits: the true diff is empty and canon-v6 (mesh canonicalization) reports exactly that. Pre-v6 history: 177 modified (WL blast, fixed in v5), then 2 (tessellation reorder wobble, fixed in v6)."
   },
   "r3_r4": {
     "changed_guids": {
@@ -993,7 +993,7 @@
       "deleted": 0,
       "modified": 0
     },
-    "note": "Zero model edits: the true diff is empty. Athar currently reports ~2 false modified from Revit's tessellation reorder wobble - a real engine gap (open), not tolerated by this truth."
+    "note": "Zero model edits: the true diff is empty and canon-v6 (mesh canonicalization) reports exactly that. Pre-v6 history: 177 modified (WL blast, fixed in v5), then 2 (tessellation reorder wobble, fixed in v6)."
   },
   "r9_r10": {
     "changed_guids": {
