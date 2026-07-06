@@ -6,6 +6,7 @@ import {
   computeAppearances,
   DEFAULT_TOGGLES,
   GHOST_OPACITY,
+  groupDisplacements,
   isPlacementOnly,
   placementDeltaNorm,
   SNAP,
@@ -255,5 +256,33 @@ describe('placement helpers', () => {
   it('computes the delta norm', () => {
     expect(placementDeltaNorm(movedPair)).toBe(1000)
     expect(placementDeltaNorm(dataOnlyPair)).toBeNull()
+  })
+})
+
+describe('groupDisplacements', () => {
+  const cohortA1 = matched(40, 140, aspects({ placement: 'changed', placement_delta_mm: [500, 0, 0] }))
+  const cohortA2 = matched(
+    41,
+    141,
+    aspects({ placement: 'changed', geometry: 'changed', placement_delta_mm: [500, 0, 0] }),
+  )
+  const cohorts = [{ delta_mm: [500, 0, 0] as [number, number, number], count: 2, members: [140, 141] }]
+
+  it('collapses cohort members into one group and keeps loners as singles', () => {
+    const groups = groupDisplacements([cohortA1, cohortA2, movedPair, reshapedPair], cohorts)
+    expect(groups).toEqual([
+      { pairs: [{ oldId: 40, newId: 140 }, { oldId: 41, newId: 141 }] },
+      { pairs: [{ oldId: 10, newId: 110 }] },
+    ])
+  })
+
+  it('includes cohort members that also changed geometry, but never loner reshapes', () => {
+    const groups = groupDisplacements([cohortA2, reshapedPair], cohorts)
+    expect(groups).toEqual([{ pairs: [{ oldId: 41, newId: 141 }] }])
+  })
+
+  it('is one single-pair group per placement-only move without cohorts', () => {
+    const groups = groupDisplacements([movedPair, dataOnlyPair], [])
+    expect(groups).toEqual([{ pairs: [{ oldId: 10, newId: 110 }] }])
   })
 })

@@ -23,9 +23,9 @@ is the only JavaScript in the repository; everything else stays Python.
 | --- | --- |
 | `src/lib/types.ts` | TS mirror of the engine report shape (`athar/delta/report.py`) |
 | `src/lib/report.ts` | Report validation + `DiffIndex` (side × STEP id → entity record) |
-| `src/lib/renderState.ts` | Pure core: bucket assignment, crossfade appearances, count helpers |
+| `src/lib/renderState.ts` | Pure core: bucket assignment, crossfade appearances, count helpers, displacement grouping |
 | `src/lib/ifc.ts` | ifc-lite tessellation (the only ifc-lite import) |
-| `src/lib/scene.ts` | three.js scene: merged per-bucket meshes, picking, highlight, displacement lines, camera fits |
+| `src/lib/scene.ts` | three.js scene: merged per-bucket meshes, picking, highlight, displacement arrows (one averaged arrow per placement cohort), camera fits |
 | `src/lib/sources.ts` | Input paths: `?src=` manifest handoff and drag-drop classification |
 | `src/lib/debug.ts` | `window.__athar_viewer` state mirror for headless tests |
 | `src/App.svelte` | UI shell: loading flow, slider, summary, inspector, toggles |
