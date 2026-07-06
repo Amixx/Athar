@@ -373,9 +373,9 @@ REVIT_ROUNDTRIP_PAIRS: tuple[Pair, ...] = (
         kind="revit_roundtrip_noop",
         builder=_revit_pair("r2", "r3"),
         expectation=(
-            "IFC4 no-op re-export (+ 'keep GUIDs' option, zero model edits): ground truth is "
-            "empty; the residual ~2 modified are Revit's nondeterministic mesh re-serialization "
-            "(tessellation reorder wobble), counted as false positives."
+            "IFC4 no-op re-export (+ 'keep GUIDs' option, zero model edits): the true diff is "
+            "empty. Athar's ~2 reported modified are Revit tessellation-reorder wobble - an open "
+            "engine gap, judged unexpected until fixed."
         ),
         expected=_revit_expected("r2_r3"),
         revit=True,
@@ -446,9 +446,9 @@ REVIT_ROUNDTRIP_PAIRS: tuple[Pair, ...] = (
         kind="revit_roundtrip_noop",
         builder=_revit_pair("r8", "r9"),
         expectation=(
-            "Same-settings determinism pair, zero model edits: ground truth is empty; the "
-            "residual ~2 modified are Revit's nondeterministic mesh re-serialization "
-            "(tessellation reorder wobble), counted as false positives."
+            "Same-settings determinism pair, zero model edits: the true diff is empty. "
+            "Athar's ~2 reported modified are Revit tessellation-reorder wobble - an open "
+            "engine gap, judged unexpected until fixed."
         ),
         expected=_revit_expected("r8_r9"),
         revit=True,
