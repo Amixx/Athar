@@ -868,7 +868,8 @@
     },
     "counts": {
       "added": 0,
-      "deleted": 0
+      "deleted": 0,
+      "modified": 840
     },
     "note": "Added 'export Revit property sets' option, no model edits; every occurrence gains property-set data."
   },
@@ -929,7 +930,8 @@
     },
     "counts": {
       "added": 0,
-      "deleted": 0
+      "deleted": 0,
+      "modified": 48
     },
     "note": "48 facade movers: 45 placement-changed + 3 slabs with the move baked into vertices; excludes the coincidental Level-6 tessellation wobbler."
   },
@@ -939,11 +941,16 @@
       "deleted": [
         "0hLunSblv3jAXB_MyrH8k0"
       ],
-      "modified": []
+      "modified": [],
+      "optional_modified": [
+        "0sI67sdO9E4fxaaA9$2OUA"
+      ]
     },
     "counts": {
       "added": 0,
-      "deleted": 1
+      "deleted": 1,
+      "modified_max": 1,
+      "modified_min": 0
     },
     "note": "Deleted a row of windows, merged into one Generic Model proxy at import; exactly one deletion."
   },
@@ -958,7 +965,7 @@
     "counts": {
       "added": 0,
       "deleted": 0,
-      "modified_min": 1
+      "modified": 1
     },
     "note": "One door instance property ('Frame type' = 'Test frame type') edited; exactly one intrinsic modification."
   },
@@ -974,11 +981,16 @@
       "modified": [
         "0VNMR_Yx12Sv645Akf3wkh",
         "2N8phuh9XD8eaC5Lrqo2BF"
+      ],
+      "optional_modified": [
+        "27QRwCeBv1WQCFVrJftyla"
       ]
     },
     "counts": {
       "added": 4,
-      "deleted": 0
+      "deleted": 0,
+      "modified_max": 3,
+      "modified_min": 2
     },
     "note": "4 added (2 doors + 2 openings) plus the 2 host walls genuinely voided by the new openings."
   },
@@ -1017,7 +1029,7 @@
     "counts": {
       "added": 0,
       "deleted": 0,
-      "modified_min": 12
+      "modified": 12
     },
     "note": "Type property edit fans out to all 12 data-changed occurrences (11 were scoped intrinsic pre-canon-v5, 1 was mixed)."
   }
