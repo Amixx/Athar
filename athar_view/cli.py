@@ -24,7 +24,13 @@ import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from athar_view.server import ViewerHTTPServer, build_report_bytes, find_dist, make_server
+from athar_view.server import (
+    ViewerHTTPServer,
+    build_report_bytes,
+    find_dist,
+    make_chain_server,
+    make_server,
+)
 
 SIZE_WARN_BYTES = 50 * 1024 * 1024
 
@@ -42,8 +48,12 @@ def build_view_parser() -> argparse.ArgumentParser:
         prog="athar view",
         description="Open a visual old/new IFC diff in the browser.",
     )
-    parser.add_argument("old", help="Path to old IFC file")
-    parser.add_argument("new", help="Path to new IFC file")
+    parser.add_argument(
+        "files",
+        nargs="+",
+        metavar="IFC",
+        help="Two IFC files (old new) for a single diff, or 3+ for a step-through chain",
+    )
     parser.add_argument(
         "--offline",
         action="store_true",
@@ -91,14 +101,34 @@ def _reachable(url: str, timeout: float = 3.0) -> bool:
 
 
 def prepare_view(args: argparse.Namespace) -> ViewSession:
-    old_path = Path(args.old)
-    new_path = Path(args.new)
-    for path in (old_path, new_path):
+    paths = [Path(f) for f in args.files]
+    if len(paths) < 2:
+        raise ValueError("athar view needs at least two IFC files (old new).")
+    for path in paths:
         if not path.is_file():
             raise FileNotFoundError(f"No such IFC file: {path}")
 
-    messages = _size_warnings([old_path, new_path])
-    report_bytes = build_report_bytes(old_path, new_path, cache_dir=args.cache_dir)
+    messages = _size_warnings(paths)
+    is_chain = len(paths) > 2
+
+    def build_server(dist_dir: Path | None, allowed_origin: str) -> ViewerHTTPServer:
+        if is_chain:
+            return make_chain_server(
+                [str(p) for p in paths],
+                cache_dir=args.cache_dir,
+                dist_dir=dist_dir,
+                port=args.port,
+                allowed_origin=allowed_origin,
+            )
+        report_bytes = build_report_bytes(paths[0], paths[1], cache_dir=args.cache_dir)
+        return make_server(
+            paths[0],
+            paths[1],
+            report_bytes,
+            dist_dir=dist_dir,
+            port=args.port,
+            allowed_origin=allowed_origin,
+        )
 
     hosted = _hosted_url(args)
     if hosted is not None and not _reachable(hosted):
@@ -108,14 +138,7 @@ def prepare_view(args: argparse.Namespace) -> ViewSession:
     if hosted is not None:
         parsed = urllib.parse.urlsplit(hosted)
         allowed_origin = f"{parsed.scheme}://{parsed.netloc}"
-        server = make_server(
-            old_path,
-            new_path,
-            report_bytes,
-            dist_dir=None,
-            port=args.port,
-            allowed_origin=allowed_origin,
-        )
+        server = build_server(None, allowed_origin)
         separator = "&" if parsed.query else "?"
         url = f"{hosted}{separator}src={urllib.parse.quote(server.origin, safe='')}"
         return ViewSession(server=server, url=url, mode="hosted", messages=messages)
@@ -127,14 +150,7 @@ def prepare_view(args: argparse.Namespace) -> ViewSession:
             "set ATHAR_VIEWER_DIST to a viewer build, or configure a hosted viewer "
             "via --viewer-url / ATHAR_VIEWER_URL."
         )
-    server = make_server(
-        old_path,
-        new_path,
-        report_bytes,
-        dist_dir=dist_dir,
-        port=args.port,
-        allowed_origin="*",
-    )
+    server = build_server(dist_dir, "*")
     url = f"{server.origin}/?src={urllib.parse.quote(server.origin, safe='')}"
     return ViewSession(server=server, url=url, mode="offline", messages=messages)
 
@@ -161,3 +177,11 @@ def run_view(args: argparse.Namespace) -> int:
         session.server.shutdown()
         session.server.server_close()
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    return run_view(build_view_parser().parse_args(argv))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
