@@ -54,6 +54,28 @@ the representation-equivalence limitation in `athar/bottom/AGENTS.md`).
 The committed `reports/*.json` are the pre-fix (canon-v4) outputs kept as
 the study record.
 
+**Wobble mechanism (audited).** The slab and wall are the only two products
+in the Revit exports carrying `IfcTriangulatedFaceSet` meshes (everything
+else is parametric). Revit re-serializes those meshes with permuted
+`CoordList`/`CoordIndex` order — coordinate *values* are byte-identical,
+only list order changes, and each of the two meshes independently may or
+may not permute on any given export (slab wobbled on 6/8 consecutive
+pairs, wall on 6/8, never anything else). Quantization cannot absorb this
+(there is no numeric delta); the only cure would be canonicalizing mesh
+vertex/triangle order before hashing, which is deliberately out of scope
+(no deep geometry). `scripts/explore/roundtrip_wobble_classify.py`
+separates reorder-wobble from genuine mesh change; the r4→r5 "49 movers"
+are precisely 48 facade elements (45 placement deltas of
+(3848.7, -783.1, 0) mm + 3 slabs with the move baked into vertices) plus
+1 coincidental wall wobble.
+
+**Known blind spot of the canon-v5 topology semantics:** an element
+re-contained into a different same-class container with no
+placement/data/geometry change no longer flips its own topology hash; it
+surfaces on the two containers instead (both storeys' child multisets
+change). No such case exists anywhere in this corpus
+(`scripts/explore/roundtrip_recontain_scan.py`).
+
 ## 4. Atomic edits were detected surgically (identity level)
 
 - r4→r5 facade move: 0 added/deleted; placement changes on the moved
