@@ -54,6 +54,16 @@ the representation-equivalence limitation in `athar/bottom/AGENTS.md`).
 The committed `reports/*.json` are the pre-fix (canon-v4) outputs kept as
 the study record.
 
+**Wobble eliminated (canon-v6, same day).** Tessellated meshes now hash as
+order-canonical expanded triangles (winding preserved), so the reorder
+wobble is invisible by construction: both no-op pairs report exactly
+0/0/0, r4→r5 reports exactly the 48 movers, r9→r10 exactly the 12
+occurrences. Scoping this also uncovered and fixed a converse gap:
+`IfcPolygonalFaceSet.Faces` never entered the geometry Merkle, so a face
+`CoordIndex` edit (7,775 such facesets per export — the dominant
+representation) produced a zero diff; it is now an include/geometry edge.
+Pinned by `tests/test_mesh_canonicalization.py`.
+
 **Wobble mechanism (audited).** The slab and wall are the only two products
 in the Revit exports carrying `IfcTriangulatedFaceSet` meshes (everything
 else is parametric). Revit re-serializes those meshes with permuted
