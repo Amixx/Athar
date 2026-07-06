@@ -15,9 +15,9 @@
     "counts": {
       "added": 0,
       "deleted": 0,
-      "modified_max": 4
+      "modified": 0
     },
-    "note": "No-op re-export (identical settings, zero model edits); ~177 modified reported today is transitive/topology engine noise plus 2 genuine Revit re-export wobble items (IfcSlab 04S5ZSnP1438qLTWHYFlNV, IfcWall 3LpkEFuRv1RfddUahE4zQR) \u2014 truth stays empty, so those count as false positives by design of the scoring."
+    "note": "Zero model edits: the true diff is empty. Athar currently reports ~2 false modified from Revit's tessellation reorder wobble - a real engine gap (open), not tolerated by this truth."
   },
   "r3_r4": {
     "changed_guids": {
@@ -991,9 +991,9 @@
     "counts": {
       "added": 0,
       "deleted": 0,
-      "modified_max": 4
+      "modified": 0
     },
-    "note": "No-op re-export (identical settings, zero model edits); ~177 modified reported today is transitive/topology engine noise plus 2 genuine Revit re-export wobble items (IfcSlab 04S5ZSnP1438qLTWHYFlNV, IfcWall 3LpkEFuRv1RfddUahE4zQR) \u2014 truth stays empty, so those count as false positives by design of the scoring."
+    "note": "Zero model edits: the true diff is empty. Athar currently reports ~2 false modified from Revit's tessellation reorder wobble - a real engine gap (open), not tolerated by this truth."
   },
   "r9_r10": {
     "changed_guids": {
