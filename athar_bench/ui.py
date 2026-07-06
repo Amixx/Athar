@@ -335,10 +335,28 @@ def _tool_cell(row: dict[str, Any], tool: str) -> str:
     <td class="tool-cell">
       <span class="badge {_badge_class(assessment)}" title="{_e(title)}">{_label(assessment)}</span>
       {counts_line}
+      {_changeset_line(result.get("changeset"))}
       <div class="text-secondary small">{_metric(time_s, "s")} · {_metric(rss, "MB")} · {_metric(gb_s, "GB·s")}</div>
       {output}
     </td>
     """
+
+
+def _changeset_line(score: Any) -> str:
+    if not isinstance(score, dict):
+        return ""
+    detail = f"tp {score.get('tp', '—')} · fp {score.get('fp', '—')} · fn {score.get('fn', '—')} vs GUID ground truth"
+    return (
+        f'<div class="font-monospace small" title="{_e(detail)}">'
+        f"P {_score_fmt(score.get('precision'))} · R {_score_fmt(score.get('recall'))}"
+        f" · F1 {_score_fmt(score.get('f1'))}</div>"
+    )
+
+
+def _score_fmt(value: Any) -> str:
+    if not isinstance(value, (int, float)) or (isinstance(value, float) and math.isnan(value)):
+        return "—"
+    return f"{value:.2f}"
 
 
 def _insights(rows: list[dict[str, Any]]) -> str:
@@ -353,6 +371,7 @@ def _tool_averages(rows: list[dict[str, Any]]) -> str:
         "avg_time": [stat["avg_time_value"] for stat in stats if stat["avg_time_value"] is not None],
         "avg_rss": [stat["avg_rss_value"] for stat in stats if stat["avg_rss_value"] is not None],
         "avg_gbs": [stat["avg_gbs_value"] for stat in stats if stat["avg_gbs_value"] is not None],
+        "avg_f1": [stat["avg_f1_value"] for stat in stats if stat["avg_f1_value"] is not None],
     }
     body = "".join(_tool_average_row(stat, ranges) for stat in stats)
     return f"""
@@ -366,6 +385,7 @@ def _tool_averages(rows: list[dict[str, Any]]) -> str:
               <th>Correctness</th>
               <th>Judged pairs</th>
               <th>Unexpected</th>
+              <th title="Mean precision / recall / F1 against GUID-level ground truth, over pairs where this tool was scored">Changeset P · R · F1</th>
               <th>Avg median time</th>
               <th>Avg peak RSS</th>
               <th>Avg GB·s</th>
@@ -404,11 +424,36 @@ def _tool_average_stats(rows: list[dict[str, Any]], tool: str) -> dict[str, Any]
         if isinstance(gb_s, (int, float)) and not (isinstance(gb_s, float) and math.isnan(gb_s)):
             gbs_values.append(float(gb_s))
 
+    precisions: list[float] = []
+    recalls: list[float] = []
+    f1s: list[float] = []
+    scored = 0
+    for row in rows:
+        score = row.get(tool, {}).get("changeset") if isinstance(row.get(tool), dict) else None
+        if not isinstance(score, dict):
+            continue
+        scored += 1
+        for key, values in (("precision", precisions), ("recall", recalls), ("f1", f1s)):
+            value = score.get(key)
+            if isinstance(value, (int, float)) and not (isinstance(value, float) and math.isnan(value)):
+                values.append(float(value))
+
     correctness_value = None if judged == 0 else expected / judged
     avg_time_value = None if not times else sum(times) / len(times)
     avg_rss_value = None if not rss_values else sum(rss_values) / len(rss_values)
     avg_gbs_value = None if not gbs_values else sum(gbs_values) / len(gbs_values)
+    avg_precision = None if not precisions else sum(precisions) / len(precisions)
+    avg_recall = None if not recalls else sum(recalls) / len(recalls)
+    avg_f1_value = None if not f1s else sum(f1s) / len(f1s)
+    changeset = "—"
+    if scored:
+        changeset = (
+            f"{_score_fmt(avg_precision)} · {_score_fmt(avg_recall)} · {_score_fmt(avg_f1_value)}"
+            f" ({scored}p)"
+        )
     return {
+        "avg_f1_value": avg_f1_value,
+        "changeset": changeset,
         "tool": tool,
         "judged": judged,
         "unexpected": unexpected,
@@ -430,6 +475,7 @@ def _tool_average_row(stat: dict[str, Any], ranges: dict[str, list[float | int]]
       <td class="{_range_class(stat["correctness_value"], ranges["correctness"], higher_is_better=True)}">{_e(stat["correctness"])}</td>
       <td>{stat["judged"]}</td>
       <td class="{_range_class(stat["unexpected"], ranges["unexpected"], higher_is_better=False)}">{stat["unexpected"]}</td>
+      <td class="font-monospace {_range_class(stat["avg_f1_value"], ranges["avg_f1"], higher_is_better=True)}">{_e(stat["changeset"])}</td>
       <td class="font-monospace {_range_class(stat["avg_time_value"], ranges["avg_time"], higher_is_better=False)}">{_e(stat["avg_time"])}</td>
       <td class="font-monospace {_range_class(stat["avg_rss_value"], ranges["avg_rss"], higher_is_better=False)}">{_e(stat["avg_rss"])}</td>
       <td class="font-monospace {_range_class(stat["avg_gbs_value"], ranges["avg_gbs"], higher_is_better=False)}">{_e(stat["avg_gbs"])}</td>
