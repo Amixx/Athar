@@ -138,13 +138,14 @@ export class DiffScene {
   /**
    * Build the bucket meshes for an old/new model pair.
    * `bucketOf` decides each entity's bucket (or null = not rendered).
-   * `displacementPairs` are placement-only modifications (old/new step ids).
+   * `displacementGroups` each draw one arrow: a single placement-only pair,
+   * or a whole placement cohort collapsed to its averaged centroid move.
    */
   setModels(
     oldGeometry: ModelGeometry,
     newGeometry: ModelGeometry,
     bucketOf: (side: Side, stepId: number) => Bucket | null,
-    displacementPairs: Array<{ oldId: number; newId: number }>,
+    displacementGroups: Array<{ pairs: Array<{ oldId: number; newId: number }> }>,
   ): SceneStats {
     this.clearModels()
 
@@ -175,7 +176,7 @@ export class DiffScene {
       }
     }
 
-    const lineCount = this.buildDisplacementLines(displacementPairs)
+    const lineCount = this.buildDisplacementLines(displacementGroups)
     this.fitBox(this.modelBox)
     this.invalidate()
     return { bucketEntityCounts: counts, displacementLines: lineCount }
@@ -235,17 +236,28 @@ export class DiffScene {
     return { bucket, mesh, material, ranges }
   }
 
-  private buildDisplacementLines(pairs: Array<{ oldId: number; newId: number }>): number {
+  private buildDisplacementLines(
+    displacementGroups: Array<{ pairs: Array<{ oldId: number; newId: number }> }>,
+  ): number {
     const group = new THREE.Group()
     group.name = 'placement-displacement-arrows'
 
     let count = 0
-    for (const pair of pairs) {
-      const from = this.entityBoxes.old.get(pair.oldId)
-      const to = this.entityBoxes.new.get(pair.newId)
-      if (!from || !to || from.isEmpty() || to.isEmpty()) continue
-      const a = from.getCenter(new THREE.Vector3())
-      const b = to.getCenter(new THREE.Vector3())
+    for (const displacement of displacementGroups) {
+      const a = new THREE.Vector3()
+      const b = new THREE.Vector3()
+      let sampled = 0
+      for (const pair of displacement.pairs) {
+        const from = this.entityBoxes.old.get(pair.oldId)
+        const to = this.entityBoxes.new.get(pair.newId)
+        if (!from || !to || from.isEmpty() || to.isEmpty()) continue
+        a.add(from.getCenter(new THREE.Vector3()))
+        b.add(to.getCenter(new THREE.Vector3()))
+        sampled += 1
+      }
+      if (sampled === 0) continue
+      a.divideScalar(sampled)
+      b.divideScalar(sampled)
       const delta = b.clone().sub(a)
       const length = delta.length()
       if (length <= 1e-9) continue

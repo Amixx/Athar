@@ -15,8 +15,8 @@
     countBucketEntities,
     countMeshless,
     DEFAULT_TOGGLES,
+    groupDisplacements,
     isPlacementOnly,
-    placementDeltaNorm,
     SNAP,
     type Toggles,
   } from './lib/renderState'
@@ -184,10 +184,10 @@
       const diff = nextIndex
       const bucketOfFn = (side: Side, stepId: number) =>
         bucketFor(side, side === 'old' ? diff.old.get(stepId) : diff.new.get(stepId))
-      const displacementPairs = diff.placementPairs.filter(isPlacementOnly).map((item) => ({
-        oldId: item.old.step_id,
-        newId: item.new.step_id,
-      }))
+      const displacementGroups = groupDisplacements(
+        report.modified,
+        report.stats.placement_cohorts ?? [],
+      )
 
       // Pure counts first, so headless environments without WebGL still get
       // deterministic state for the smoke test.
@@ -212,9 +212,9 @@
           warning = `3D view unavailable (${cause instanceof Error ? cause.message : cause}). Counts and panels still work.`
         }
       }
-      let displacementLines = displacementPairs.length
+      let displacementLines = displacementGroups.length
       if (scene) {
-        const stats = scene.setModels(oldGeometry, newGeometry, bucketOfFn, displacementPairs)
+        const stats = scene.setModels(oldGeometry, newGeometry, bucketOfFn, displacementGroups)
         displacementLines = stats.displacementLines
         scene.applyAppearances(computeAppearances(sliderT, toggles), showLines)
       }
@@ -421,8 +421,12 @@
       {#if meshless > 0}
         <div class="footnote">{meshless} report entit{meshless === 1 ? 'y has' : 'ies have'} no 3D geometry (spatial containers etc.) — counted above, not drawn.</div>
       {/if}
-      {#if index.placementPairs.filter(isPlacementOnly).length > 0}
-        <div class="footnote">Amber arrows trace placement-only moves (old → new centroid).</div>
+      {#if cohorts.length > 0 || index.placementPairs.filter(isPlacementOnly).length > 0}
+        <div class="footnote">
+          Amber arrows trace placement moves (old → new centroid){cohorts.length
+            ? '; each group move collapses to one arrow'
+            : ''}.
+        </div>
       {/if}
     </aside>
 

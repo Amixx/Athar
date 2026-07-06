@@ -6,8 +6,11 @@ bundle cache; nothing in `athar/` may depend on it.
 Onshape-style visual overlay diff: both models tessellated in the browser and
 rendered in one 3D scene, colored by the engine's report (green added, red
 deleted, blue modified, gray ghosted unchanged), with an old↔new crossfade
-slider, amber displacement lines for placement moves, a summary panel, and a
-click inspector (class, GUID, aspects, placement delta, match reason/score).
+slider, amber displacement arrows for placement moves (each engine
+`placement_cohort` — a group move — collapses to one averaged arrow, and the
+summary panel lists cohorts as "N moved together · Δ x m"), a summary panel,
+and a click inspector (class, GUID, aspects, placement delta, match
+reason/score).
 Report `step_id`s are the express ids the browser parser emits, so no id
 mapping layer exists anywhere.
 

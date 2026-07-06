@@ -31,7 +31,7 @@
  */
 
 import type { EntityRecord } from './report'
-import type { AtharReport, MatchedItem, Section, Side } from './types'
+import type { AtharReport, MatchedItem, PlacementCohort, Section, Side } from './types'
 
 export type Bucket =
   | 'deleted'
@@ -180,6 +180,37 @@ export function computeAppearances(t: number, toggles: Toggles): Record<Bucket, 
  */
 export function isPlacementOnly(item: MatchedItem): boolean {
   return item.aspects.placement === 'changed' && item.aspects.geometry === 'unchanged'
+}
+
+/** One displacement arrow: a single pair, or a whole placement cohort. */
+export interface DisplacementGroup {
+  pairs: Array<{ oldId: number; newId: number }>
+}
+
+/**
+ * Displacement arrows with group moves collapsed: every engine placement
+ * cohort becomes one group (all members, whatever else changed on them —
+ * membership already proves the shared translation), and each remaining
+ * placement-only pair stays its own single-arrow group. Cohorts first in
+ * engine order, then singles in report order.
+ */
+export function groupDisplacements(
+  modified: MatchedItem[],
+  cohorts: PlacementCohort[],
+): DisplacementGroup[] {
+  const cohortIndex = new Map<number, number>()
+  cohorts.forEach((cohort, i) => {
+    for (const member of cohort.members) cohortIndex.set(member, i)
+  })
+  const grouped: DisplacementGroup[] = cohorts.map(() => ({ pairs: [] }))
+  const singles: DisplacementGroup[] = []
+  for (const item of modified) {
+    const pair = { oldId: item.old.step_id, newId: item.new.step_id }
+    const index = cohortIndex.get(item.new.step_id)
+    if (index !== undefined) grouped[index].pairs.push(pair)
+    else if (isPlacementOnly(item)) singles.push({ pairs: [pair] })
+  }
+  return [...grouped.filter((group) => group.pairs.length > 0), ...singles]
 }
 
 /** Euclidean norm of placement_delta_mm, or null. */
