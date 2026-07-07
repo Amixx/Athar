@@ -51,6 +51,7 @@ const GEOM_HINTS: &[&str] = &[
     "Position",
     "MappedRepresentation",
     "MappingSource",
+    "Faces",
 ];
 const GEOM_TARGET_PREFIXES: &[&str] = &[
     "IFCSHAPE",

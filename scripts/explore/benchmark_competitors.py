@@ -3,10 +3,13 @@
 
 The default pair set is intentionally small enough for normal development but
 covers both real corpus pairs and synthetic IfcOpenShell mutations with known
-ground truth. Larger corpus stress pairs are opt-in via ``--large``.
+ground truth. Larger corpus stress pairs are opt-in via ``--large``; the Revit
+round-trip corpus (real revision edits and cross-schema refusals, from
+``corpus/roundtrip-revit-2026-07-06/``) is opt-in via ``--revit``.
 
 Usage:
     python scripts/explore/benchmark_competitors.py --out /tmp/athar_benchmark.json
+    python scripts/explore/benchmark_competitors.py --revit --only r8_r9 --repeats 1
 """
 
 from __future__ import annotations
@@ -65,6 +68,8 @@ class Pair:
     expectation: str
     expected: Expected | None = None
     large: bool = False
+    revit: bool = False
+    set_name: str = "synthetic"
 
 
 def _static_pair(old_key: str, new_key: str, *, acceptance: bool = False) -> PairBuilder:
@@ -303,6 +308,170 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
 )
 
 
+_REVIT_CORPUS_DIR = REPO_ROOT / "corpus" / "roundtrip-revit-2026-07-06"
+_REVIT_EXPORTS_DIR = _REVIT_CORPUS_DIR / "exports"
+_REVIT_GROUND_TRUTH_PATH = _REVIT_CORPUS_DIR / "ground_truth.json"
+
+
+def _revit_export_path(name: str) -> Path:
+    """Resolve one Revit round-trip export, decompressing the committed .zst if needed."""
+
+    ifc_path = _REVIT_EXPORTS_DIR / f"{name}.ifc"
+    if ifc_path.exists():
+        return ifc_path
+    zst_path = _REVIT_EXPORTS_DIR / f"{name}.ifc.zst"
+    if not zst_path.exists():
+        raise FileNotFoundError(f"missing Revit export {name!r}: neither {ifc_path} nor {zst_path} exist")
+    if shutil.which("zstd") is None:
+        raise RuntimeError(f"zstd not found on PATH; cannot decompress {zst_path} to {ifc_path}")
+    subprocess.run(["zstd", "-d", "-k", str(zst_path)], check=True, capture_output=True)
+    if not ifc_path.exists():
+        raise RuntimeError(f"zstd decompression of {zst_path} did not produce {ifc_path}")
+    return ifc_path
+
+
+def _revit_pair(old_name: str, new_name: str) -> PairBuilder:
+    def build(_workdir: Path) -> tuple[str, str]:
+        return str(_revit_export_path(old_name)), str(_revit_export_path(new_name))
+
+    return build
+
+
+def _load_revit_ground_truth() -> dict[str, dict]:
+    return json.loads(_REVIT_GROUND_TRUTH_PATH.read_text(encoding="utf-8"))
+
+
+_REVIT_GROUND_TRUTH = _load_revit_ground_truth()
+
+
+def _revit_expected(key: str) -> Expected:
+    raw = _REVIT_GROUND_TRUTH[key]
+    return Expected(
+        counts=raw.get("counts"),
+        athar=raw.get("athar"),
+        changed_guids=raw.get("changed_guids"),
+        note=raw.get("note", ""),
+    )
+
+
+REVIT_ROUNDTRIP_PAIRS: tuple[Pair, ...] = (
+    Pair(
+        name="roundtrip_orig_r1",
+        kind="revit_roundtrip_import",
+        builder=_revit_pair("original", "r1"),
+        expectation=(
+            "Archicad IFC2X3 source vs Revit's default IFC2X3 re-export straight after import, "
+            "no edits: import collapses granularity (44,389->886 products), so heavy add/delete "
+            "churn documents that loss, not engine noise."
+        ),
+        expected=_revit_expected("orig_r1"),
+        revit=True,
+        set_name="revit",
+    ),
+    Pair(
+        name="roundtrip_r2_r3",
+        kind="revit_roundtrip_noop",
+        builder=_revit_pair("r2", "r3"),
+        expectation=(
+            "IFC4 no-op re-export (+ 'keep GUIDs' option, zero model edits): the true diff "
+            "is empty. Revit permutes tessellated-mesh serialization between exports; canon-v6 "
+            "canonicalizes mesh order, so any reported change is a false positive."
+        ),
+        expected=_revit_expected("r2_r3"),
+        revit=True,
+        set_name="revit",
+    ),
+    Pair(
+        name="roundtrip_r3_r4",
+        kind="revit_roundtrip_data",
+        builder=_revit_pair("r3", "r4"),
+        expectation=(
+            "Added 'export Revit property sets' option, no model edits: every occurrence "
+            "gains property-set data (data aspect changes only)."
+        ),
+        expected=_revit_expected("r3_r4"),
+        revit=True,
+        set_name="revit",
+    ),
+    Pair(
+        name="roundtrip_r4_r5",
+        kind="revit_roundtrip_placement",
+        builder=_revit_pair("r4", "r5"),
+        expectation=(
+            "Moved the whole extruded facade away from the building: 0 added/deleted, "
+            "placement changes on the moved elements."
+        ),
+        expected=_revit_expected("r4_r5"),
+        revit=True,
+        set_name="revit",
+    ),
+    Pair(
+        name="roundtrip_r5_r6",
+        kind="revit_roundtrip_delete",
+        builder=_revit_pair("r5", "r6"),
+        expectation=(
+            "Deleted a row of windows, merged into one Generic Model proxy at import: "
+            "exactly one deletion."
+        ),
+        expected=_revit_expected("r5_r6"),
+        revit=True,
+        set_name="revit",
+    ),
+    Pair(
+        name="roundtrip_r6_r7",
+        kind="revit_roundtrip_data",
+        builder=_revit_pair("r6", "r7"),
+        expectation=(
+            "One door instance property ('Frame type' = 'Test frame type') edited: "
+            "exactly one intrinsic modification."
+        ),
+        expected=_revit_expected("r6_r7"),
+        revit=True,
+        set_name="revit",
+    ),
+    Pair(
+        name="roundtrip_r7_r8",
+        kind="revit_roundtrip_add",
+        builder=_revit_pair("r7", "r8"),
+        expectation=(
+            "Duplicated (pasted) the edited door twice onto other walls: 2 IfcDoor + "
+            "2 IfcOpeningElement added with fresh GUIDs."
+        ),
+        expected=_revit_expected("r7_r8"),
+        revit=True,
+        set_name="revit",
+    ),
+    Pair(
+        name="roundtrip_r8_r9",
+        kind="revit_roundtrip_noop",
+        builder=_revit_pair("r8", "r9"),
+        expectation=(
+            "Same-settings determinism pair, zero model edits: the true diff is empty. "
+            "Revit permutes tessellated-mesh serialization between exports; canon-v6 "
+            "canonicalizes mesh order, so any reported change is a false positive."
+        ),
+        expected=_revit_expected("r8_r9"),
+        revit=True,
+        set_name="revit",
+    ),
+    Pair(
+        name="roundtrip_r9_r10",
+        kind="revit_roundtrip_data",
+        builder=_revit_pair("r9", "r10"),
+        expectation=(
+            "Door type property value edited: fans out to all 11 occurrences of that type, "
+            "each an intrinsic modification."
+        ),
+        expected=_revit_expected("r9_r10"),
+        revit=True,
+        set_name="revit",
+    ),
+)
+
+
+ALL_PAIRS: tuple[Pair, ...] = BENCHMARK_PAIRS + REVIT_ROUNDTRIP_PAIRS
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="/tmp/athar_competitor_benchmark.json")
@@ -310,6 +479,8 @@ def main() -> int:
     parser.add_argument("--timeout-s", type=int, default=300)
     parser.add_argument("--repeats", type=int, default=3, help="runs per tool; medians are reported")
     parser.add_argument("--large", action="store_true", help="include opt-in large corpus pairs")
+    parser.add_argument("--revit", action="store_true", help="include opt-in Revit round-trip corpus pairs")
+    parser.add_argument("--only", default=None, help="run only pairs whose name contains this substring")
     parser.add_argument("--no-ifcfast", action="store_true", help="disable optional ifcfast runner even if installed")
     parser.add_argument("--no-speckle", action="store_true", help="disable optional Speckle runner even if installed")
     parser.add_argument("--no-ifcgit", action="store_true", help="disable the IfcGit-port runner")
@@ -328,14 +499,18 @@ def main() -> int:
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "repo": str(REPO_ROOT),
         "environment": _environment(),
-        "settings": {"timeout_s": args.timeout_s, "repeats": args.repeats, "large": args.large},
+        "settings": {"timeout_s": args.timeout_s, "repeats": args.repeats, "large": args.large, "revit": args.revit},
         "tools": tools,
         "pairs": [],
         "summary": [],
     }
 
-    for pair in BENCHMARK_PAIRS:
+    for pair in ALL_PAIRS:
         if pair.large and not args.large:
+            continue
+        if pair.revit and not args.revit:
+            continue
+        if args.only and args.only not in pair.name:
             continue
         print(f"[{time.strftime('%H:%M:%S')}] pair {pair.name}", flush=True)
         pair_workdir = workdir / pair.name
@@ -345,6 +520,7 @@ def main() -> int:
             entry = {
                 "name": pair.name,
                 "kind": pair.kind,
+                "set": pair.set_name,
                 "expectation": pair.expectation,
                 "expected": _expected_json(pair.expected),
                 "error": f"{type(exc).__name__}: {exc}",
@@ -358,6 +534,7 @@ def main() -> int:
         entry = {
             "name": pair.name,
             "kind": pair.kind,
+            "set": pair.set_name,
             "expectation": pair.expectation,
             "expected": _expected_json(pair.expected),
             "old": _input_summary(old_path),
@@ -404,7 +581,11 @@ def main() -> int:
 def _repeat(fn: Callable[[], dict], repeats: int) -> dict:
     runs = [fn() for _ in range(repeats)]
     best_counts = _first_counts(runs)
-    ok_seconds = [run["seconds"] for run in runs if run.get("status") == "ok" and isinstance(run.get("seconds"), (int, float))]
+    ok_seconds = [
+        run["seconds"]
+        for run in runs
+        if run.get("status") in ("ok", "refused") and isinstance(run.get("seconds"), (int, float))
+    ]
     peak_rss_values = [
         run["peak_rss_mb"] for run in runs if run.get("peak_rss_mb") is not None and isinstance(run.get("peak_rss_mb"), (int, float))
     ]
@@ -439,6 +620,19 @@ def _run_athar(old_path: str, new_path: str, timeout_s: int) -> dict:
     mem = {"peak_rss_mb": completed.get("peak_rss_mb"), "gb_seconds": completed.get("gb_seconds")}
     if completed.get("status") != "completed":
         return completed | {"seconds": seconds}
+    if completed["returncode"] == 3:
+        try:
+            payload = json.loads(completed["stdout"])
+        except Exception:  # noqa: BLE001
+            payload = {}
+        return {
+            "status": "refused",
+            "reason": payload.get("status") or "unknown",
+            "message": payload.get("message"),
+            "schemas": payload.get("schemas"),
+            "seconds": seconds,
+            **mem,
+        }
     if completed["returncode"] != 0:
         return {"status": "error", "seconds": seconds, "error": completed.get("stderr", "")[:500], **mem}
     try:
@@ -523,6 +717,7 @@ def _run_ifcdiff(
         "gb_seconds": completed.get("gb_seconds"),
         "relationships": relationships or "default",
         "counts": _ifcdiff_counts(payload),
+        "reported_guids": _ifcdiff_reported_guids(payload),
         "output": str(output_path),
         "stdout_preview": completed.get("stdout", "")[:2000],
         "stderr_preview": completed.get("stderr", "")[:2000],
@@ -548,14 +743,21 @@ def _run_json_runner(runner: Path, old_path: str, new_path: str, timeout_s: int)
     if completed["returncode"] != 0 or "error" in payload:
         error = str(payload.get("error") or completed.get("stderr", ""))[:500]
         return {"status": "error", "seconds": seconds, "error": error, **mem}
-    extras = {key: value for key, value in payload.items() if key not in ("tool", "counts")}
-    return {"status": "ok", "seconds": seconds, **mem, "counts": payload.get("counts"), "extras": extras}
+    extras = {key: value for key, value in payload.items() if key not in ("tool", "counts", "reported_guids")}
+    return {
+        "status": "ok",
+        "seconds": seconds,
+        **mem,
+        "counts": payload.get("counts"),
+        "reported_guids": payload.get("reported_guids"),
+        "extras": extras,
+    }
 
 
 _IFCFAST_RUNNER = (
     "import sys, json, ifcfast; "
     "m = ifcfast.open(sys.argv[1], use_cache=False, write_cache=False); "
-    "print(json.dumps(m.diff(sys.argv[2], sample=5), default=str))"
+    "print(json.dumps(m.diff(sys.argv[2], sample=0), default=str))"
 )
 
 
@@ -581,6 +783,7 @@ def _run_ifcfast(old_path: str, new_path: str, timeout_s: int) -> dict:
         "seconds": seconds,
         **mem,
         "counts": _ifcfast_counts(payload),
+        "reported_guids": _ifcfast_reported_guids(payload),
         "output_preview": payload,
     }
 
@@ -632,6 +835,17 @@ def _ifcdiff_counts(payload: object) -> dict | None:
     }
 
 
+def _ifcdiff_reported_guids(payload: object) -> dict[str, list[str]] | None:
+    if not isinstance(payload, dict):
+        return None
+    changed = payload.get("changed")
+    return {
+        "added": list(payload.get("added") or []),
+        "deleted": list(payload.get("deleted") or []),
+        "modified": list(changed.keys()) if isinstance(changed, dict) else [],
+    }
+
+
 def _ifcfast_counts(payload: object) -> dict | None:
     if not isinstance(payload, dict):
         return None
@@ -646,6 +860,24 @@ def _ifcfast_counts(payload: object) -> dict | None:
     }
 
 
+def _ifcfast_reported_guids(payload: object) -> dict[str, list[str]] | None:
+    if not isinstance(payload, dict):
+        return None
+    products = payload.get("products")
+    if not isinstance(products, dict):
+        return None
+    modified = [
+        entry["guid"]
+        for entry in (products.get("changed") or [])
+        if isinstance(entry, dict) and entry.get("guid")
+    ]
+    return {
+        "added": list(products.get("added") or []),
+        "deleted": list(products.get("removed") or []),
+        "modified": modified,
+    }
+
+
 def _assess_pair(entry: dict, expected: Expected | None) -> dict[str, str]:
     if expected is None:
         return {name: "observed" for name in entry.get("runs", {})}
@@ -653,10 +885,22 @@ def _assess_pair(entry: dict, expected: Expected | None) -> dict[str, str]:
 
 
 def _assess_run(name: str, run: dict, expected: Expected) -> str:
+    expected_refusal = (expected.athar or {}).get("refused") if name == "athar" and expected.athar else None
+    if expected_refusal:
+        if run.get("status") == "refused":
+            return "expected" if run.get("reason") == expected_refusal else "unexpected"
+        if run.get("status") == "ok":
+            return "unexpected"
+        return "not_run"
+    if run.get("status") == "refused":
+        # Athar refused a pair no expectation said it should; other tools never refuse today.
+        return "unexpected" if name == "athar" else "not_run"
     if run.get("status") != "ok":
         return "not_run"
     counts = _run_counts(run)
+    assessed = False
     if expected.counts and counts:
+        assessed = True
         for key, value in expected.counts.items():
             if key.endswith("_min"):
                 actual_key = key[: -len("_min")]
@@ -672,16 +916,20 @@ def _assess_run(name: str, run: dict, expected: Expected) -> str:
                 return "unexpected"
     if name == "athar" and expected.athar:
         if "matched_total" in expected.athar:
+            assessed = True
             matched = sum((run.get("matched_by_tier") or {}).values())
             if matched != expected.athar["matched_total"]:
                 return "unexpected"
         if "matched_by_tier" in expected.athar:
+            assessed = True
             for tier, value in expected.athar["matched_by_tier"].items():
                 if (run.get("matched_by_tier") or {}).get(tier) != value:
                     return "unexpected"
-        if "guid_collisions" in expected.athar and run.get("guid_collisions") != expected.athar["guid_collisions"]:
-            return "unexpected"
-    return "expected"
+        if "guid_collisions" in expected.athar:
+            assessed = True
+            if run.get("guid_collisions") != expected.athar["guid_collisions"]:
+                return "unexpected"
+    return "expected" if assessed else "observed"
 
 
 def _score_pair(entry: dict, expected: Expected | None) -> dict[str, dict]:
@@ -699,6 +947,7 @@ def _summary_row(entry: dict) -> dict:
     row = {
         "name": entry.get("name"),
         "kind": entry.get("kind"),
+        "set": entry.get("set"),
         "expectation": entry.get("expectation"),
         "assessment": entry.get("assessment", {}),
     }

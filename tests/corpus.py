@@ -191,6 +191,25 @@ def assert_report_invariants(report: dict) -> None:
             )
             assert item["change_scope"] == expected_scope, item
 
+    # Placement cohorts: disjoint 2+ groups of modified pairs whose placement
+    # changed, keyed by the 0.1 mm-grid delta, largest first.
+    cohorts = stats["placement_cohorts"]
+    modified_aspects = {item["new"]["step_id"]: item["aspects"] for item in report["modified"]}
+    seen_members: set[int] = set()
+    for cohort in cohorts:
+        assert cohort["count"] == len(cohort["members"]) >= 2, cohort
+        assert cohort["members"] == sorted(set(cohort["members"])), cohort
+        key = tuple(cohort["delta_mm"])
+        assert key != (0.0, 0.0, 0.0), cohort
+        for step in cohort["members"]:
+            assert step not in seen_members, cohort
+            seen_members.add(step)
+            aspects = modified_aspects[step]
+            assert aspects["placement"] == "changed", cohort
+            delta = aspects["placement_delta_mm"]
+            assert delta is not None and tuple(round(v, 1) + 0.0 for v in delta) == key, cohort
+    assert cohorts == sorted(cohorts, key=lambda c: (-c["count"], c["delta_mm"]))
+
     # 1:1 matching: no entity may appear in two sections or twice in one.
     old_steps = [item["old"]["step_id"] for s in ("modified", "unchanged") for item in report[s]]
     old_steps += [item["step_id"] for item in report["deleted"]]

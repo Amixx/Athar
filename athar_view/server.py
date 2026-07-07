@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import urllib.parse
+from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -20,7 +22,7 @@ from athar_git.cache import load_or_build_bundle
 
 from athar_view import __version__
 
-MANIFEST_SCHEMA_VERSION = 1
+MANIFEST_SCHEMA_VERSION = 2
 
 _CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -65,6 +67,15 @@ def find_dist(explicit: str | os.PathLike[str] | None = None) -> Path | None:
     return None
 
 
+@dataclass
+class ChainStep:
+    """One consecutive pair in a revision chain, by index into the file list."""
+
+    old_idx: int
+    new_idx: int
+    label: str
+
+
 class ViewerHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -72,9 +83,13 @@ class ViewerHTTPServer(ThreadingHTTPServer):
         self,
         address: tuple[str, int],
         *,
-        old_path: Path,
-        new_path: Path,
-        report_bytes: bytes,
+        old_path: Path | None = None,
+        new_path: Path | None = None,
+        report_bytes: bytes | None = None,
+        chain_files: list[Path] | None = None,
+        chain_steps: list[ChainStep] | None = None,
+        active_step: int = 0,
+        cache_dir: str | os.PathLike[str] | None = None,
         dist_dir: Path | None,
         allowed_origin: str = "*",
     ) -> None:
@@ -82,14 +97,26 @@ class ViewerHTTPServer(ThreadingHTTPServer):
         self.old_path = old_path
         self.new_path = new_path
         self.report_bytes = report_bytes
+        self.chain_files = chain_files
+        self.chain_steps = chain_steps
+        self.active_step = active_step
+        self.cache_dir = cache_dir
         self.dist_dir = dist_dir
         self.allowed_origin = allowed_origin
+        self._report_cache: dict[int, bytes] = {}
+        self._report_lock = threading.Lock()
+
+    @property
+    def is_chain(self) -> bool:
+        return self.chain_steps is not None
 
     @property
     def origin(self) -> str:
         return f"http://127.0.0.1:{self.server_address[1]}"
 
     def manifest_bytes(self) -> bytes:
+        if self.is_chain:
+            return json.dumps(self._chain_manifest()).encode("utf-8")
         manifest = {
             "athar_viewer_manifest": 1,
             "schema_version": MANIFEST_SCHEMA_VERSION,
@@ -99,6 +126,48 @@ class ViewerHTTPServer(ThreadingHTTPServer):
             "report": {"url": "/files/report.json"},
         }
         return json.dumps(manifest).encode("utf-8")
+
+    def _chain_manifest(self) -> dict:
+        assert self.chain_files is not None and self.chain_steps is not None
+        steps = []
+        for i, step in enumerate(self.chain_steps):
+            old_file = self.chain_files[step.old_idx]
+            new_file = self.chain_files[step.new_idx]
+            steps.append(
+                {
+                    "label": step.label,
+                    "old": {"name": old_file.name, "url": f"/files/model/{step.old_idx}.ifc"},
+                    "new": {"name": new_file.name, "url": f"/files/model/{step.new_idx}.ifc"},
+                    "report": {"url": f"/files/report/{i}.json"},
+                }
+            )
+        return {
+            "athar_viewer_manifest": 1,
+            "schema_version": MANIFEST_SCHEMA_VERSION,
+            "generator": f"athar_view/{__version__}",
+            "steps": steps,
+            "active_step": self.active_step,
+        }
+
+    def chain_report_bytes(self, step_idx: int) -> bytes | None:
+        """Diff one chain step on demand, caching the result. Files shared by
+        adjacent steps still hit the persistent bundle cache underneath."""
+        if self.chain_steps is None or self.chain_files is None:
+            return None
+        if not 0 <= step_idx < len(self.chain_steps):
+            return None
+        with self._report_lock:
+            cached = self._report_cache.get(step_idx)
+            if cached is not None:
+                return cached
+            step = self.chain_steps[step_idx]
+            data = build_report_bytes(
+                self.chain_files[step.old_idx],
+                self.chain_files[step.new_idx],
+                cache_dir=self.cache_dir,
+            )
+            self._report_cache[step_idx] = data
+            return data
 
 
 class ViewerRequestHandler(BaseHTTPRequestHandler):
@@ -158,14 +227,41 @@ class ViewerRequestHandler(BaseHTTPRequestHandler):
         server = self.server
         if path == "/manifest.json":
             return server.manifest_bytes(), _CONTENT_TYPES[".json"]
-        if path == "/files/old.ifc":
-            return server.old_path.read_bytes(), _CONTENT_TYPES[".ifc"]
-        if path == "/files/new.ifc":
-            return server.new_path.read_bytes(), _CONTENT_TYPES[".ifc"]
-        if path == "/files/report.json":
-            return server.report_bytes, _CONTENT_TYPES[".json"]
+        if server.is_chain:
+            resolved = self._resolve_chain(server, path)
+            if resolved is not None:
+                return resolved
+        else:
+            if path == "/files/old.ifc":
+                return server.old_path.read_bytes(), _CONTENT_TYPES[".ifc"]
+            if path == "/files/new.ifc":
+                return server.new_path.read_bytes(), _CONTENT_TYPES[".ifc"]
+            if path == "/files/report.json":
+                return server.report_bytes, _CONTENT_TYPES[".json"]
         if server.dist_dir is not None:
             return self._resolve_static(server.dist_dir, path)
+        return None
+
+    @staticmethod
+    def _resolve_chain(server: ViewerHTTPServer, path: str) -> tuple[bytes, str] | None:
+        assert server.chain_files is not None
+        if path.startswith("/files/model/") and path.endswith(".ifc"):
+            try:
+                idx = int(path[len("/files/model/") : -len(".ifc")])
+            except ValueError:
+                return None
+            if 0 <= idx < len(server.chain_files):
+                return server.chain_files[idx].read_bytes(), _CONTENT_TYPES[".ifc"]
+            return None
+        if path.startswith("/files/report/") and path.endswith(".json"):
+            try:
+                idx = int(path[len("/files/report/") : -len(".json")])
+            except ValueError:
+                return None
+            data = server.chain_report_bytes(idx)
+            if data is not None:
+                return data, _CONTENT_TYPES[".json"]
+            return None
         return None
 
     @staticmethod
@@ -196,6 +292,35 @@ def make_server(
         old_path=Path(old_path),
         new_path=Path(new_path),
         report_bytes=report_bytes,
+        dist_dir=Path(dist_dir) if dist_dir is not None else None,
+        allowed_origin=allowed_origin,
+    )
+
+
+def build_chain_steps(files: list[Path]) -> list[ChainStep]:
+    """Consecutive pairs over an ordered file list: (0,1), (1,2), ..."""
+    return [
+        ChainStep(old_idx=i, new_idx=i + 1, label=f"{files[i].stem} → {files[i + 1].stem}")
+        for i in range(len(files) - 1)
+    ]
+
+
+def make_chain_server(
+    files: list[str | os.PathLike[str]],
+    *,
+    cache_dir: str | os.PathLike[str] | None = None,
+    active_step: int = 0,
+    dist_dir: str | os.PathLike[str] | None = None,
+    port: int = 0,
+    allowed_origin: str = "*",
+) -> ViewerHTTPServer:
+    chain_files = [Path(f) for f in files]
+    return ViewerHTTPServer(
+        ("127.0.0.1", port),
+        chain_files=chain_files,
+        chain_steps=build_chain_steps(chain_files),
+        active_step=active_step,
+        cache_dir=cache_dir,
         dist_dir=Path(dist_dir) if dist_dir is not None else None,
         allowed_origin=allowed_origin,
     )

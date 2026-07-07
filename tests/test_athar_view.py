@@ -17,7 +17,14 @@ import pytest
 import athar_git.cli as git_cli_mod
 import athar_view.cli as view_cli_mod
 from athar_view.cli import build_view_parser, prepare_view
-from athar_view.server import MANIFEST_SCHEMA_VERSION, build_report_bytes, find_dist, make_server
+from athar_view.server import (
+    MANIFEST_SCHEMA_VERSION,
+    build_chain_steps,
+    build_report_bytes,
+    find_dist,
+    make_chain_server,
+    make_server,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = REPO_ROOT / "viewer" / "e2e" / "fixtures"
@@ -117,6 +124,67 @@ def test_server_serves_static_dist_and_blocks_traversal(report_bytes, tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_build_chain_steps_links_consecutive_pairs(tmp_path):
+    files = [tmp_path / f"r{i}.ifc" for i in range(1, 4)]
+    steps = build_chain_steps(files)
+    assert [(s.old_idx, s.new_idx) for s in steps] == [(0, 1), (1, 2)]
+    assert steps[0].label == "r1 → r2"
+    assert steps[1].label == "r2 → r3"
+
+
+def test_chain_server_manifest_files_and_lazy_reports(tmp_path):
+    cache = tmp_path / "cache"
+    server = make_chain_server(
+        [OLD_IFC, NEW_IFC, OLD_IFC], cache_dir=cache, port=0
+    )
+    _serve(server)
+    try:
+        origin = server.origin
+        status, _, body = _get(f"{origin}/manifest.json")
+        assert status == 200
+        manifest = json.loads(body)
+        assert manifest["athar_viewer_manifest"] == 1
+        assert manifest["schema_version"] == MANIFEST_SCHEMA_VERSION
+        assert manifest["active_step"] == 0
+        assert len(manifest["steps"]) == 2
+        # Shared file: step 0 new url == step 1 old url (mesh-cache dedup).
+        assert manifest["steps"][0]["new"]["url"] == manifest["steps"][1]["old"]["url"]
+        assert manifest["steps"][0]["report"]["url"] == "/files/report/0.json"
+
+        status, _, body = _get(f"{origin}/files/model/0.ifc")
+        assert status == 200 and body == OLD_IFC.read_bytes()
+
+        status, _, body = _get(f"{origin}/files/report/1.json")
+        assert status == 200 and json.loads(body)["engine"] == "athar"
+
+        for bad in ("/files/model/9.ifc", "/files/report/9.json", "/files/old.ifc"):
+            with pytest.raises(urllib.error.HTTPError) as excinfo:
+                _get(f"{origin}{bad}")
+            assert excinfo.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_prepare_view_chain_mode_builds_chain_server(tmp_path, monkeypatch):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html>viewer</html>", encoding="utf-8")
+    monkeypatch.setenv("ATHAR_VIEWER_DIST", str(dist))
+    monkeypatch.delenv("ATHAR_VIEWER_URL", raising=False)
+
+    args = build_view_parser().parse_args(
+        [str(OLD_IFC), str(NEW_IFC), str(OLD_IFC), "--no-open", "--cache-dir", str(tmp_path / "c")]
+    )
+    session = prepare_view(args)
+    try:
+        assert session.mode == "offline"
+        assert session.server.is_chain
+        assert len(session.server.chain_steps) == 2
+    finally:
+        session.server.server_close()
 
 
 def test_prepare_view_offline_mode(tmp_path, monkeypatch):

@@ -41,6 +41,8 @@ TOOL_LABELS = {
     "speckle_local": "Speckle (local)",
     "ifcgit_port": "IfcGit (port)",
 }
+DATASETS = ("synthetic", "revit")
+DATASET_LABELS = {"synthetic": "Synthetic", "revit": "Revit round-trip"}
 
 
 def create_app(benchmark_path: str | Path | None = None):
@@ -61,17 +63,19 @@ def create_app(benchmark_path: str | Path | None = None):
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         data = _load(path)
-        rows = _filtered_rows(data, kind="all", assessment="all", tool="all")
-        return _page(data, path, _controls(data), _table(rows), _insights(data))
+        return _page(data, path, _dashboard_tabs(data))
 
     @app.get("/fragment/pairs", response_class=HTMLResponse)
     def pairs_fragment(
         kind: str = "all",
         assessment: str = "all",
         tool: str = "all",
+        set: str = "synthetic",
     ) -> str:
         data = _load(path)
-        return _table(_filtered_rows(data, kind=kind, assessment=assessment, tool=tool))
+        dataset = set if set in DATASETS else "synthetic"
+        rows = _filtered_rows(data, kind=kind, assessment=assessment, tool=tool, dataset=dataset)
+        return _table(rows, target_id=f"pair-table-{dataset}")
 
     @app.get("/api/benchmark")
     def benchmark_json() -> JSONResponse:
@@ -186,8 +190,7 @@ def main(argv: list[str] | None = None) -> int:
 def render_static(benchmark_path: str | Path) -> str:
     path = Path(benchmark_path)
     data = _load(path)
-    rows = _filtered_rows(data, kind="all", assessment="all", tool="all")
-    return _page(data, path, "", _table(rows), _insights(data))
+    return _page(data, path, _dashboard_tabs(data))
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -195,8 +198,14 @@ def _load(path: Path) -> dict[str, Any]:
         return json.load(handle)
 
 
-def _filtered_rows(data: dict[str, Any], *, kind: str, assessment: str, tool: str) -> list[dict[str, Any]]:
-    rows = list(data.get("summary", []))
+def _row_dataset(row: dict[str, Any]) -> str:
+    return "revit" if row.get("set") == "revit" else "synthetic"
+
+
+def _filtered_rows(
+    data: dict[str, Any], *, kind: str, assessment: str, tool: str, dataset: str
+) -> list[dict[str, Any]]:
+    rows = [row for row in data.get("summary", []) if _row_dataset(row) == dataset]
     if kind != "all":
         rows = [row for row in rows if row.get("kind") == kind]
     if assessment != "all":
@@ -206,38 +215,78 @@ def _filtered_rows(data: dict[str, Any], *, kind: str, assessment: str, tool: st
     return rows
 
 
-def _controls(data: dict[str, Any]) -> str:
-    kinds = sorted({row.get("kind", "unknown") for row in data.get("summary", [])})
-    tool_options = [tool for tool in TOOLS if any(tool in row for row in data.get("summary", []))]
+def _dashboard_tabs(data: dict[str, Any]) -> str:
+    rows = data.get("summary", [])
+    has_revit = any(_row_dataset(row) == "revit" for row in rows)
+    has_synthetic = not rows or any(_row_dataset(row) == "synthetic" for row in rows)
+    available = [d for d, present in (("synthetic", has_synthetic), ("revit", has_revit)) if present]
+    if not available:
+        available = ["synthetic"]
+    nav = "".join(_tab_nav_item(dataset, active=index == 0) for index, dataset in enumerate(available))
+    panes = "".join(_tab_pane(data, dataset, active=index == 0) for index, dataset in enumerate(available))
     return f"""
-    <form class="row g-3 align-items-end mb-4" hx-get="/fragment/pairs" hx-target="#pair-table" hx-trigger="change, keyup delay:200ms">
+    <ul class="nav nav-tabs mb-3" id="benchmark-tabs" role="tablist">{nav}</ul>
+    <div class="tab-content" id="benchmark-tabs-content">{panes}</div>
+    """
+
+
+def _tab_nav_item(dataset: str, *, active: bool) -> str:
+    return f"""
+    <li class="nav-item" role="presentation">
+      <button class="nav-link{" active" if active else ""}" id="tab-{dataset}-btn" data-bs-toggle="tab"
+              data-bs-target="#tab-{dataset}" type="button" role="tab" aria-controls="tab-{dataset}"
+              aria-selected="{"true" if active else "false"}">{_e(DATASET_LABELS.get(dataset, dataset))}</button>
+    </li>
+    """
+
+
+def _tab_pane(data: dict[str, Any], dataset: str, *, active: bool) -> str:
+    rows = _filtered_rows(data, kind="all", assessment="all", tool="all", dataset=dataset)
+    classes = "tab-pane fade" + (" show active" if active else "")
+    return f"""
+    <div class="{classes}" id="tab-{dataset}" role="tabpanel" aria-labelledby="tab-{dataset}-btn">
+      {_insights(rows)}
+      {_controls(rows, dataset=dataset)}
+      {_table(rows, target_id=f"pair-table-{dataset}")}
+    </div>
+    """
+
+
+def _controls(rows: list[dict[str, Any]], *, dataset: str) -> str:
+    kinds = sorted({row.get("kind", "unknown") for row in rows})
+    tool_options = [tool for tool in TOOLS if any(tool in row for row in rows)]
+    target_id = f"pair-table-{dataset}"
+    return f"""
+    <form class="row g-3 align-items-end mb-4" hx-get="/fragment/pairs" hx-target="#{target_id}" hx-trigger="change, keyup delay:200ms">
+      <input type="hidden" name="set" value="{_e(dataset)}">
       <div class="col-12 col-md-4">
-        <label class="form-label" for="kind">Pair kind</label>
-        {_select("kind", ["all", *kinds])}
+        <label class="form-label" for="kind-{dataset}">Pair kind</label>
+        {_select("kind", ["all", *kinds], dom_id=f"kind-{dataset}")}
       </div>
       <div class="col-12 col-md-4">
-        <label class="form-label" for="assessment">Assessment</label>
-        {_select("assessment", ["all", "expected", "unexpected", "observed", "not_run"])}
+        <label class="form-label" for="assessment-{dataset}">Assessment</label>
+        {_select("assessment", ["all", "expected", "unexpected", "observed", "not_run"], dom_id=f"assessment-{dataset}")}
       </div>
       <div class="col-12 col-md-4">
-        <label class="form-label" for="tool">Tool</label>
-        {_select("tool", ["all", *tool_options])}
+        <label class="form-label" for="tool-{dataset}">Tool</label>
+        {_select("tool", ["all", *tool_options], dom_id=f"tool-{dataset}")}
       </div>
     </form>
     """
 
 
-def _select(name: str, values: list[str]) -> str:
+def _select(name: str, values: list[str], *, dom_id: str | None = None) -> str:
+    dom_id = dom_id or name
     options = "".join(f'<option value="{_e(value)}">{_label(value)}</option>' for value in values)
-    return f'<select id="{_e(name)}" name="{_e(name)}" class="form-select">{options}</select>'
+    return f'<select id="{_e(dom_id)}" name="{_e(name)}" class="form-select">{options}</select>'
 
 
-def _table(rows: list[dict[str, Any]]) -> str:
+def _table(rows: list[dict[str, Any]], *, target_id: str) -> str:
     if not rows:
-        return '<section id="pair-table" class="alert alert-secondary">No benchmark pairs match those filters.</section>'
+        return f'<section id="{_e(target_id)}" class="alert alert-secondary">No benchmark pairs match those filters.</section>'
     body = "".join(_row(row) for row in rows)
     return f"""
-    <section id="pair-table" class="table-responsive" aria-live="polite">
+    <section id="{_e(target_id)}" class="table-responsive" aria-live="polite">
       <table class="table table-sm table-striped table-hover align-top">
         <thead class="table-light">
           <tr>
@@ -278,18 +327,39 @@ def _tool_cell(row: dict[str, Any], tool: str) -> str:
     gb_s = result.get("gb_seconds_median")
     title = _assessment_title(assessment)
     output = f'<div class="small"><a href="/tool-output/{_url(row.get("name", "unknown"))}/{_url(tool)}">output</a></div>'
+    if not counts and result.get("status") == "refused":
+        counts_line = '<div class="font-monospace small mt-1 text-secondary">schema refused</div>'
+    else:
+        counts_line = f'<div class="font-monospace small mt-1">+{counts.get("added", "?")} −{counts.get("deleted", "?")} ~{counts.get("modified", "?")} ={counts.get("unchanged", "—")}</div>'
     return f"""
     <td class="tool-cell">
       <span class="badge {_badge_class(assessment)}" title="{_e(title)}">{_label(assessment)}</span>
-      <div class="font-monospace small mt-1">+{counts.get("added", "?")} −{counts.get("deleted", "?")} ~{counts.get("modified", "?")} ={counts.get("unchanged", "—")}</div>
+      {counts_line}
+      {_changeset_line(result.get("changeset"))}
       <div class="text-secondary small">{_metric(time_s, "s")} · {_metric(rss, "MB")} · {_metric(gb_s, "GB·s")}</div>
       {output}
     </td>
     """
 
 
-def _insights(data: dict[str, Any]) -> str:
-    rows = data.get("summary", [])
+def _changeset_line(score: Any) -> str:
+    if not isinstance(score, dict):
+        return ""
+    detail = f"tp {score.get('tp', '—')} · fp {score.get('fp', '—')} · fn {score.get('fn', '—')} vs GUID ground truth"
+    return (
+        f'<div class="font-monospace small" title="{_e(detail)}">'
+        f"P {_score_fmt(score.get('precision'))} · R {_score_fmt(score.get('recall'))}"
+        f" · F1 {_score_fmt(score.get('f1'))}</div>"
+    )
+
+
+def _score_fmt(value: Any) -> str:
+    if not isinstance(value, (int, float)) or (isinstance(value, float) and math.isnan(value)):
+        return "—"
+    return f"{value:.2f}"
+
+
+def _insights(rows: list[dict[str, Any]]) -> str:
     return _tool_averages(rows)
 
 
@@ -301,6 +371,7 @@ def _tool_averages(rows: list[dict[str, Any]]) -> str:
         "avg_time": [stat["avg_time_value"] for stat in stats if stat["avg_time_value"] is not None],
         "avg_rss": [stat["avg_rss_value"] for stat in stats if stat["avg_rss_value"] is not None],
         "avg_gbs": [stat["avg_gbs_value"] for stat in stats if stat["avg_gbs_value"] is not None],
+        "avg_f1": [stat["avg_f1_value"] for stat in stats if stat["avg_f1_value"] is not None],
     }
     body = "".join(_tool_average_row(stat, ranges) for stat in stats)
     return f"""
@@ -314,6 +385,7 @@ def _tool_averages(rows: list[dict[str, Any]]) -> str:
               <th>Correctness</th>
               <th>Judged pairs</th>
               <th>Unexpected</th>
+              <th title="Mean precision / recall / F1 against GUID-level ground truth, over pairs where this tool was scored">Changeset P · R · F1</th>
               <th>Avg median time</th>
               <th>Avg peak RSS</th>
               <th>Avg GB·s</th>
@@ -352,22 +424,47 @@ def _tool_average_stats(rows: list[dict[str, Any]], tool: str) -> dict[str, Any]
         if isinstance(gb_s, (int, float)) and not (isinstance(gb_s, float) and math.isnan(gb_s)):
             gbs_values.append(float(gb_s))
 
+    precisions: list[float] = []
+    recalls: list[float] = []
+    f1s: list[float] = []
+    scored = 0
+    for row in rows:
+        score = row.get(tool, {}).get("changeset") if isinstance(row.get(tool), dict) else None
+        if not isinstance(score, dict):
+            continue
+        scored += 1
+        for key, values in (("precision", precisions), ("recall", recalls), ("f1", f1s)):
+            value = score.get(key)
+            if isinstance(value, (int, float)) and not (isinstance(value, float) and math.isnan(value)):
+                values.append(float(value))
+
     correctness_value = None if judged == 0 else expected / judged
     avg_time_value = None if not times else sum(times) / len(times)
     avg_rss_value = None if not rss_values else sum(rss_values) / len(rss_values)
     avg_gbs_value = None if not gbs_values else sum(gbs_values) / len(gbs_values)
+    avg_precision = None if not precisions else sum(precisions) / len(precisions)
+    avg_recall = None if not recalls else sum(recalls) / len(recalls)
+    avg_f1_value = None if not f1s else sum(f1s) / len(f1s)
+    changeset = "—"
+    if scored:
+        changeset = (
+            f"{_score_fmt(avg_precision)} · {_score_fmt(avg_recall)} · {_score_fmt(avg_f1_value)}"
+            f" ({scored}p)"
+        )
     return {
+        "avg_f1_value": avg_f1_value,
+        "changeset": changeset,
         "tool": tool,
         "judged": judged,
         "unexpected": unexpected,
         "correctness_value": correctness_value,
         "correctness": "—" if correctness_value is None else f"{correctness_value:.0%}",
         "avg_time_value": avg_time_value,
-        "avg_time": "—" if avg_time_value is None else f"{avg_time_value:.3g} s",
+        "avg_time": "—" if avg_time_value is None else f"{_fmt_num(avg_time_value)} s",
         "avg_gbs_value": avg_gbs_value,
-        "avg_gbs": "—" if avg_gbs_value is None else f"{avg_gbs_value:.3g} GB·s",
+        "avg_gbs": "—" if avg_gbs_value is None else f"{_fmt_num(avg_gbs_value)} GB·s",
         "avg_rss_value": avg_rss_value,
-        "avg_rss": "—" if avg_rss_value is None else f"{avg_rss_value:.3g} MB",
+        "avg_rss": "—" if avg_rss_value is None else _metric(avg_rss_value, "MB"),
     }
 
 
@@ -378,6 +475,7 @@ def _tool_average_row(stat: dict[str, Any], ranges: dict[str, list[float | int]]
       <td class="{_range_class(stat["correctness_value"], ranges["correctness"], higher_is_better=True)}">{_e(stat["correctness"])}</td>
       <td>{stat["judged"]}</td>
       <td class="{_range_class(stat["unexpected"], ranges["unexpected"], higher_is_better=False)}">{stat["unexpected"]}</td>
+      <td class="font-monospace {_range_class(stat["avg_f1_value"], ranges["avg_f1"], higher_is_better=True)}">{_e(stat["changeset"])}</td>
       <td class="font-monospace {_range_class(stat["avg_time_value"], ranges["avg_time"], higher_is_better=False)}">{_e(stat["avg_time"])}</td>
       <td class="font-monospace {_range_class(stat["avg_rss_value"], ranges["avg_rss"], higher_is_better=False)}">{_e(stat["avg_rss"])}</td>
       <td class="font-monospace {_range_class(stat["avg_gbs_value"], ranges["avg_gbs"], higher_is_better=False)}">{_e(stat["avg_gbs"])}</td>
@@ -397,7 +495,7 @@ def _range_class(value: float | int | None, values: list[float | int], *, higher
     return "table-warning"
 
 
-def _page(data: dict[str, Any], path: Path, controls: str, table: str, insights: str) -> str:
+def _page(data: dict[str, Any], path: Path, tabs: str) -> str:
     generated = data.get("generated_at", "unknown")
     settings = data.get("settings", {})
     tools = data.get("tools", {})
@@ -421,17 +519,30 @@ def _page(data: dict[str, Any], path: Path, controls: str, table: str, insights:
         <dt class="col-sm-2 col-lg-1">Repeats</dt><dd class="col-sm-10 col-lg-11 font-monospace">{_e(settings.get("repeats", "—"))}</dd>
       </dl>
     </header>
-    {insights}
     <section class="mb-4">{_tool_strip(tools)}</section>
-    {controls}
-    {table}
+    {tabs}
   </main>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>{_tab_activation_js()}</script>
 </body>
 </html>"""
 
 
+def _tab_activation_js() -> str:
+    return """
+    (function () {
+      var hash = window.location.hash.replace('#', '') || 'tab-synthetic';
+      var trigger = document.getElementById(hash + '-btn');
+      if (trigger && window.bootstrap) {
+        new bootstrap.Tab(trigger).show();
+      }
+    })();
+    """
+
+
 def _pair_page(data: dict[str, Any], path: Path, pair: dict[str, Any], *, viewer_available: bool) -> str:
     name = pair.get("name", "unknown")
+    dataset = _row_dataset(pair)
     old_path = _pair_input_path(pair, "old")
     new_path = _pair_input_path(pair, "new")
     viewer = (
@@ -451,9 +562,9 @@ def _pair_page(data: dict[str, Any], path: Path, pair: dict[str, Any], *, viewer
 </head>
 <body>
   <main class="container-fluid py-4">
-    <p><a href="/">← Benchmark results</a></p>
+    <p><a href="/#tab-{dataset}">← Benchmark results</a></p>
     <header class="mb-4">
-      <h1 class="h3">{_e(name)}</h1>
+      <h1 class="h3">{_e(name)} <span class="badge text-bg-info align-middle">{_e(DATASET_LABELS.get(dataset, dataset))}</span></h1>
       <p class="text-secondary mb-2">{_e(pair.get("expectation", ""))}</p>
       <div class="mb-3">{viewer}</div>
       <dl class="row small mb-0">
@@ -507,7 +618,17 @@ def _tool_strip(tools: dict[str, Any]) -> str:
 def _metric(value: Any, suffix: str) -> str:
     if not isinstance(value, (int, float)) or (isinstance(value, float) and math.isnan(value)):
         return f"— {suffix}"
-    return f"{value:g} {suffix}"
+    if suffix == "MB" and value >= 1024:
+        return f"{_fmt_num(value / 1024)} GB"
+    return f"{_fmt_num(value)} {suffix}"
+
+
+def _fmt_num(value: float) -> str:
+    if value >= 100:
+        return f"{value:,.0f}"
+    if value >= 10:
+        return f"{value:.1f}"
+    return f"{value:.2f}"
 
 
 def _label(value: Any) -> str:
@@ -524,6 +645,7 @@ def _badge_class(assessment: str) -> str:
         "unexpected": "text-bg-danger",
         "observed": "text-bg-secondary",
         "not_run": "text-bg-secondary",
+        "refused": "text-bg-warning",
     }.get(assessment, "text-bg-secondary")
 
 

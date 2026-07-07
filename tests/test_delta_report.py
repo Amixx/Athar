@@ -281,6 +281,65 @@ def test_build_delta_report_change_scope_classifies_transitive_and_mixed():
     }
 
 
+def _placement(tx: int = 0, ty: int = 0, tz: int = 0, rot: int = 1_000_000) -> tuple[int, ...]:
+    return (rot, 0, 0, tx, 0, 1_000_000, 0, ty, 0, 0, 1_000_000, tz)
+
+
+def test_build_delta_report_groups_shared_translation_deltas_into_placement_cohorts():
+    old_signatures = {
+        1: _signature(1, guid="A", placement=_placement()),
+        2: _signature(2, guid="B", placement=_placement()),
+        3: _signature(3, guid="C", placement=_placement()),
+        4: _signature(4, guid="D", placement=_placement()),
+        5: _signature(5, guid="E", placement=_placement()),
+        6: _signature(6, guid="LONER", placement=_placement()),
+        7: _signature(7, guid="SPINNER", placement=_placement()),
+        8: _signature(8, guid="SUBGRID", placement=_placement()),
+    }
+    new_signatures = {
+        10: _signature(10, guid="A", placement=_placement(tx=100_000)),
+        20: _signature(20, guid="B", placement=_placement(tx=100_001)),
+        30: _signature(30, guid="C", placement=_placement(tx=99_999)),
+        40: _signature(40, guid="D", placement=_placement(tz=50_000)),
+        50: _signature(50, guid="E", placement=_placement(tz=50_000)),
+        60: _signature(60, guid="LONER", placement=_placement(ty=7_000)),
+        70: _signature(70, guid="SPINNER", placement=_placement(rot=999_999)),
+        80: _signature(80, guid="SUBGRID", placement=_placement(tx=20)),
+    }
+    report = build_delta_report(
+        _bundle(schema="IFC4", signatures=old_signatures),
+        _bundle(schema="IFC4", signatures=new_signatures),
+        matches=[
+            MatchedPair(old_step=old, new_step=old * 10, score=1.0, reason="guid")
+            for old in old_signatures
+        ],
+        unmatched_old=[],
+        unmatched_new=[],
+    )
+
+    cohorts = report["stats"]["placement_cohorts"]
+    assert cohorts == [
+        {"delta_mm": [100.0, 0.0, 0.0], "count": 3, "members": [10, 20, 30]},
+        {"delta_mm": [0.0, 0.0, 50.0], "count": 2, "members": [40, 50]},
+    ]
+    member_ids = {step for cohort in cohorts for step in cohort["members"]}
+    assert {60, 70, 80}.isdisjoint(member_ids)
+
+
+def test_build_delta_report_emits_empty_placement_cohorts_without_group_moves():
+    report = build_delta_report(
+        _bundle(schema="IFC4", signatures={1: _signature(1, guid="A", placement=_placement())}),
+        _bundle(
+            schema="IFC4",
+            signatures={10: _signature(10, guid="A", placement=_placement(tx=5_000))},
+        ),
+        matches=[MatchedPair(old_step=1, new_step=10, score=1.0, reason="guid")],
+        unmatched_old=[],
+        unmatched_new=[],
+    )
+    assert report["stats"]["placement_cohorts"] == []
+
+
 def test_build_delta_report_includes_human_readable_data_deltas():
     old_bundle = _bundle(
         schema="IFC4",

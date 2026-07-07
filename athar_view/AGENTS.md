@@ -6,8 +6,11 @@ bundle cache; nothing in `athar/` may depend on it.
 Onshape-style visual overlay diff: both models tessellated in the browser and
 rendered in one 3D scene, colored by the engine's report (green added, red
 deleted, blue modified, gray ghosted unchanged), with an old↔new crossfade
-slider, amber displacement lines for placement moves, a summary panel, and a
-click inspector (class, GUID, aspects, placement delta, match reason/score).
+slider, amber displacement arrows for placement moves (each engine
+`placement_cohort` — a group move — collapses to one averaged arrow, and the
+summary panel lists cohorts as "N moved together · Δ x m"), a summary panel,
+and a click inspector (class, GUID, aspects, placement delta, match
+reason/score).
 Report `step_id`s are the express ids the browser parser emits, so no id
 mapping layer exists anywhere.
 
@@ -36,7 +39,14 @@ so parser and renderer can be swapped independently.
   drags are O(buckets) material updates regardless of entity count; per-entity
   index ranges drive raycast picking and a zero-copy highlight overlay.
 - `src/lib/sources.ts` — both input paths: drag-drop (old.ifc + new.ifc +
-  report.json) and `?src=<origin>` manifest handoff.
+  report.json) and `?src=<origin>` manifest handoff. `parseManifest` is a pure,
+  unit-tested function that normalizes v1 single-pair and v2 chain manifests
+  into one `steps[]` shape (a v1 manifest is one step); each `StepSource`
+  carries display names, per-file cache keys, and lazy byte/report resolvers so
+  App.svelte fetches and tessellates a step only when it becomes active.
+  App.svelte keeps a per-url mesh cache and one shared RTC offset (captured from
+  the first file tessellated) across the whole chain, so switching to an
+  adjacent step re-tessellates only the one new revision.
 - `src/lib/debug.ts` — `window.__athar_viewer` state mirror (phase, bucket
   counts, meshless counts, appearances, selection) so headless tests assert
   state, not pixels; the app stays usable without WebGL (panels work, canvas
@@ -57,8 +67,21 @@ cache; nothing depends on it.
   supports hosted handoff: origin-restricted `Access-Control-Allow-Origin`,
   Chrome Private Network Access preflight, `Cross-Origin-Resource-Policy:
   cross-origin`, path-traversal guard.
-- `cli.py` — `athar view old.ifc new.ifc [--offline] [--no-open] [--port N]
-  [--viewer-url URL] [--cache-dir DIR]`. Hosted mode opens
+- Manifest schema v2 (chain) — `MANIFEST_SCHEMA_VERSION = 2`. A chain manifest
+  drops the top-level `old/new/report` and carries `steps: [{label, old, new,
+  report}, ...]` plus `active_step`. Each shared revision is served once under a
+  stable per-file url (`/files/model/{i}.ifc`); adjacent steps reuse it, so a
+  file that is the new-side of one step and the old-side of the next has one url
+  (the viewer keys its mesh cache on that url). Step reports are built lazily on
+  first `GET /files/report/{step}.json` and cached, so an N-file chain never
+  pays for diffs the user does not open. A v1 single-pair manifest is
+  equivalent to a one-step chain; the viewer treats "no `steps` field" as the
+  legacy single-pair form, and both remain served and drag-drop loadable.
+- `cli.py` — `athar view a.ifc b.ifc [c.ifc …] [--offline] [--no-open]
+  [--port N] [--viewer-url URL] [--cache-dir DIR]`. Two files is a single diff
+  (v1 manifest, byte-identical to before); three or more builds a chain of
+  consecutive pair steps (`r2→r3, r3→r4, …`) served as a v2 manifest. Hosted
+  mode opens
   `<viewer-url>?src=<local origin>` Perfetto-style (URL from `--viewer-url` or
   `ATHAR_VIEWER_URL`; nothing is uploaded — the hosted page fetches from
   localhost) and falls back to offline if the hosted origin is unreachable.
@@ -73,12 +96,17 @@ cache; nothing depends on it.
 ## Testing
 
 Viewer tests live in `viewer/`. `bun test tests` unit-tests the pure
-report→render-state mapping (parsing, bucket assignment, crossfade
-appearances). `bunx playwright test` runs a headless smoke against the
-committed fixture pair in `viewer/e2e/fixtures/` (regenerate with
-`scripts/make_viewer_fixture.py`), asserting bucket/meshless counts through the
-`window.__athar_viewer` debug state rather than pixels — it covers the `?src=`
-handoff path, the file-input path, slider snaps/toggles, and click selection.
+report→render-state mapping (parsing, bucket assignment, crossfade appearances)
+and manifest parsing (`sources.test.ts`: v1 accepted, v2 chain parsed,
+`active_step` honored, malformed chain rejected). `bunx playwright test` runs a
+headless smoke against the committed fixture pair in `viewer/e2e/fixtures/`
+(regenerate with `scripts/make_viewer_fixture.py`), asserting bucket/meshless
+counts through the `window.__athar_viewer` debug state rather than pixels — it
+covers the `?src=` handoff path, the file-input path, slider snaps/toggles, and
+click selection. `chain.spec.ts` synthesizes a 2-step v2 manifest over the same
+fixtures and asserts prev/next + `[`/`]` navigation swaps the step
+(`activeStep`/`stepLabel` in the debug state) with bucket counts stable across
+the switch.
 `viewer/e2e/corpus.spec.ts` is opt-in acceptance against a live launcher:
 `athar view OLD NEW --offline --no-open --port 4799`, then
 `ATHAR_E2E_SRC=http://127.0.0.1:4799 bunx playwright test corpus` (verified on

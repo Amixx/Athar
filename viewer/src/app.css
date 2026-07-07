@@ -478,6 +478,35 @@ button.active {
   z-index: 4;
 }
 
+.stepnav {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  z-index: 5;
+}
+
+.stepnav button {
+  padding: 2px 10px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.stepnav button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.stepnav .stepind {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
 /* ---------- empty / loading / error states ---------- */
 
 .center-stage {

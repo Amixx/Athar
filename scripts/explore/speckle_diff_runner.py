@@ -74,8 +74,11 @@ def _convert_and_hash(path: str) -> dict[str, list[str]]:
     return elements
 
 
-def _classify(old: dict[str, list[str]], new: dict[str, list[str]]) -> dict[str, int]:
+def _classify(
+    old: dict[str, list[str]], new: dict[str, list[str]]
+) -> tuple[dict[str, int], dict[str, list[str]]]:
     counts = {"added": 0, "deleted": 0, "modified": 0, "unchanged": 0}
+    reported_guids: dict[str, list[str]] = {"added": [], "deleted": [], "modified": []}
     for application_id in old.keys() | new.keys():
         old_ids = Counter(old.get(application_id, []))
         new_ids = Counter(new.get(application_id, []))
@@ -87,7 +90,13 @@ def _classify(old: dict[str, list[str]], new: dict[str, list[str]]) -> dict[str,
         counts["modified"] += paired
         counts["deleted"] += remaining_old - paired
         counts["added"] += remaining_new - paired
-    return counts
+        if paired:
+            reported_guids["modified"].extend([application_id] * paired)
+        if remaining_new - paired:
+            reported_guids["added"].extend([application_id] * (remaining_new - paired))
+        if remaining_old - paired:
+            reported_guids["deleted"].extend([application_id] * (remaining_old - paired))
+    return counts, reported_guids
 
 
 def main() -> int:
@@ -106,10 +115,12 @@ def main() -> int:
         print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}))
         return 1
 
+    counts, reported_guids = _classify(old_elements, new_elements)
     result = {
         "tool": "speckle_local",
         "specklepy_version": importlib.metadata.version("specklepy"),
-        "counts": _classify(old_elements, new_elements),
+        "counts": counts,
+        "reported_guids": reported_guids,
         "elements": {
             "old": sum(len(ids) for ids in old_elements.values()),
             "new": sum(len(ids) for ids in new_elements.values()),

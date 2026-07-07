@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { publishDebug } from './lib/debug'
-  import { tessellate } from './lib/ifc'
+  import { tessellate, type ModelGeometry } from './lib/ifc'
   import {
     buildDiffIndex,
     classBreakdown,
@@ -15,18 +15,18 @@
     countBucketEntities,
     countMeshless,
     DEFAULT_TOGGLES,
+    groupDisplacements,
     isPlacementOnly,
-    placementDeltaNorm,
     SNAP,
     type Toggles,
   } from './lib/renderState'
   import { DiffScene, type PickHit } from './lib/scene'
   import {
+    chainFromFiles,
     classifyDrop,
-    loadFromFiles,
-    loadFromSrc,
+    loadChainFromSrc,
     type DroppedFiles,
-    type LoadedInputs,
+    type StepSource,
   } from './lib/sources'
   import type { Side } from './lib/types'
 
@@ -51,6 +51,15 @@
   let canvasEl: HTMLCanvasElement
   let pointerDown: { x: number; y: number; time: number } | null = null
 
+  let steps = $state<StepSource[]>([])
+  let activeStep = $state(0)
+  // One RTC offset from the first file tessellated is reused for every step, so
+  // cached meshes stay in a single coordinate frame across step switches.
+  let sharedOffset: ModelGeometry['rtcOffset'] = null
+  const meshCache = new Map<string, ModelGeometry>()
+  const reportCache = new Map<string, unknown>()
+  let loadSeq = 0
+
   let oldInput: HTMLInputElement
   let newInput: HTMLInputElement
   let reportInput: HTMLInputElement
@@ -60,6 +69,7 @@
   const appearances = $derived(computeAppearances(sliderT, toggles))
   const classes = $derived(index ? classBreakdown(index.report) : [])
   const modifiedScope = $derived(index?.report.stats.modified_change_scope ?? null)
+  const cohorts = $derived(index?.report.stats.placement_cohorts ?? [])
   const directModified = $derived((modifiedScope?.intrinsic ?? 0) + (modifiedScope?.mixed ?? 0))
   const transitiveModified = $derived(modifiedScope?.transitive ?? 0)
   const selectedRecord = $derived.by<EntityRecord | null>(() => {
@@ -69,6 +79,8 @@
   })
   const selectedPair = $derived(selectedRecord?.pair ?? null)
   const complete = $derived(Boolean(drops.oldFile && drops.newFile && drops.reportFile))
+  const hasChain = $derived(steps.length > 1)
+  const currentLabel = $derived(steps[activeStep]?.label ?? '')
 
   $effect(() => {
     if (phase === 'ready') {
@@ -79,7 +91,9 @@
 
   $effect(() => {
     if (phase === 'empty' && complete) {
-      void loadFromFiles(drops as Required<DroppedFiles>).then(start, fail)
+      const chain = chainFromFiles(drops as Required<DroppedFiles>)
+      steps = chain.steps
+      void loadStep(chain.activeStep)
     }
   })
 
@@ -90,7 +104,11 @@
       phase = 'loading'
       progress = { stage: `Fetching from ${src}`, count: 0 }
       publishDebug({ phase: 'loading' })
-      loadFromSrc(src).then(start, fail)
+      loadChainFromSrc(src).then((chain) => {
+        steps = chain.steps
+        warning = chain.warning ?? ''
+        return loadStep(chain.activeStep)
+      }, fail)
     }
     return () => scene?.dispose()
   })
@@ -101,33 +119,75 @@
     publishDebug({ phase: 'error', error })
   }
 
-  async function start(inputs: LoadedInputs): Promise<void> {
+  async function getGeometry(
+    key: string,
+    fetchBytes: () => Promise<ArrayBuffer>,
+    name: string,
+  ): Promise<ModelGeometry> {
+    const cached = meshCache.get(key)
+    if (cached) return cached
+    progress = { stage: `Tessellating ${name}`, count: 0 }
+    const bytes = await fetchBytes()
+    const geometry = await tessellate(bytes, {
+      sharedRtcOffset: sharedOffset ?? undefined,
+      onProgress: (count) => (progress = { stage: `Tessellating ${name}`, count }),
+    })
+    if (!sharedOffset && geometry.rtcOffset) sharedOffset = geometry.rtcOffset
+    meshCache.set(key, geometry)
+    return geometry
+  }
+
+  async function getReport(step: StepSource): Promise<unknown> {
+    const key = `${step.oldKey}=>${step.newKey}`
+    const cached = reportCache.get(key)
+    if (cached !== undefined) return cached
+    const json = await step.fetchReport()
+    reportCache.set(key, json)
+    return json
+  }
+
+  function stepTo(target: number): void {
+    if (phase === 'loading') return
+    const clamped = Math.max(0, Math.min(steps.length - 1, target))
+    if (clamped === activeStep && phase === 'ready') return
+    void loadStep(clamped)
+  }
+
+  async function loadStep(target: number): Promise<void> {
+    const token = ++loadSeq
+    const step = steps[target]
+    if (!step) return
     try {
       phase = 'loading'
-      warning = inputs.warning ?? ''
-      names = { old: inputs.oldName, new: inputs.newName }
-      publishDebug({ phase: 'loading', warning })
-
-      const report = parseReport(inputs.reportJson)
-      index = buildDiffIndex(report)
-
-      progress = { stage: `Tessellating ${inputs.oldName}`, count: 0 }
-      const oldGeometry = await tessellate(inputs.oldBytes, {
-        onProgress: (count) => (progress = { stage: `Tessellating ${inputs.oldName}`, count }),
-      })
-      progress = { stage: `Tessellating ${inputs.newName}`, count: 0 }
-      const newGeometry = await tessellate(inputs.newBytes, {
-        sharedRtcOffset: oldGeometry.rtcOffset,
-        onProgress: (count) => (progress = { stage: `Tessellating ${inputs.newName}`, count }),
+      activeStep = target
+      names = { old: step.oldName, new: step.newName }
+      publishDebug({
+        phase: 'loading',
+        warning,
+        stepCount: steps.length,
+        activeStep: target,
+        stepLabel: step.label,
       })
 
-      const diff = index
+      progress = { stage: 'Computing diff', count: 0 }
+      const reportJson = await getReport(step)
+      if (token !== loadSeq) return
+      const report = parseReport(reportJson)
+      const nextIndex = buildDiffIndex(report)
+
+      const oldGeometry = await getGeometry(step.oldKey, step.fetchOldBytes, step.oldName)
+      if (token !== loadSeq) return
+      const newGeometry = await getGeometry(step.newKey, step.fetchNewBytes, step.newName)
+      if (token !== loadSeq) return
+
+      index = nextIndex
+      const diff = nextIndex
       const bucketOfFn = (side: Side, stepId: number) =>
         bucketFor(side, side === 'old' ? diff.old.get(stepId) : diff.new.get(stepId))
-      const displacementPairs = diff.placementPairs.filter(isPlacementOnly).map((item) => ({
-        oldId: item.old.step_id,
-        newId: item.new.step_id,
-      }))
+      const displacementGroups = groupDisplacements(
+        report.modified,
+        report.stats.placement_cohorts ?? [],
+      )
 
       // Pure counts first, so headless environments without WebGL still get
       // deterministic state for the smoke test.
@@ -152,9 +212,9 @@
           warning = `3D view unavailable (${cause instanceof Error ? cause.message : cause}). Counts and panels still work.`
         }
       }
-      let displacementLines = displacementPairs.length
+      let displacementLines = displacementGroups.length
       if (scene) {
-        const stats = scene.setModels(oldGeometry, newGeometry, bucketOfFn, displacementPairs)
+        const stats = scene.setModels(oldGeometry, newGeometry, bucketOfFn, displacementGroups)
         displacementLines = stats.displacementLines
         scene.applyAppearances(computeAppearances(sliderT, toggles), showLines)
       }
@@ -170,9 +230,12 @@
         reportStats: report.stats as Record<string, unknown>,
         displacementLines,
         selection: null,
+        stepCount: steps.length,
+        activeStep: target,
+        stepLabel: step.label,
       })
     } catch (cause) {
-      fail(cause)
+      if (token === loadSeq) fail(cause)
     }
   }
 
@@ -226,6 +289,8 @@
 
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape') select(null)
+    else if (hasChain && event.key === '[') stepTo(activeStep - 1)
+    else if (hasChain && event.key === ']') stepTo(activeStep + 1)
   }
 </script>
 
@@ -252,6 +317,26 @@
 
   {#if warning && phase !== 'error'}
     <div class="panel banner">{warning}</div>
+  {/if}
+
+  {#if hasChain && (phase === 'ready' || phase === 'loading')}
+    <div class="panel stepnav">
+      <button
+        onclick={() => stepTo(activeStep - 1)}
+        disabled={activeStep === 0 || phase === 'loading'}
+        aria-label="Previous step"
+        title="Previous step ( [ )">‹</button
+      >
+      <span class="stepind" data-testid="step-indicator">
+        {activeStep + 1}/{steps.length}: {currentLabel}
+      </span>
+      <button
+        onclick={() => stepTo(activeStep + 1)}
+        disabled={activeStep === steps.length - 1 || phase === 'loading'}
+        aria-label="Next step"
+        title="Next step ( ] )">›</button
+      >
+    </div>
   {/if}
 
   {#if phase === 'ready' && index}
@@ -307,6 +392,17 @@
           scope: {modifiedScope.intrinsic ?? 0} intrinsic · {modifiedScope.transitive ?? 0} transitive · {modifiedScope.mixed ?? 0} mixed
         </div>
       {/if}
+      {#if cohorts.length}
+        <span class="microlabel">group moves</span>
+        <div class="classrows">
+          {#each cohorts as cohort (cohort.delta_mm.join(','))}
+            <div class="classrow cohort" title={fmtDelta(cohort.delta_mm)}>
+              <span class="cls">{cohort.count} moved together</span>
+              <span class="nums mono">Δ {(Math.hypot(...cohort.delta_mm) / 1000).toFixed(2)} m</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
       {#if classes.length}
         <span class="microlabel">by class</span>
         <div class="classrows">
@@ -325,8 +421,12 @@
       {#if meshless > 0}
         <div class="footnote">{meshless} report entit{meshless === 1 ? 'y has' : 'ies have'} no 3D geometry (spatial containers etc.) — counted above, not drawn.</div>
       {/if}
-      {#if index.placementPairs.filter(isPlacementOnly).length > 0}
-        <div class="footnote">Amber arrows trace placement-only moves (old → new centroid).</div>
+      {#if cohorts.length > 0 || index.placementPairs.filter(isPlacementOnly).length > 0}
+        <div class="footnote">
+          Amber arrows trace placement moves (old → new centroid){cohorts.length
+            ? '; each group move collapses to one arrow'
+            : ''}.
+        </div>
       {/if}
     </aside>
 

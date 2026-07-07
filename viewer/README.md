@@ -23,9 +23,9 @@ is the only JavaScript in the repository; everything else stays Python.
 | --- | --- |
 | `src/lib/types.ts` | TS mirror of the engine report shape (`athar/delta/report.py`) |
 | `src/lib/report.ts` | Report validation + `DiffIndex` (side × STEP id → entity record) |
-| `src/lib/renderState.ts` | Pure core: bucket assignment, crossfade appearances, count helpers |
+| `src/lib/renderState.ts` | Pure core: bucket assignment, crossfade appearances, count helpers, displacement grouping |
 | `src/lib/ifc.ts` | ifc-lite tessellation (the only ifc-lite import) |
-| `src/lib/scene.ts` | three.js scene: merged per-bucket meshes, picking, highlight, displacement lines, camera fits |
+| `src/lib/scene.ts` | three.js scene: merged per-bucket meshes, picking, highlight, displacement arrows (one averaged arrow per placement cohort), camera fits |
 | `src/lib/sources.ts` | Input paths: `?src=` manifest handoff and drag-drop classification |
 | `src/lib/debug.ts` | `window.__athar_viewer` state mirror for headless tests |
 | `src/App.svelte` | UI shell: loading flow, slider, summary, inspector, toggles |
@@ -45,6 +45,16 @@ highlight overlay.
 2. **`?src=<origin>`**: fetches `<origin>/manifest.json`
    (`athar_viewer_manifest: 1`, `schema_version` handshake) and the files it
    points at. This is what `athar view` (in `athar_view/`) serves.
+
+   The manifest has two forms. **v1** is a single pair (`old`, `new`, `report`
+   at the top level). **v2** is a revision chain: `steps: [{label, old, new,
+   report}, ...]` plus `active_step`, where each step is one consecutive pair
+   (`athar view a.ifc b.ifc c.ifc …`). A v1 manifest is treated as a one-step
+   chain, so single-pair loads are unchanged. When a chain has more than one
+   step the app shows a prev/next navigator (`[` / `]`) and a `n/N: label`
+   indicator; adjacent steps share a file url, so a per-url mesh cache and one
+   chain-wide RTC offset mean switching a step re-tessellates only the new
+   revision.
 
 ## Commands
 

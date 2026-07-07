@@ -33,6 +33,17 @@ export interface MatchedItem {
   change_scope: ChangeScope
 }
 
+/**
+ * 2+ placement-changed pairs sharing one exact translation delta: a coherent
+ * group move (derived pattern — the file need not contain a moved container).
+ */
+export interface PlacementCohort {
+  delta_mm: [number, number, number]
+  count: number
+  /** New-side step ids of the cohort members. */
+  members: number[]
+}
+
 export interface ReportStats {
   added: number
   deleted: number
@@ -41,6 +52,7 @@ export interface ReportStats {
   old_signatures: number
   new_signatures: number
   modified_change_scope?: Record<string, number>
+  placement_cohorts?: PlacementCohort[]
   [key: string]: unknown
 }
 
