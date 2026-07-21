@@ -23,9 +23,9 @@ benchmark-ui = [
   "fastapi",
   "uvicorn",
 ]
-# Build-time tooling for the optional Rust accelerator (athar/_native).
-# Runtime requires nothing extra: athar.bottom imports `athar_native` when it
-# is present and falls back to pure Python otherwise.
+# Build-time tooling for the Rust signature pipeline (athar/_native).
+# athar.bottom imports `athar_native` and has no pure-Python fallback, so a
+# usable install needs this built (`make native-build`) or a wheel shipping it.
 native = [
   "maturin>=1.5,<2.0",
 ]

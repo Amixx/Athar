@@ -18,9 +18,16 @@ the code they govern:
 
 ## Global Contracts
 
-- Python 3.10+, pure Python. The only core runtime dependency is
-  `ifcopenshell`.
-- Use `ifcopenshell` for IFC parsing. Do not parse STEP files as text.
+- Python 3.10+. The only Python runtime dependency is `ifcopenshell`.
+- The signature pipeline (`athar/bottom/`) is Rust (`athar/_native`, exposed as
+  `athar_native`) and is required — there is no pure-Python fallback. Build it
+  with `make native-build`.
+- `ifcopenshell` owns schema-level knowledge: schema name, unit factors,
+  per-class EXPRESS descriptors, and raw property values. It opens each file
+  once and is released before the native pipeline runs. Do not reimplement
+  EXPRESS semantics in Rust.
+- The native tokenizer is the only place STEP is read as text, and it parses
+  records structurally. Never diff or compare IFC as text anywhere else.
 - Keep the diff pipeline deterministic and algorithmic. Do not add AI or
   probabilistic matching to engine behavior.
 - Core engine modules under `athar/` must not depend on Git, rendering, CI

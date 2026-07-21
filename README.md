@@ -51,7 +51,9 @@ IFC2X3↔IFC4 translation).
 pip install -e .
 ```
 
-Pure Python. Requires Python 3.10+ and [ifcopenshell](https://ifcopenshell.org/).
+Requires Python 3.10+ and [ifcopenshell](https://ifcopenshell.org/). The
+signature pipeline is a required Rust extension (`athar/_native`); build it with
+`make native-build` (needs cargo + maturin) when installing from source.
 
 Local development:
 

@@ -21,7 +21,7 @@ help:
 	"  make benchmark-ui-refresh   Regenerate benchmark JSON, then serve dashboard locally" \
 	"  make test                   Run the default test suite (fast; small real IFC fixtures)" \
 	"  make test-large-acceptance  Run opt-in large IFC acceptance checks" \
-	"  make native-build           Build the optional Rust accelerator into the venv (requires cargo + maturin)" \
+	"  make native-build           Build the required Rust signature pipeline into the venv (requires cargo + maturin)" \
 	"  make native-clean           Remove the Rust build artifacts (athar/_native/target)" \
 	"  make viewer-build           Build the viewer SPA into viewer/dist (requires bun)" \
 	"  make viewer-package-static  Build and copy viewer assets into athar_view/static for packaging" \
