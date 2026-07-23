@@ -13,6 +13,22 @@ Scripts are for inspection and repeatable investigation.
   - `inspect_guid_overlap.py` shows entity GUID overlap between files.
   - `make_viewer_fixture.py` regenerates the deterministic viewer e2e fixture
     pair + report under `viewer/e2e/fixtures/`.
+  - `build_git_demo_repo.py` builds a standalone demo Git repository (default
+    `~/athar-git-demo`) whose history is real revisions committed as
+    successive versions of one `model.ifc`, with the Athar diff
+    driver/difftool configured repo-locally (PYTHONPATH-pinned to this
+    checkout, so no install needed), and prints Git's packed-vs-logical size
+    ratio. Default set: the four Building-Landscaping revisions; `--revit`
+    commits the nine-revision Revit round-trip IFC4 chain (r2..r10, with the
+    MANIFEST edit descriptions as commit messages, `.zst` sources
+    decompressed on demand). `tests/test_git_end_to_end.py` is the CI-shaped
+    version of the same flow (Building-Landscaping by default; the Revit
+    chain behind `ATHAR_RUN_LARGE_ACCEPTANCE=1`).
+  - `explore/measure_delta_pack.py` ingests a revision chain into a throwaway
+    `athar_store.ArtifactPack` (default: the Revit r2..r10 chain), prints
+    per-version encoding/stored size, verifies the head reconstructs
+    byte-exactly, and reports the stored-vs-logical ratio (measured 2026-07:
+    435 MB -> 14.5 MB, 3.3%, vs 5% for `git gc` packing of the same chain).
   - `explore/corpus_survey.py` regenerates the corpus survey JSON behind
     `docs/corpus/`.
   - `explore/benchmark_competitors.py` benchmarks Athar against other IFC

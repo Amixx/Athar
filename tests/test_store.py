@@ -11,6 +11,7 @@ clock) byte-stable.
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import re
 
@@ -91,7 +92,9 @@ def test_set_baseline_retains_artifact_and_pointer(store, models):
     # The accepted IFC is retained content-addressed so future candidates can be
     # re-diffed without the customer keeping old exports — the lock-in.
     sha = pointer["artifact"]["sha256"]
-    assert (store.root / "projects" / "acme" / "artifacts" / f"{sha}.ifc").is_file()
+    assert store.has_artifact("acme", sha)
+    exported = store.export_artifact("acme", sha, store.root / "exported.ifc")
+    assert hashlib.sha256(exported.read_bytes()).hexdigest() == sha
 
 
 def test_set_baseline_rejects_unparseable_ifc(store, models, tmp_path):
@@ -187,11 +190,9 @@ def test_content_addressed_ingest_is_idempotent(store, models):
     store.set_baseline("acme", "architecture", models["baseline"], actor="alice")
     # Re-ingesting identical bytes (same file content) must not duplicate.
     store.review("acme", "architecture", models["same"], actor="bob")
-    artifacts = list((store.root / "projects" / "acme" / "artifacts").glob("*.ifc"))
-    # baseline + the (distinct-content) same-guid candidate share one guid but
-    # differ only if bytes differ; identical names here means identical bytes.
-    shas = {p.stem for p in artifacts}
-    assert len(shas) == len(artifacts)  # no duplicate sha files
+    count = store.artifact_stats("acme")["artifacts"]
+    store.review("acme", "architecture", models["same"], actor="bob")
+    assert store.artifact_stats("acme")["artifacts"] == count
 
 
 def test_review_requires_existing_baseline(store, models):

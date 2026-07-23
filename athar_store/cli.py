@@ -77,6 +77,18 @@ def build_store_parser() -> argparse.ArgumentParser:
     p_projects = sub.add_parser("projects", help="List registered projects")
     p_projects.set_defaults(func=_cmd_projects)
 
+    p_export = sub.add_parser("export", help="Write an artifact's exact IFC bytes to a file")
+    p_export.add_argument("project_id")
+    which = p_export.add_mutually_exclusive_group(required=True)
+    which.add_argument("--sha", help="Artifact sha256")
+    which.add_argument("--model-key", help="Export the current baseline of this model lineage")
+    p_export.add_argument("--out", required=True, help="Destination file path")
+    p_export.set_defaults(func=_cmd_export)
+
+    p_stats = sub.add_parser("stats", help="Artifact storage stats (logical vs stored bytes)")
+    p_stats.add_argument("project_id")
+    p_stats.set_defaults(func=_cmd_stats)
+
     return parser
 
 
@@ -138,6 +150,22 @@ def _cmd_history(store: BaselineStore, args: argparse.Namespace) -> int:
 
 def _cmd_projects(store: BaselineStore, args: argparse.Namespace) -> int:
     return _emit(store.list_projects())
+
+
+def _cmd_export(store: BaselineStore, args: argparse.Namespace) -> int:
+    sha = args.sha
+    if sha is None:
+        baseline = store.current_baseline(args.project_id, args.model_key)
+        if baseline is None:
+            print(f"Error: no baseline for {args.project_id}/{args.model_key}", file=sys.stderr)
+            return 1
+        sha = baseline["artifact"]["sha256"]
+    dest = store.export_artifact(args.project_id, sha, args.out)
+    return _emit({"sha256": sha, "path": str(dest), "size_bytes": dest.stat().st_size})
+
+
+def _cmd_stats(store: BaselineStore, args: argparse.Namespace) -> int:
+    return _emit(store.artifact_stats(args.project_id))
 
 
 def _emit(payload: Any) -> int:

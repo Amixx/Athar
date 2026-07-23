@@ -11,11 +11,9 @@ Integration layer: depends on the core engine (`diff_files`) and policy gate
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -23,6 +21,8 @@ from typing import Any, Callable
 from athar.bottom.parser import open_ifc
 from athar.check import evaluate_report
 from athar.engine import diff_files
+
+from .pack import ArtifactPack, PackError
 
 _ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _DEFAULT_ROOT_ENV = "ATHAR_STORE_ROOT"
@@ -56,14 +56,6 @@ def _validate_id(value: str, kind: str) -> str:
     if not isinstance(value, str) or not _ID_RE.match(value):
         raise StoreError(f"Invalid {kind} {value!r}: use only letters, digits, '.', '_', '-'")
     return value
-
-
-def _file_sha256(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 class BaselineStore:
@@ -178,11 +170,16 @@ class BaselineStore:
                 f"No baseline for {project_id}/{model_key}; call set_baseline first."
             )
         baseline_artifact = baseline["artifact"]
-        baseline_path = self._artifact_path(project_id, baseline_artifact["sha256"])
-
-        report = diff_files(str(baseline_path), str(candidate_path))
+        pack = self._pack(project_id)
+        try:
+            with pack.open(baseline_artifact["sha256"]) as baseline_path:
+                report = diff_files(str(baseline_path), str(candidate_path))
+        except PackError as exc:
+            raise StoreError(str(exc)) from exc
         check = evaluate_report(report, policy or {})
-        candidate_artifact = self._ingest_artifact(project_id, candidate_path)
+        candidate_artifact = self._ingest_artifact(
+            project_id, candidate_path, base_sha256=baseline_artifact["sha256"]
+        )
 
         event = self._append_event(
             project_id,
@@ -281,6 +278,24 @@ class BaselineStore:
                     events.append(event)
         return events
 
+    # ----- artifacts ---------------------------------------------------------
+
+    def has_artifact(self, project_id: str, sha256: str) -> bool:
+        """Whether the exact bytes for ``sha256`` are reconstructible."""
+        return self._pack(project_id).has(sha256)
+
+    def export_artifact(self, project_id: str, sha256: str, dest: str | Path) -> Path:
+        """Write an artifact's exact original IFC bytes to ``dest``."""
+        try:
+            return self._pack(project_id).materialize(sha256, dest)
+        except PackError as exc:
+            raise StoreError(str(exc)) from exc
+
+    def artifact_stats(self, project_id: str) -> dict[str, Any]:
+        """Aggregate logical vs stored bytes across a project's artifacts."""
+        _validate_id(project_id, "project_id")
+        return self._pack(project_id).stats()
+
     # ----- internals ---------------------------------------------------------
 
     def _project_dir(self, project_id: str) -> Path:
@@ -293,23 +308,26 @@ class BaselineStore:
     def _baseline_path(self, project_id: str, model_key: str) -> Path:
         return self._project_dir(project_id) / "baselines" / f"{model_key}.json"
 
-    def _artifact_path(self, project_id: str, sha256: str) -> Path:
-        return self._project_dir(project_id) / "artifacts" / f"{sha256}.ifc"
+    def _pack(self, project_id: str) -> ArtifactPack:
+        return ArtifactPack(self._project_dir(project_id) / "artifacts")
 
-    def _ingest_artifact(self, project_id: str, ifc_path: str | Path) -> dict[str, Any]:
+    def _ingest_artifact(
+        self, project_id: str, ifc_path: str | Path, *, base_sha256: str | None = None
+    ) -> dict[str, Any]:
         src = Path(ifc_path)
         if not src.is_file():
             raise StoreError(f"IFC file not found: {ifc_path}")
         schema = open_ifc(str(src)).schema
-        sha256 = _file_sha256(src)
-        dest = self._artifact_path(project_id, sha256)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if not dest.exists():  # content-addressed: identical bytes ingest once
-            shutil.copyfile(src, dest)
+        try:
+            meta = self._pack(project_id).ingest(src, base_sha256=base_sha256)
+        except PackError as exc:
+            raise StoreError(str(exc)) from exc
         return {
-            "sha256": sha256,
+            "sha256": meta["sha256"],
             "schema": schema,
-            "size_bytes": src.stat().st_size,
+            "size_bytes": meta["size_bytes"],
+            "encoding": meta["encoding"],
+            "stored_bytes": meta["stored_bytes"],
         }
 
     def _append_event(self, project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
