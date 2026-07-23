@@ -460,3 +460,68 @@ def test_main_dispatches_git_subcommand(monkeypatch):
 
     assert exc.value.code == 0
     assert called == {"command": "install"}
+
+
+_LFS_POINTER_TEXT = (
+    "version https://git-lfs.github.com/spec/v1\n"
+    "oid sha256:{oid}\n"
+    "size 12345\n"
+)
+
+
+def test_lfs_pointer_oid_parses_pointer_and_rejects_other_files(tmp_path):
+    oid = "ab" * 32
+    pointer = tmp_path / "pointer.ifc"
+    pointer.write_text(_LFS_POINTER_TEXT.format(oid=oid), encoding="utf-8")
+    assert cache_mod._lfs_pointer_oid(pointer) == oid
+
+    ifc = tmp_path / "real.ifc"
+    ifc.write_text("ISO-10303-21;\nHEADER;\n", encoding="utf-8")
+    assert cache_mod._lfs_pointer_oid(ifc) is None
+
+    big = tmp_path / "big.ifc"
+    big.write_bytes(b"version https://git-lfs" + b"x" * 2000)
+    assert cache_mod._lfs_pointer_oid(big) is None
+
+    assert cache_mod._lfs_pointer_oid(tmp_path / "missing.ifc") is None
+
+
+def test_cached_lfs_pointer_diffs_without_smudging(tmp_path, monkeypatch):
+    oid = "cd" * 32
+    pointer = tmp_path / "pointer.ifc"
+    pointer.write_text(_LFS_POINTER_TEXT.format(oid=oid), encoding="utf-8")
+    cache_dir = tmp_path / "cache"
+    entry = cache_mod._entry_path(cache_dir, f"sha256-{oid}")
+    cache_mod._write_entry(entry, _bundle(), f"sha256-{oid}")
+
+    def refuse_smudge(*args, **kwargs):
+        raise AssertionError("smudge must not run on a cache hit")
+
+    monkeypatch.setattr(cache_mod, "_smudge_lfs_pointer", refuse_smudge)
+    result = cache_mod.load_or_build_bundle(pointer, key="e" * 40, cache_dir=cache_dir)
+    assert result.hit is True
+    assert result.key == f"sha256-{oid}"
+
+
+def test_lfs_pointer_miss_smudges_and_verifies(tmp_path, monkeypatch):
+    content = b"ISO-10303-21;\nENDSEC;\n"
+    oid = __import__("hashlib").sha256(content).hexdigest()
+    pointer = tmp_path / "pointer.ifc"
+    pointer.write_text(_LFS_POINTER_TEXT.format(oid=oid), encoding="utf-8")
+
+    def fake_smudge(src, dest, *, expected_sha256):
+        assert expected_sha256 == oid
+        Path(dest).write_bytes(content)
+
+    built = []
+
+    def fake_build(path):
+        built.append(Path(path).read_bytes())
+        return _bundle()
+
+    monkeypatch.setattr(cache_mod, "_smudge_lfs_pointer", fake_smudge)
+    monkeypatch.setattr(cache_mod, "build_signature_bundle", fake_build)
+    result = cache_mod.load_or_build_bundle(pointer, cache_dir=tmp_path / "cache")
+    assert result.hit is False
+    assert result.key == f"sha256-{oid}"
+    assert built == [content]
