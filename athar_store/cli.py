@@ -89,6 +89,16 @@ def build_store_parser() -> argparse.ArgumentParser:
     p_stats.add_argument("project_id")
     p_stats.set_defaults(func=_cmd_stats)
 
+    p_report = sub.add_parser("report", help="Print a review's full persisted delta report")
+    p_report.add_argument("project_id")
+    p_report.add_argument("review_id")
+    p_report.set_defaults(func=_cmd_report)
+
+    p_pending = sub.add_parser("pending", help="List unresolved reviews against the current baseline")
+    p_pending.add_argument("project_id")
+    p_pending.add_argument("model_key")
+    p_pending.set_defaults(func=_cmd_pending)
+
     return parser
 
 
@@ -166,6 +176,18 @@ def _cmd_export(store: BaselineStore, args: argparse.Namespace) -> int:
 
 def _cmd_stats(store: BaselineStore, args: argparse.Namespace) -> int:
     return _emit(store.artifact_stats(args.project_id))
+
+
+def _cmd_report(store: BaselineStore, args: argparse.Namespace) -> int:
+    report = store.review_report(args.project_id, args.review_id)
+    if report is None:
+        print(f"Error: no stored report for {args.project_id}/{args.review_id}", file=sys.stderr)
+        return 1
+    return _emit(report)
+
+
+def _cmd_pending(store: BaselineStore, args: argparse.Namespace) -> int:
+    return _emit(store.pending_reviews(args.project_id, args.model_key))
 
 
 def _emit(payload: Any) -> int:

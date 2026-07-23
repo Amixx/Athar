@@ -34,6 +34,7 @@ content `sha256` of its IFC file. The store keeps three durable things:
   artifacts/<sha256>.ifc.patch.zst # zstd --patch-from delta against base_sha256
   artifacts/<sha256>.meta.json     # encoding, base, chain depth, sizes
   baselines/<model_key>.json       # current accepted-version pointer (derived head)
+  reports/<review_id>.json.gz      # full delta report of each review (deterministic gzip)
   history.jsonl                    # append-only event log (source of truth)
 ```
 
@@ -75,6 +76,14 @@ sequential `id` (`evt-000001`), `model_key`, `at` (UTC), and `actor`:
   `evaluate_report` verdict, and `verdict` = `pass|fail`. A review **does not**
   promote; it only records. The candidate is ingested into `artifacts/` at
   review time so the verdict is reproducible and approval is a pointer flip.
+  The full delta report is persisted to `reports/<review_id>.json.gz`
+  (`review_report` reads it back; reviews predating this return None). The
+  event also carries `conflicts`: for every *pending* review (same model_key,
+  same current baseline, not yet approved/rejected — see `pending_reviews`),
+  the overlap between both candidates' changed GUIDs (adds, deletes, and
+  non-transitive modifications; pure ripples are excluded so disjoint edits
+  in one storey do not conflict). Conflict *detection* is deliberately the
+  ceiling: semantic IFC merge stays out of scope.
 - `approval` — promote a prior review's candidate to the new baseline. Carries
   `review_id`, approver, and note. Updates the baseline pointer.
 - `rejection` — reject a prior review's candidate. References `review_id`;

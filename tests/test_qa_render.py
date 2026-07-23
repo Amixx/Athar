@@ -89,3 +89,22 @@ def test_render_history_timeline():
 
 def test_render_history_empty():
     assert "(no events)" in render_history([])
+
+
+def test_render_history_flags_conflicting_reviews():
+    events = [
+        {
+            "id": "evt-000002",
+            "event": "review",
+            "at": "2026-01-02T00:00:00Z",
+            "actor": "bob",
+            "model_key": "arch",
+            "verdict": "pass",
+            "diff": {"stats": {"added": 0, "deleted": 0, "modified": 1, "unchanged": 9}},
+            "conflicts": [
+                {"review_id": "evt-000001", "actor": "ann", "overlap_count": 3, "overlap_guids": ["g1", "g2", "g3"]}
+            ],
+        },
+    ]
+    text = render_history(events)
+    assert "!! conflicts with evt-000001 (3 shared entities)" in text

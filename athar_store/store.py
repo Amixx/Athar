@@ -11,6 +11,7 @@ Integration layer: depends on the core engine (`diff_files`) and policy gate
 
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import re
@@ -177,6 +178,7 @@ class BaselineStore:
         except PackError as exc:
             raise StoreError(str(exc)) from exc
         check = evaluate_report(report, policy or {})
+        conflicts = self._detect_conflicts(project_id, model_key, report)
         candidate_artifact = self._ingest_artifact(
             project_id, candidate_path, base_sha256=baseline_artifact["sha256"]
         )
@@ -192,12 +194,14 @@ class BaselineStore:
                 "verdict": "pass" if check["ok"] else "fail",
                 "has_policy": bool(policy),
                 "check": check,
+                "conflicts": conflicts,
                 "diff": {
                     "schemas": report.get("schemas"),
                     "stats": _stats_summary(report),
                 },
             },
         )
+        self._write_review_report(project_id, event["id"], report)
         return event
 
     def approve(
@@ -277,6 +281,78 @@ class BaselineStore:
                 if model_key is None or event.get("model_key") == model_key:
                     events.append(event)
         return events
+
+    # ----- review reports & conflicts ---------------------------------------
+
+    def review_report(self, project_id: str, review_id: str) -> dict[str, Any] | None:
+        """The full persisted delta report of a review, or None if absent.
+
+        Reviews recorded before report persistence existed have no stored
+        report; they return None rather than recomputing.
+        """
+        _validate_id(project_id, "project_id")
+        _validate_id(review_id, "review_id")
+        path = self._report_path(project_id, review_id)
+        if not path.is_file():
+            return None
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def pending_reviews(self, project_id: str, model_key: str) -> list[dict[str, Any]]:
+        """Reviews against the *current* baseline that are neither approved
+        nor rejected yet — the candidates a new review can conflict with."""
+        baseline = self.current_baseline(project_id, model_key)
+        if baseline is None:
+            return []
+        baseline_sha = baseline["artifact"]["sha256"]
+        events = self.history(project_id, model_key)
+        resolved = {
+            event["review_id"]
+            for event in events
+            if event["event"] in ("approval", "rejection")
+        }
+        return [
+            event
+            for event in events
+            if event["event"] == "review"
+            and event["id"] not in resolved
+            and (event.get("baseline_artifact") or {}).get("sha256") == baseline_sha
+        ]
+
+    def _detect_conflicts(
+        self, project_id: str, model_key: str, report: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        mine = _changed_guids(report)
+        if not mine:
+            return []
+        conflicts: list[dict[str, Any]] = []
+        for pending in self.pending_reviews(project_id, model_key):
+            stored = self.review_report(project_id, pending["id"])
+            if stored is None:
+                continue
+            overlap = sorted(mine & _changed_guids(stored))
+            if overlap:
+                conflicts.append(
+                    {
+                        "review_id": pending["id"],
+                        "actor": pending.get("actor"),
+                        "overlap_count": len(overlap),
+                        "overlap_guids": overlap[:200],
+                    }
+                )
+        return conflicts
+
+    def _report_path(self, project_id: str, review_id: str) -> Path:
+        return self._project_dir(project_id) / "reports" / f"{review_id}.json.gz"
+
+    def _write_review_report(self, project_id: str, review_id: str, report: dict[str, Any]) -> None:
+        path = self._report_path(project_id, review_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(report, sort_keys=True).encode("utf-8")
+        # mtime=0 keeps the gzip bytes deterministic for identical reports.
+        with open(path, "wb") as raw:
+            with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as handle:
+                handle.write(payload)
 
     # ----- artifacts ---------------------------------------------------------
 
@@ -379,6 +455,24 @@ class BaselineStore:
         path = self._baseline_path(project_id, model_key)
         path.parent.mkdir(parents=True, exist_ok=True)
         _write_json(path, pointer)
+
+
+def _changed_guids(report: dict[str, Any]) -> set[str]:
+    """GUIDs a review actually touches: adds, deletes, and non-transitive
+    modifications. Pure ripple (transitive) entities are excluded so two
+    candidates editing disjoint elements in one storey do not conflict."""
+    guids: set[str] = set()
+    for section in ("added", "deleted"):
+        for item in report.get(section) or []:
+            if item.get("guid"):
+                guids.add(item["guid"])
+    for item in report.get("modified") or []:
+        if item.get("change_scope") == "transitive":
+            continue
+        entity = item.get("new") or item.get("old") or {}
+        if entity.get("guid"):
+            guids.add(entity["guid"])
+    return guids
 
 
 def _stats_summary(report: dict[str, Any]) -> dict[str, Any]:
