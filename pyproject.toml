@@ -47,6 +47,7 @@ python-packages = [
   "athar_dev",
   "athar_git",
   "athar_qa",
+  "athar_review",
   "athar_store",
   "athar_view",
 ]

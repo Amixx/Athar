@@ -61,6 +61,13 @@ def main() -> None:
         view_args = view_parser.parse_args(sys.argv[2:])
         sys.exit(run_view(view_args))
 
+    if len(sys.argv) > 1 and sys.argv[1] == "review":
+        from athar_review.cli import build_review_parser, run_review
+
+        review_parser = build_review_parser()
+        review_args = review_parser.parse_args(sys.argv[2:])
+        sys.exit(run_review(review_args))
+
     parser = argparse.ArgumentParser(prog="athar-core")
     parser.add_argument("old", nargs="?", help="Path to old IFC file")
     parser.add_argument("new", nargs="?", help="Path to new IFC file")

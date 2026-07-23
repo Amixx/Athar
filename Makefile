@@ -80,6 +80,7 @@ viewer-package-static: viewer-build
 	rm -rf athar_view/static
 	mkdir -p athar_view/static
 	cp -R viewer/dist/. athar_view/static/
+	test -f athar_view/static/index.html && test -f athar_view/static/review.html
 
 viewer-test:
 	cd viewer && bun test tests && bunx playwright test

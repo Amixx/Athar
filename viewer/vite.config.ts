@@ -14,5 +14,11 @@ export default defineConfig({
   build: {
     target: 'esnext',
     chunkSizeWarningLimit: 1600,
+    rollupOptions: {
+      input: {
+        main: 'index.html',
+        review: 'review.html',
+      },
+    },
   },
 })

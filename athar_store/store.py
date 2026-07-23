@@ -148,6 +148,14 @@ class BaselineStore:
             return None
         return _read_json(pointer)
 
+    def list_baselines(self, project_id: str) -> list[dict[str, Any]]:
+        """Every model lineage's current baseline pointer, ordered by key."""
+        _validate_id(project_id, "project_id")
+        baselines_dir = self._project_dir(project_id) / "baselines"
+        if not baselines_dir.is_dir():
+            return []
+        return [_read_json(path) for path in sorted(baselines_dir.glob("*.json"))]
+
     # ----- review / approve / reject ----------------------------------------
 
     def review(
