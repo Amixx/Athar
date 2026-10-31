@@ -438,7 +438,7 @@ def _print_table(result: dict[str, Any]) -> None:
     print(f"  total: {result['total_seconds']}s   "
           f"peak RSS: {peak['getrusage_true_peak']} MB (true) / {peak['sampler']} MB (sampler)")
     if result.get("gb_seconds") is not None:
-        print(f"  memory-time: {result['gb_seconds']} GB·s (area under the RSS curve — lower is leaner)")
+        print(f"  memory-time: {result['gb_seconds']} GB-seconds (area under the RSS curve — lower is leaner)")
     print(f"\n  {'phase':<26}{'sec':>8}{'enter':>10}{'exit':>10}{'peak':>10}{'Δrss':>10}")
     print(f"  {'-'*26}{'-'*8}{'-'*10}{'-'*10}{'-'*10}{'-'*10}")
     for p in result["phases"]:

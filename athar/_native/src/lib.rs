@@ -220,9 +220,9 @@ impl StageProfiler {
         let churn_factor = if peak_live > 0.0 { total_churn / peak_live } else { 0.0 };
         // Deterministic memory-cost: integrate live heap (exact, allocator-noise
         // free) over stage wall time. Trapezoidal between marks. Unlike the
-        // RSS-based GB·s in profile_memory.py, the memory factor here does not
+        // RSS-based GB-seconds in profile_memory.py, the memory factor here does not
         // vary run-to-run — only the time factor does, so it is a far cleaner
-        // "GB·s" proxy for the native pipeline.
+        // "GB-seconds" proxy for the native pipeline.
         let mut heap_mb_s = 0.0_f64;
         let mut prev_live = 0.0_f64;
         for r in &self.rows {
@@ -230,7 +230,7 @@ impl StageProfiler {
             prev_live = r.live_mb;
         }
         eprintln!(
-            "[native-profile] TOTAL  churn={:.0} MB  allocs={}  peak_live={:.0} MB  churn_factor={:.1}x  heap={:.1} GB·s",
+            "[native-profile] TOTAL  churn={:.0} MB  allocs={}  peak_live={:.0} MB  churn_factor={:.1}x  heap={:.1} GB-seconds",
             total_churn, total_allocs, peak_live, churn_factor, heap_mb_s / 1024.0
         );
     }

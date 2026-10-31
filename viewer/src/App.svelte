@@ -379,7 +379,7 @@
           <div class="num">~{index.report.stats.modified}</div>
           <div class="microlabel">
             {#if modifiedScope && index.report.stats.modified > 0}
-              {directModified} direct · {transitiveModified} indirect
+              {directModified} direct, {transitiveModified} indirect
             {:else}
               modified
             {/if}
@@ -389,7 +389,7 @@
       </div>
       {#if modifiedScope}
         <div class="footnote">
-          scope: {modifiedScope.intrinsic ?? 0} intrinsic · {modifiedScope.transitive ?? 0} transitive · {modifiedScope.mixed ?? 0} mixed
+          scope: {modifiedScope.intrinsic ?? 0} intrinsic, {modifiedScope.transitive ?? 0} transitive, {modifiedScope.mixed ?? 0} mixed
         </div>
       {/if}
       {#if cohorts.length}
@@ -452,7 +452,7 @@
           {/if}
           {#if selectedPair}
             <dt>Match</dt>
-            <dd>{selectedPair.match.reason} · score {selectedPair.match.score}</dd>
+            <dd>{selectedPair.match.reason}, score {selectedPair.match.score}</dd>
             <dt>Scope</dt>
             <dd>{selectedPair.change_scope}</dd>
           {/if}
