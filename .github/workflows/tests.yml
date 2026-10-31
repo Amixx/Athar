@@ -10,30 +10,7 @@ permissions:
 
 concurrency:
   group: tests-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  # The LFS corpus files the default suite reads (tests/corpus.py small tier,
-  # tests/fixtures, viewer/e2e/fixtures); the medium/large tier stays a pointer.
-  DEFAULT_SUITE_LFS: >-
-    tests/fixtures/tiny_no_products.ifc,
-    viewer/e2e/fixtures/old.ifc,
-    viewer/e2e/fixtures/new.ifc,
-    real-world-test/Building-Landscaping-v0-original.ifc,
-    real-world-test/Building-Landscaping-v1.ifc,
-    real-world-test/Building-Landscaping-v2.ifc,
-    real-world-test/Building-Landscaping-v3.ifc,
-    real-world-test/Duplex-Architecture.ifc,
-    corpus/gni-bim-sample/2025_BIMfundamentals/model_9.ifc,
-    corpus/gni-bim-sample/2025_BIMfundamentals/model_18.ifc,
-    corpus/gni-bim-sample/2025_BIMfundamentals/model_50.ifc,
-    corpus/gni-bim-sample/2025_BIMfundamentals/model_62.ifc,
-    corpus/gni-bim-sample/2025_BIMfundamentals/model_149.ifc,
-    corpus/gni-bim-sample/2025_BIMfundamentals/model_190.ifc,
-    corpus/gni-bim-sample/2026_BIMprojects/model_0_arc.ifc,
-    corpus/gni-bim-sample/2026_BIMprojects/model_0_structure.ifc,
-    corpus/gni-bim-sample/2026_BIMprojects/model_3_arc.ifc,
-    corpus/gni-bim-sample/2026_BIMprojects/model_3_structure.ifc
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   pytest:
@@ -44,6 +21,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The registry only needs paths, so it runs before any LFS content exists.
+      - name: List the default suite's LFS files
+        run: |
+          python -m pip install pytest
+          echo "DEFAULT_SUITE_LFS=$(python -m tests.corpus --default-lfs)" >> "$GITHUB_ENV"
 
       # LFS bandwidth is metered (~650MB corpus vs 1GB/month free), so the
       # default-suite objects are cached; runs on main save the cache that PR
@@ -70,10 +57,6 @@ jobs:
         with:
           path: .git/lfs
           key: ${{ steps.lfs-cache.outputs.cache-primary-key }}
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
 
       - uses: dtolnay/rust-toolchain@stable
 
