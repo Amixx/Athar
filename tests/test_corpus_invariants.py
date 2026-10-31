@@ -14,6 +14,7 @@ import uuid
 import ifcopenshell
 import pytest
 
+from athar.bottom.parser import IfcParseError
 from athar.engine import diff_files
 from tests.corpus import assert_report_invariants, assert_zero_diff, corpus_path
 
@@ -217,21 +218,23 @@ def test_duplicated_guid_same_file_diff_is_clean(duplicated_guid_pair):
     assert report["stats"]["guid_collisions"] == {"old": 1, "new": 1}
 
 
-@pytest.fixture(scope="module")
-def dangling_ref_variant(tmp_path_factory):
-    """Copy of bl_v2 with one relationship target mangled to a nonexistent id.
-
-    Mirrors the corrupted real-world acceptance variant (181MB spanish "-bad"),
-    where one `#N` ref was rewritten to an id no record carries. The id here is
-    INT32_MAX: ifcopenshell rejects larger ids as a syntax error, and repairs a
-    reference to a missing in-range id to an empty aggregate at load time.
-    """
+def _with_aggregate_target(path, target_id: int) -> None:
+    """Write bl_v2 to `path` with one IfcRelAggregates target rewritten to `target_id`."""
     text = open(corpus_path("bl_v2"), encoding="utf-8").read()
     match = re.search(r"(#\d+=\s*IFCRELAGGREGATES\([^;]*\(#)(\d+)(\)\);)", text)
     assert match is not None
-    mangled = text[: match.start(2)] + str(2**31 - 1) + text[match.end(2):]
+    path.write_text(text[: match.start(2)] + str(target_id) + text[match.end(2):], encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def dangling_ref_variant(tmp_path_factory):
+    """Copy of bl_v2 with one relationship target pointing at an id no record carries.
+
+    The id is INT32_MAX, the largest ifcopenshell parses; it repairs a reference
+    to a missing in-range id to an empty aggregate at load time.
+    """
     path = tmp_path_factory.mktemp("dangling") / "dangling.ifc"
-    path.write_text(mangled, encoding="utf-8")
+    _with_aggregate_target(path, 2**31 - 1)
     return str(path)
 
 
@@ -245,3 +248,16 @@ def test_dangling_ref_corruption_diffs_cleanly_instead_of_crashing(dangling_ref_
     assert stats["deleted"] == 0
     assert stats["modified_change_scope"]["intrinsic"] == 0
     assert stats["modified_change_scope"]["mixed"] == 0
+
+
+def test_id_above_ifcopenshell_range_fails_with_a_named_cause(tmp_path):
+    # The corrupted spanish "-bad" acceptance variant carries a 23-digit reference.
+    oversized = 12345678901234567890123
+    path = tmp_path / "oversized-id.ifc"
+    _with_aggregate_target(path, oversized)
+    with pytest.raises(IfcParseError) as excinfo:
+        diff_files(corpus_path("bl_v2"), str(path))
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert f"entity id #{oversized}" in message
+    assert "exceeds 2147483647" in message

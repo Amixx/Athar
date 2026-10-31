@@ -12,10 +12,12 @@ clock) byte-stable.
 from __future__ import annotations
 
 import itertools
+import re
 
 import ifcopenshell
 import pytest
 
+from athar.bottom.parser import IfcParseError
 from athar_store import (
     BaselineStore,
     UnknownBaselineError,
@@ -89,6 +91,16 @@ def test_set_baseline_retains_artifact_and_pointer(store, models):
     # re-diffed without the customer keeping old exports — the lock-in.
     sha = pointer["artifact"]["sha256"]
     assert (store.root / "projects" / "acme" / "artifacts" / f"{sha}.ifc").is_file()
+
+
+def test_set_baseline_rejects_unparseable_ifc(store, models, tmp_path):
+    corrupt = tmp_path / "corrupt.ifc"
+    text = models["baseline"].read_text(encoding="utf-8")
+    corrupt.write_text(re.sub(r"IFCUNITASSIGNMENT\(\(#\d+", "IFCUNITASSIGNMENT((#99999999999", text))
+    with pytest.raises(IfcParseError, match="corrupt.ifc"):
+        store.set_baseline("acme", "architecture", corrupt, actor="alice")
+    assert store.current_baseline("acme", "architecture") is None
+    assert not list((store.root / "projects" / "acme" / "artifacts").glob("*.ifc"))
 
 
 def test_review_records_verdict_without_promoting(store, models):

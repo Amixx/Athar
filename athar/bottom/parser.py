@@ -2,6 +2,8 @@
 
 File-independent schema glue the native parser needs from ifcopenshell:
 
+- ``open_ifc`` — open a file with ifcopenshell, turning its parse failures into
+  an ``IfcParseError`` that names the file and the cause.
 - ``_assert_supported_schema`` — guard the engine's supported schema families.
 - the measure-type helpers (``_measure_type_from_attr_type`` and the measure
   sets), consumed by ``native_schema`` to precompute per-attribute descriptors.
@@ -15,6 +17,7 @@ never materializes the file's entities.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 from .constants import SUPPORTED_SCHEMAS
@@ -31,6 +34,40 @@ _ANGLE_MEASURES = {
 _AREA_MEASURES = {"IFCAREAMEASURE"}
 _VOLUME_MEASURES = {"IFCVOLUMEMEASURE"}
 _MAX_TYPE_CHAIN_HOPS = 32
+_MAX_IFCOPENSHELL_ID = 2**31 - 1
+_LOG_ERROR = re.compile(r"^\[error\] \[[^\]]*\] (.*)$", re.MULTILINE)
+_INVALID_ID_TOKEN = re.compile(r"^token (\d+) at offset (\d+) invalid instance name$")
+
+
+class IfcParseError(ValueError):
+    """An IFC file ifcopenshell cannot parse."""
+
+
+def open_ifc(path: str):
+    import ifcopenshell
+
+    # ifcopenshell reports the cause only in its process-wide log, which
+    # get_log() drains; drop earlier entries so only this parse's remain.
+    ifcopenshell.get_log()
+    try:
+        return ifcopenshell.open(path)
+    except ifcopenshell.Error as exc:
+        cause = _parse_failure_cause(ifcopenshell.get_log()) or str(exc)
+        raise IfcParseError(f"Cannot parse IFC file {path}: {cause}") from exc
+
+
+def _parse_failure_cause(log: str) -> str:
+    causes = []
+    for message in _LOG_ERROR.findall(log):
+        token = _INVALID_ID_TOKEN.match(message)
+        if token and int(token.group(1)) > _MAX_IFCOPENSHELL_ID:
+            causes.append(
+                f"entity id #{token.group(1)} at byte offset {token.group(2)} exceeds "
+                f"{_MAX_IFCOPENSHELL_ID}, the largest id ifcopenshell accepts"
+            )
+        else:
+            causes.append(message)
+    return "; ".join(causes)
 
 
 def _assert_supported_schema(schema: str) -> None:
