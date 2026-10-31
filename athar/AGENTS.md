@@ -42,6 +42,9 @@ GitHub comments, and other presentation concerns.
   dominate the text diff and expose the native hasher's undecoded STEP strings.
   Unmatched rooted additions are refused before output publication: independent
   rekeys cannot deduplicate additions shared by both branches in ifcmerge.
+  Changed records are refused unless ifcmerge's `_dissemble` (ported
+  in `rekey.py`) splits both lines into exactly their attributes; ifcmerge
+  truncates a record changed on both branches when it cannot.
   Refusal JSON includes candidate match statistics; no merge-ready file exists.
 
 ## Matching Contract

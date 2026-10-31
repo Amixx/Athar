@@ -7,7 +7,7 @@ import ifcopenshell
 import pytest
 
 from athar.engine import SchemaMismatchError, diff_files
-from athar.rekey import rekey_files
+from athar.rekey import RekeyRefused, rekey_files
 
 
 def model(path, offset=0, moved=False, schema="IFC4", extra=False):
@@ -75,7 +75,9 @@ def test_rekey_cli_and_input_protection(tmp_path):
 
 def test_rekey_cycles_and_replaced_root_do_not_break_references(tmp_path):
     base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
-    model(base)
+    original = model(base)
+    original.by_id(40).Name = "Original wall"
+    original.write(str(base))
     f = model(new, 1000)
     f.by_id(1040).GlobalId = "0000000000000000000009"
     f.by_id(1040).Name = "Replacement wall"
@@ -104,7 +106,7 @@ def test_rekey_preserves_lexical_values_and_recovers_regenerated_pset_guids(tmp_
     f.write(str(new))
     encoded = b"IFCLABEL('B\\X\\0D\\X\\0A#123 '' quoted')"
     data = new.read_bytes().replace(b"IFCLABEL('B')", encoded)
-    data = data.replace(b"((7.,2.,3.))", b"((7.000E+000,\n2.,3.)) /* #999 is a comment */")
+    data = data.replace(b"((7.,2.,3.));\n", b"((7.000E+000,2.,3.));\n/* #999 is a comment */\n")
     new.write_bytes(data.replace(b"\n", b"\r\n"))
     rekey_files(str(base), str(new), str(out))
     restored = ifcopenshell.open(str(out))
@@ -112,7 +114,7 @@ def test_rekey_preserves_lexical_values_and_recovers_regenerated_pset_guids(tmp_
     assert restored.by_id(80).RelatingPropertyDefinition.id() == 70
     assert restored.by_id(60).NominalValue.wrappedValue == "B\r\n#123 ' quoted"
     assert encoded in out.read_bytes()
-    assert b"7.000E+000,\r\n2." in out.read_bytes()
+    assert b"7.000E+000,2." in out.read_bytes()
     assert b"/* #999 is a comment */" in out.read_bytes()
     report = diff_files(str(new), str(out))
     assert all(report["stats"][s] == 0 for s in ("added", "deleted", "modified"))
@@ -164,4 +166,35 @@ def test_rekey_refuses_new_rooted_additions_without_publishing_output(tmp_path, 
     report = json.loads(result.stdout)
     assert report["status"] == "refused"
     assert report["unsafe_rooted_additions"] == [pset.id(), pset.id() + 1]
+    assert out.read_bytes() == b"existing output"
+
+
+@pytest.mark.parametrize("edit", ["triangles", "closed", "quoted name", "split record", "coordinates", "plain name"])
+def test_rekey_refuses_changes_ifcmerge_cannot_split_into_attributes(tmp_path, edit):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    for path, offset in ((base, 0), (new, 1000)):
+        f = model(path, offset)
+        points = f.create_entity("IfcCartesianPointList3D", id=200 + offset, CoordList=((0., 0., 0.), (2., 0., 0.), (0., 3., 0.), (0., 0., 4.)))
+        f.create_entity("IfcTriangulatedFaceSet", id=210 + offset, Coordinates=points, Closed=False, CoordIndex=((1, 2, 3), (1, 3, 4)))
+        f.write(str(path))
+    if edit == "triangles":
+        f.by_id(1210).CoordIndex = ((1, 3, 4), (1, 2, 3))
+    elif edit == "closed":
+        f.by_id(1210).Closed = True
+    elif edit == "quoted name":
+        f.by_id(1040).Description = "edited"
+    elif edit == "coordinates":
+        f.by_id(1200).CoordList = ((0., 0., 0.), (2., 0., 0.), (0., 3., 0.), (0., 0., 5.))
+    else:
+        f.by_id(1070).Name = "Pset_Edited"
+    f.write(str(new))
+    if edit == "split record":
+        new.write_bytes(new.read_bytes().replace(b"((1.,2.,3.))", b"((1.,\n2.,3.))"))
+    out.write_bytes(b"existing output")
+    if edit in ("coordinates", "plain name"):
+        assert rekey_files(str(base), str(new), str(out))["fresh"] == 0
+        return
+    with pytest.raises(RekeyRefused, match="cannot split into attributes") as refused:
+        rekey_files(str(base), str(new), str(out))
+    assert refused.value.diagnostics["unmergeable_changes"] == [{"quoted name": 1040, "split record": 1010}.get(edit, 1210)]
     assert out.read_bytes() == b"existing output"

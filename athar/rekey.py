@@ -6,6 +6,7 @@ from collections import Counter, defaultdict, deque
 from hashlib import sha256
 from pathlib import Path
 import os
+import re
 import tempfile
 
 import ifcopenshell
@@ -21,6 +22,38 @@ class RekeyRefused(ValueError):
     def __init__(self, message, diagnostics):
         super().__init__(message)
         self.diagnostics = {"status": "refused", "message": message, **diagnostics}
+
+
+# Mirrors ifcmerge's record reader, float normalisation and _dissemble tokenizer.
+_STEP_LINE = re.compile(rb"^#([0-9]+)=(.*);")
+_FLOAT = re.compile(rb"(-?\d*\.\d+(?:[eE][+-]?\d+)?|-?\d+\.(?:\d+)?(?:[eE][+-]?\d+)?)")
+_CLASS_ATTRIBUTES = re.compile(rb"^([_0-9A-Za-z]+)\((.*)\)$")
+_NAME = rb"[_0-9A-Za-z]+"
+_COMMA = rb"[\s,]+"
+_QUOTED = rb"'.*?'"
+_SIMPLE = rb"[^',)(]+"
+_PARAMVALUE = _NAME + rb"\(.*?\)"
+_PARAMQUOTED = _NAME + rb"\('.*?'\)"
+_BRACKETED = rb"\((?:" + rb"|".join((_COMMA, _PARAMQUOTED, _PARAMVALUE, _QUOTED, _SIMPLE)) + rb")*\)"
+_TOKEN = re.compile(rb"(" + rb"|".join((_PARAMQUOTED, _PARAMVALUE, rb"^\(.*\)$", _BRACKETED, _QUOTED, _SIMPLE)) + rb")")
+
+
+def _float(match):
+    return b"%.10g" % float(match[1])
+
+
+def _ifcmerge_records(path):
+    with open(path, "rb") as stream:
+        return {int(m[1]): m[2] for m in map(_STEP_LINE.match, stream) if m}
+
+
+def _ifcmerge_splits(record, count):
+    """Whether ifcmerge's attribute tokenizer recovers exactly COUNT attributes."""
+    parts = _CLASS_ATTRIBUTES.match(record)
+    if not parts:
+        return False
+    tokens = [re.sub(rb"\s*$", b"", re.sub(rb"^[\s,]+", b"", t)) for t in _TOKEN.findall(parts[2])]
+    return len(tokens) == count and b",".join(tokens) == parts[2]
 
 
 def _value(value, reference):
@@ -256,6 +289,23 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
     os.close(fd)
     try:
         native().rekey_step_file(str(new_path), temporary, mapping)
+        before, after = _ifcmerge_records(base_path), _ifcmerge_records(temporary)
+        unmergeable = []
+        for b, a in sorted(matched.items()):
+            x, y = before.get(a), after.get(a)
+            if x is None or y is None:
+                unmergeable.append(b)
+                continue
+            if x == y or _FLOAT.sub(_float, x) == _FLOAT.sub(_float, y):
+                continue
+            count = len(old.values[a])
+            if not (_ifcmerge_splits(x, count) and _ifcmerge_splits(y, count)):
+                unmergeable.append(b)
+        if unmergeable:
+            # ifcmerge merges a record changed on both sides attribute by attribute.
+            raise RekeyRefused("changed records that ifcmerge cannot split into attributes", {
+                **stats, "unmergeable_changes": unmergeable,
+            })
         reopened = ifcopenshell.open(temporary)
         if len(list(reopened)) != len(new.entities):
             raise ValueError("rekey changed the entity count")

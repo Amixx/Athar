@@ -113,7 +113,12 @@ Matching statistics, including per-class counts, are printed as JSON.
 Unmatched rooted additions are refused (exit 1, JSON `status: "refused"`,
 no output replacement). Two independent rekeys cannot tell whether both
 branches added the same root; ifcmerge copies both additions even when their
-GlobalIds agree. Refusal diagnostics include candidate matching statistics.
+GlobalIds agree. A matched record whose text differs from BASE is also refused
+when ifcmerge's attribute tokenizer cannot split the BASE or rekeyed line into
+exactly its attributes (nested lists, doubled quotes, records spanning lines):
+ifcmerge rebuilds a record changed on both branches from those tokens and
+silently truncates it. Refusal diagnostics include candidate matching
+statistics and the offending NEW ids.
 
 This is not a general merge-safety guarantee: ambiguous resources, changed
 sharing, unordered collections, regenerated GUIDs, and geometry restructuring
