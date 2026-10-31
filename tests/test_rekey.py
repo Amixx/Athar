@@ -198,3 +198,18 @@ def test_rekey_refuses_changes_ifcmerge_cannot_split_into_attributes(tmp_path, e
         rekey_files(str(base), str(new), str(out))
     assert refused.value.diagnostics["unmergeable_changes"] == [{"quoted name": 1040, "split record": 1010}.get(edit, 1210)]
     assert out.read_bytes() == b"existing output"
+
+
+def test_rekey_pairs_equal_content_twins_through_their_matched_parents(tmp_path):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    for path, offset, (first, second) in ((base, 0, (300, 310)), (new, 1000, (310, 300))):
+        f = model(path, offset)
+        for number, point, x in ((320, first, 1.0), (330, second, 0.0)):
+            location = f.create_entity("IfcCartesianPoint", id=point + offset, Coordinates=(5.0, 5.0, 5.0))
+            direction = f.create_entity("IfcDirection", id=number + 1 + offset, DirectionRatios=(x, 1.0, 0.0))
+            f.create_entity("IfcAxis2Placement3D", id=number + offset, Location=location, RefDirection=direction)
+        f.write(str(path))
+    rekey_files(str(base), str(new), str(out))
+    restored = ifcopenshell.open(str(out))
+    assert restored.by_id(320).Location.id() == 300
+    assert restored.by_id(330).Location.id() == 310

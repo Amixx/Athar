@@ -233,17 +233,24 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
                     continue
                 match(a, b, "role")
 
+    def content_buckets():
+        buckets, new_buckets = defaultdict(list), defaultdict(list)
+        for a in old.entities:
+            if a not in reverse and a in old.hashes:
+                buckets[old.hashes[a]].append(a)
+        for b in new.entities:
+            if b not in mapping and b in new.hashes:
+                new_buckets[new.hashes[b]].append(b)
+        return [(buckets[k], new_buckets[k]) for k in sorted(buckets.keys() & new_buckets.keys())]
+
     propagate()
-    buckets = defaultdict(list)
-    for a in old.entities:
-        if a not in reverse and a in old.hashes:
-            buckets[old.hashes[a]].append(a)
-    new_buckets = defaultdict(list)
-    for b in new.entities:
-        if b not in mapping and b in new.hashes:
-            new_buckets[new.hashes[b]].append(b)
-    for key in sorted(buckets.keys() & new_buckets.keys()):
-        for a, b in zip(buckets[key], new_buckets[key]):
+    # Equal-content twins wait until unique content matches have propagated roles to them.
+    while unique := [(aa[0], bb[0]) for aa, bb in content_buckets() if len(aa) == len(bb) == 1]:
+        for a, b in unique:
+            match(a, b, "content")
+        propagate()
+    for aa, bb in content_buckets():
+        for a, b in zip(aa, bb):
             match(a, b, "content")
     # Root GUID is intentionally excluded from exact resource content, but
     # retained in the serialized NEW entity. This recovers resources whose
@@ -279,11 +286,6 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
         "classes": {k: dict(v) for k, v in sorted(classes.items())},
     }
     rooted_additions = [b for b, e in new.entities.items() if b not in matched and e.is_a("IfcRoot")]
-    if rooted_additions:
-        # Independent two-way rekeys cannot deduplicate roots added by both branches.
-        raise RekeyRefused("unmatched rooted additions are unsafe for ifcmerge", {
-            **stats, "unsafe_rooted_additions": rooted_additions,
-        })
 
     fd, temporary = tempfile.mkstemp(suffix=".ifc", dir=output.parent)
     os.close(fd)
@@ -301,10 +303,16 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
             count = len(old.values[a])
             if not (_ifcmerge_splits(x, count) and _ifcmerge_splits(y, count)):
                 unmergeable.append(b)
+        refusals = []
+        if rooted_additions:
+            # Independent two-way rekeys cannot deduplicate roots added by both branches.
+            refusals.append("unmatched rooted additions are unsafe for ifcmerge")
         if unmergeable:
             # ifcmerge merges a record changed on both sides attribute by attribute.
-            raise RekeyRefused("changed records that ifcmerge cannot split into attributes", {
-                **stats, "unmergeable_changes": unmergeable,
+            refusals.append("changed records that ifcmerge cannot split into attributes")
+        if refusals:
+            raise RekeyRefused("; ".join(refusals), {
+                **stats, "unsafe_rooted_additions": rooted_additions, "unmergeable_changes": unmergeable,
             })
         reopened = ifcopenshell.open(temporary)
         if len(list(reopened)) != len(new.entities):
