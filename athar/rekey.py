@@ -38,9 +38,12 @@ _ITEM = rb"|".join((_COMMA, _PARAMQUOTED, _PARAMVALUE, _QUOTED, _SIMPLE))
 _BRACKETED = rb"(?P<bracketed>\((?:" + _ITEM + rb")*\))"
 _TOKEN = re.compile(rb"(" + rb"|".join((_PARAMQUOTED, _PARAMVALUE, rb"^\(.*\)$", _BRACKETED, _QUOTED, _SIMPLE)) + rb")")
 _BRACKETED_ITEM = re.compile(_ITEM)
-# Perl fails a complex (?:...)* group beyond this many iterations, so ifcmerge
-# then splits the bracketed list into its elements.
-_PERL_GROUP_REPEAT_MAX = 65535
+# Perl fails a complex (?:...)* group beyond this many iterations (65535 from
+# 5.30, 32766 before), so ifcmerge then splits the bracketed list into its elements.
+_PERL_GROUP_REPEAT_MAX = 32766
+_STRING = re.compile(rb"'[^']*'")
+_WHOLE_RECORD = re.compile(rb"#[0-9]+=[^;']*;\s*")
+_DATA_FILLER = re.compile(rb"\s*(?:/\*.*\*/\s*)?")
 
 
 def _float(match):
@@ -50,6 +53,29 @@ def _float(match):
 def _ifcmerge_records(path):
     with open(path, "rb") as stream:
         return {int(m[1]): m[2] for m in map(_STEP_LINE.match, stream) if m}
+
+
+def _records_off_their_line(path):
+    """Ids of DATA records that ifcmerge's line reader does not read as one whole line."""
+    ids, record, in_data = set(), None, False
+    with open(path, "rb") as stream:
+        for number, line in enumerate(stream, 1):
+            if not in_data:
+                in_data = line.startswith(b"DATA;")
+                continue
+            if line.strip() == b"ENDSEC;":
+                in_data = False
+                continue
+            if start := re.match(rb"#([0-9]+)=", line):
+                record = int(start[1])
+                if _WHOLE_RECORD.fullmatch(_STRING.sub(b"", line)):
+                    continue
+            elif _DATA_FILLER.fullmatch(line):
+                continue
+            if record is None:
+                raise ValueError(f"{path}:{number} is neither a record nor a comment")
+            ids.add(record)
+    return ids
 
 
 def _ifcmerge_splits(record, count):
@@ -301,15 +327,14 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
     try:
         native().rekey_step_file(str(new_path), temporary, mapping)
         before, after = _ifcmerge_records(base_path), _ifcmerge_records(temporary)
+        spanning_base = _records_off_their_line(base_path)
+        output_to_new = {a: b for b, a in mapping.items()}
+        spanning_new = {output_to_new[i] for i in _records_off_their_line(temporary)}
         unmergeable = []
         for b, a in sorted(mapping.items()):
-            # ifcmerge's line reader drops records that span lines.
-            x, y = before.get(a), after.get(a)
-            if y is None or (b in matched and x is None):
-                unmergeable.append(b)
+            if b not in matched or a in spanning_base or b in spanning_new:
                 continue
-            if b not in matched:
-                continue
+            x, y = before[a], after[a]
             if x == y or _FLOAT.sub(_float, x) == _FLOAT.sub(_float, y):
                 continue
             count = len(old.values[a])
@@ -319,12 +344,15 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
         if rooted_additions:
             # Independent two-way rekeys cannot deduplicate roots added by both branches.
             refusals.append("unmatched rooted additions are unsafe for ifcmerge")
+        if spanning_base or spanning_new:
+            refusals.append("records not alone on one line, which ifcmerge's line reader drops or truncates")
         if unmergeable:
             # ifcmerge merges a record changed on both sides attribute by attribute.
             refusals.append("changed records that ifcmerge cannot split into attributes")
         if refusals:
             raise RekeyRefused("; ".join(refusals), {
                 **stats, "unsafe_rooted_additions": rooted_additions, "unmergeable_changes": unmergeable,
+                "records_off_their_line": {"base": sorted(spanning_base), "new": sorted(spanning_new)},
             })
         reopened = ifcopenshell.open(temporary)
         if len(list(reopened)) != len(new.entities):

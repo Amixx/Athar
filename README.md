@@ -114,14 +114,17 @@ Matching statistics, including per-class counts, are printed as JSON.
 Unmatched rooted additions are refused (exit 1, JSON `status: "refused"`,
 no output replacement). Two independent rekeys cannot tell whether both
 branches added the same root; ifcmerge copies both additions even when their
-GlobalIds agree. Any record spanning lines in the rekeyed output, or a matched
-one spanning lines in BASE, is also refused: ifcmerge's line reader drops it.
+GlobalIds agree. Any DATA line in BASE or the rekeyed output that is not one
+whole record, a one-line comment or blank is also refused: ifcmerge's line
+reader drops records spanning lines and truncates one whose first line holds a
+`;` inside a string.
 So is a matched record whose text differs from BASE when ifcmerge's attribute
 tokenizer cannot split the BASE or rekeyed line into exactly its attributes
-(nested lists, doubled quotes, lists of more than 32,768 plain members):
-ifcmerge rebuilds a record changed on both branches from those tokens and
-silently truncates it. Refusal diagnostics include candidate matching
-statistics and the offending NEW ids.
+(nested lists, doubled quotes, lists of more than 16,383 plain members, the
+limit of Perl before 5.30): ifcmerge rebuilds a record changed on both
+branches from those tokens and silently truncates it. Refusal diagnostics
+include candidate matching statistics and the offending NEW ids (BASE ids for
+BASE records not alone on their line).
 
 This is not a general merge-safety guarantee: ambiguous resources, changed
 sharing, unordered collections, regenerated GUIDs, and geometry restructuring

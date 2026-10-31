@@ -194,9 +194,16 @@ def test_rekey_refuses_changes_ifcmerge_cannot_split_into_attributes(tmp_path, e
     if edit in ("coordinates", "plain name"):
         assert rekey_files(str(base), str(new), str(out))["fresh"] == 0
         return
-    with pytest.raises(RekeyRefused, match="cannot split into attributes") as refused:
+    reason = "not alone on one line" if edit == "split record" else "cannot split into attributes"
+    with pytest.raises(RekeyRefused, match=reason) as refused:
         rekey_files(str(base), str(new), str(out))
-    assert refused.value.diagnostics["unmergeable_changes"] == [{"quoted name": 1040, "split record": 1010}.get(edit, 1210)]
+    diagnostics = refused.value.diagnostics
+    if edit == "split record":
+        assert diagnostics["unmergeable_changes"] == []
+        assert diagnostics["records_off_their_line"] == {"base": [], "new": [1010]}
+    else:
+        assert diagnostics["unmergeable_changes"] == [1040 if edit == "quoted name" else 1210]
+        assert diagnostics["records_off_their_line"] == {"base": [], "new": []}
     assert out.read_bytes() == b"existing output"
 
 
@@ -215,7 +222,7 @@ def test_rekey_pairs_equal_content_twins_through_their_matched_parents(tmp_path)
     assert restored.by_id(330).Location.id() == 310
 
 
-@pytest.mark.parametrize(("members", "splits"), [(32768, True), (32769, False)])
+@pytest.mark.parametrize(("members", "splits"), [(16383, True), (16384, False)])
 def test_ifcmerge_splits_stops_at_perls_group_repetition_cap(members, splits):
     related = b",".join(b"#%d" % i for i in range(10, 10 + members))
     record = b"IFCRELCONTAINEDINSPATIALSTRUCTURE('0000000000000000000005',$,$,$,(" + related + b"),#1)"
@@ -227,7 +234,23 @@ def test_rekey_refuses_fresh_records_spanning_lines(tmp_path):
     model(base)
     model(new, 1000, extra=True)
     new.write_bytes(new.read_bytes().replace(b"(11.,12.,13.)", b"(11.,\n12.,13.)"))
-    with pytest.raises(RekeyRefused, match="cannot split into attributes") as refused:
+    with pytest.raises(RekeyRefused, match="not alone on one line") as refused:
         rekey_files(str(base), str(new), str(out))
-    assert refused.value.diagnostics["unmergeable_changes"] == [1110]
+    assert refused.value.diagnostics["records_off_their_line"] == {"base": [], "new": [1110]}
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("side", ["base", "new"])
+def test_rekey_refuses_records_broken_after_a_string_holding_a_semicolon(tmp_path, side):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    model(base)
+    model(new, 1000)
+    path, offset = (base, 0) if side == "base" else (new, 1000)
+    f = ifcopenshell.open(str(path))
+    f.create_entity("IfcPropertySingleValue", id=120 + offset, Name="a;b")
+    f.write(str(path))
+    path.write_bytes(path.read_bytes().replace(b"'a;b',", b"'a;b',\n"))
+    with pytest.raises(RekeyRefused, match="not alone on one line") as refused:
+        rekey_files(str(base), str(new), str(out))
+    assert refused.value.diagnostics["records_off_their_line"] == {"base": [], "new": [], side: [120 + offset]}
     assert not out.exists()
