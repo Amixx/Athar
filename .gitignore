@@ -160,3 +160,5 @@ athar_view/static/
 
 # Decompressed roundtrip corpus exports (only the .zst files are committed)
 corpus/*/exports/*.ifc
+
+scratch.local/
