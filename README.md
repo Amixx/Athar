@@ -257,4 +257,4 @@ still current. Corpus survey findings live under `docs/corpus/`.
 
 ## License
 
-MIT
+LGPL-3.0-or-later: see `COPYING.LESSER` and `COPYING`.
