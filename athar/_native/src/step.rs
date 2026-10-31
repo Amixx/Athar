@@ -9,14 +9,13 @@
 //! What it handles:
 //!   * `/* ... */` comments and arbitrary whitespace between tokens.
 //!   * Records spanning multiple lines; the terminating `;` ends a record.
-//!   * Arguments: integers, reals, strings (`'...'` with `''` escape), enums
+//!   * Arguments: integers, reals, strings (`'...'` with `''` escape and the
+//!     `\X\` / `\X2\` / `\X4\` / `\S\` control directives decoded), enums
 //!     (`.T.`), entity refs (`#123`), `$` (null), `*` (derived), nested lists
 //!     `( ... )`, and typed values `KEYWORD( ... )`.
 //!
 //! What it does NOT do (by design — handled elsewhere or unsupported):
-//!   * STEP string unescaping of `\X\` / `\X2\` / `\S\` encodings — strings are
-//!     carried through verbatim and NFC-normalized later; this is revisited
-//!     when a corpus file needs it.
+//!   * `\S\` under ISO 8859 code pages other than `\PA\` (kept verbatim).
 //!   * The HEADER section beyond locating `DATA;`.
 
 /// A single parsed STEP argument.
@@ -264,7 +263,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        Ok(out)
+        Ok(decode_control_directives(&out))
     }
 
     fn read_enum(&mut self) -> String {
@@ -358,6 +357,89 @@ fn utf8_len(first: u8) -> usize {
     }
 }
 
+/// Decode ISO 10303-21 string control directives (`\\`, `\X\hh`, `\X2\…\X0\`,
+/// `\X4\…\X0\`, `\S\c`, `\P?\`) so one character has one representation
+/// whichever encoding the exporter chose. Malformed directives, and `\S\`
+/// under a code page other than ISO 8859-1, stay verbatim (including the
+/// `\P?\` directive that selected the page).
+fn decode_control_directives(raw: &str) -> String {
+    if !raw.contains('\\') {
+        return raw.to_string();
+    }
+    let b = raw.as_bytes();
+    let mut out = String::with_capacity(raw.len());
+    let mut latin1_page = true;
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'\\' {
+            let len = utf8_len(b[i]).min(b.len() - i);
+            out.push_str(&raw[i..i + len]);
+            i += len;
+            continue;
+        }
+        let rest = &b[i..];
+        if rest.starts_with(b"\\\\") {
+            out.push('\\');
+            i += 2;
+            continue;
+        }
+        if rest.starts_with(b"\\X2\\") || rest.starts_with(b"\\X4\\") {
+            let width = if rest[2] == b'2' { 4 } else { 8 };
+            if let Some((decoded, used)) = decode_hex_run(&rest[4..], width) {
+                out.push_str(&decoded);
+                i += 4 + used;
+                continue;
+            }
+        } else if rest.starts_with(b"\\X\\") && rest.len() >= 5 {
+            if let Some(c) = hex_value(&rest[3..5]).and_then(char::from_u32) {
+                out.push(c);
+                i += 5;
+                continue;
+            }
+        } else if rest.starts_with(b"\\S\\") && rest.len() >= 4 && latin1_page && rest[3] < 0x80 {
+            out.push(char::from(rest[3] + 128));
+            i += 4;
+            continue;
+        } else if rest.len() >= 4 && rest[1] == b'P' && (b'A'..=b'I').contains(&rest[2]) && rest[3] == b'\\' {
+            latin1_page = rest[2] == b'A';
+            if !latin1_page {
+                out.push_str(&raw[i..i + 4]);
+            }
+            i += 4;
+            continue;
+        }
+        out.push('\\');
+        i += 1;
+    }
+    out
+}
+
+/// Decode `width`-digit hex code units up to the closing `\X0\`; returns the
+/// text and the bytes consumed including the terminator.
+fn decode_hex_run(b: &[u8], width: usize) -> Option<(String, usize)> {
+    let mut units: Vec<u32> = Vec::new();
+    let mut i = 0;
+    while !b[i..].starts_with(b"\\X0\\") {
+        units.push(hex_value(b.get(i..i + width)?)?);
+        i += width;
+    }
+    let text = if width == 4 {
+        let utf16: Vec<u16> = units.iter().map(|&u| u as u16).collect();
+        String::from_utf16(&utf16).ok()?
+    } else {
+        units.into_iter().map(char::from_u32).collect::<Option<String>>()?
+    };
+    Some((text, i + 4))
+}
+
+fn hex_value(digits: &[u8]) -> Option<u32> {
+    let s = std::str::from_utf8(digits).ok()?;
+    if !s.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(s, 16).ok()
+}
+
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -417,6 +499,33 @@ END-ISO-10303-21;
         let recs = Parser::new(src).parse().expect("ok");
         assert_eq!(recs[0].attrs[0], Token::Str("it's".to_string()));
         assert_eq!(recs[1].attrs[0], Token::Enum("T".to_string()));
+    }
+
+    #[test]
+    fn decodes_string_control_directives() {
+        for raw in [
+            "st\u{e5}l",
+            "st\\X\\E5l",
+            "st\\S\\el",
+            "st\\PA\\\\S\\el",
+            "st\\X2\\00E5\\X0\\l",
+            "st\\X4\\000000E5\\X0\\l",
+        ] {
+            assert_eq!(decode_control_directives(raw), "st\u{e5}l", "{raw}");
+        }
+        assert_eq!(decode_control_directives("\\X2\\D83DDE00\\X0\\"), "\u{1f600}");
+        assert_eq!(decode_control_directives("a\\\\b"), "a\\b");
+        assert_eq!(decode_control_directives("\\X2\\00E\\X0\\"), "\\X2\\00E\\X0\\");
+        assert_eq!(decode_control_directives("\\PB\\\\S\\e"), "\\PB\\\\S\\e");
+    }
+
+    #[test]
+    fn parsed_strings_have_one_form_per_character() {
+        let src = b"DATA;\n#1=IFCLABEL('st\\X2\\00E5\\X0\\l');\n#2=IFCLABEL('st\\X\\E5l');\n#3=IFCLABEL('st\xc3\xa5l');\nENDSEC;";
+        let recs = Parser::new(src).parse().expect("ok");
+        for rec in &recs {
+            assert_eq!(rec.attrs[0], Token::Str("st\u{e5}l".to_string()));
+        }
     }
 
     #[test]
