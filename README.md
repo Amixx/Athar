@@ -110,6 +110,11 @@ reopens it and every entity's class, attributes, and mapped references are
 checked against NEW. Inputs cannot be overwritten. Schemas must match.
 Matching statistics, including per-class counts, are printed as JSON.
 
+Unmatched rooted additions are refused (exit 1, JSON `status: "refused"`,
+no output replacement). Two independent rekeys cannot tell whether both
+branches added the same root; ifcmerge copies both additions even when their
+GlobalIds agree. Refusal diagnostics include candidate matching statistics.
+
 This is not a general merge-safety guarantee: ambiguous resources, changed
 sharing, unordered collections, regenerated GUIDs, and geometry restructuring
 can still produce text churn or misleading identity continuity. Use the result

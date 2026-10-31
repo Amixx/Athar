@@ -82,9 +82,14 @@ def test_rekey_cycles_and_replaced_root_do_not_break_references(tmp_path):
     placement = f.by_id(1030)
     placement.PlacementRelTo = placement
     f.write(str(new))
+    with pytest.raises(ValueError, match="unmatched rooted"):
+        rekey_files(str(base), str(new), str(out))
+    assert not out.exists()
+    f.by_id(1040).GlobalId = "0000000000000000000001"
+    f.write(str(new))
     stats = rekey_files(str(base), str(new), str(out))
     restored = ifcopenshell.open(str(out))
-    assert restored.by_guid("0000000000000000000009").id() > 100
+    assert restored.by_guid("0000000000000000000001").Name == "Replacement wall"
     p = restored.by_guid("0000000000000000000002").ObjectPlacement
     assert p.PlacementRelTo.id() == p.id()
     assert stats["cyclic_content_unavailable"]["new"] > 0
@@ -139,3 +144,24 @@ def test_rekey_role_fallback_scales_with_many_unmatched_resources(tmp_path):
     stats = rekey_files(str(base), str(new), str(out))
     assert time.monotonic() - start < 10
     assert stats["fresh"] == count
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_rekey_refuses_new_rooted_additions_without_publishing_output(tmp_path, empty):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    model(base)
+    f = model(new, 1000)
+    prop = f.create_entity("IfcPropertySingleValue", Name="Frame Type", NominalValue=f.create_entity("IfcLabel", "Test frame type"))
+    pset = f.create_entity("IfcPropertySet", GlobalId="0000000000000000000011", Name="Construction", HasProperties=() if empty else (prop,))
+    f.create_entity("IfcRelDefinesByProperties", GlobalId="0000000000000000000012", RelatedObjects=(f.by_id(1040),), RelatingPropertyDefinition=pset)
+    f.write(str(new))
+    out.write_bytes(b"existing output")
+    with pytest.raises(ValueError, match="unmatched rooted"):
+        rekey_files(str(base), str(new), str(out))
+    assert out.read_bytes() == b"existing output"
+    result = subprocess.run([sys.executable, "-m", "athar", "rekey", str(base), str(new), "-o", str(out)], capture_output=True, text=True)
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    assert report["status"] == "refused"
+    assert report["unsafe_rooted_additions"] == [pset.id(), pset.id() + 1]
+    assert out.read_bytes() == b"existing output"

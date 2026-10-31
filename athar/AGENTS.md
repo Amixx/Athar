@@ -40,6 +40,9 @@ GitHub comments, and other presentation concerns.
   IfcOpenShell verifies the entire output graph before an atomic file replace.
   Do not substitute a normal serializer: changed numeric/escape spellings can
   dominate the text diff and expose the native hasher's undecoded STEP strings.
+  Unmatched rooted additions are refused before output publication: independent
+  rekeys cannot deduplicate additions shared by both branches in ifcmerge.
+  Refusal JSON includes candidate match statistics; no merge-ready file exists.
 
 ## Matching Contract
 

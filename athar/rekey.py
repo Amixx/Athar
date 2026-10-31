@@ -17,6 +17,12 @@ from athar.engine import SchemaMismatchError
 from athar.matcher.core import match_signatures
 
 
+class RekeyRefused(ValueError):
+    def __init__(self, message, diagnostics):
+        super().__init__(message)
+        self.diagnostics = {"status": "refused", "message": message, **diagnostics}
+
+
 def _value(value, reference):
     if isinstance(value, ifcopenshell.entity_instance):
         if value.id():
@@ -228,6 +234,24 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
             mapping[b] = next_id
             next_id += 1
 
+    classes = defaultdict(Counter)
+    for b, e in new.entities.items():
+        classes[e.is_a()]["total"] += 1
+        classes[e.is_a()][reasons.get(b, "fresh")] += 1
+    stats = {
+        "entities": len(new.entities), "matched": len(matched),
+        "fresh": len(new.entities) - len(matched), "base_max_id": max(old.entities, default=0),
+        "matched_by": dict(Counter(reasons.values())), "role_conflicts": conflicts,
+        "cyclic_content_unavailable": {"base": old.cycles, "new": new.cycles},
+        "classes": {k: dict(v) for k, v in sorted(classes.items())},
+    }
+    rooted_additions = [b for b, e in new.entities.items() if b not in matched and e.is_a("IfcRoot")]
+    if rooted_additions:
+        # Independent two-way rekeys cannot deduplicate roots added by both branches.
+        raise RekeyRefused("unmatched rooted additions are unsafe for ifcmerge", {
+            **stats, "unsafe_rooted_additions": rooted_additions,
+        })
+
     fd, temporary = tempfile.mkstemp(suffix=".ifc", dir=output.parent)
     os.close(fd)
     try:
@@ -246,14 +270,4 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
         if os.path.exists(temporary):
             os.unlink(temporary)
 
-    classes = defaultdict(Counter)
-    for b, e in new.entities.items():
-        classes[e.is_a()]["total"] += 1
-        classes[e.is_a()][reasons.get(b, "fresh")] += 1
-    return {
-        "entities": len(new.entities), "matched": len(matched),
-        "fresh": len(new.entities) - len(matched), "base_max_id": max(old.entities, default=0),
-        "matched_by": dict(Counter(reasons.values())), "role_conflicts": conflicts,
-        "cyclic_content_unavailable": {"base": old.cycles, "new": new.cycles},
-        "classes": {k: dict(v) for k, v in sorted(classes.items())},
-    }
+    return stats
