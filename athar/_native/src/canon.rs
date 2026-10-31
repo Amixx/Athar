@@ -583,8 +583,8 @@ fn encode_scalar_into(
 ) {
     match token {
         Token::Ref(_) => out.push('R'),
-        Token::Null => out.push('$'),
-        Token::Derived => out.push('*'),
+        // Exporters write `$` where the schema redeclares an attribute as DERIVE.
+        Token::Null | Token::Derived => out.push('$'),
         Token::Int(i) => {
             out.push('i');
             let _ = write!(out, "{i}");
@@ -793,6 +793,17 @@ mod tests {
         // Plain words are not logicals.
         assert_eq!(encode_string("TRUE"), "s'TRUE");
         assert_eq!(encode_string("FALSE"), "s'FALSE");
+    }
+
+    #[test]
+    fn unset_and_derived_scalars_hash_alike() {
+        let none = units(&[]);
+        let encode = |t: &Token| {
+            let mut s = String::new();
+            encode_scalar_into(&mut s, t, Measure::Default, false, &none);
+            s
+        };
+        assert_eq!(encode(&Token::Null), encode(&Token::Derived));
     }
 
     #[test]
