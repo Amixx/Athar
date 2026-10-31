@@ -192,14 +192,14 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
                     buckets[k].append(i)
             return buckets
 
-        for key in (
-            lambda g, i: g.hashes.get(i),
-            lambda g, i: g.role(i),
+        # Equal content is interchangeable; role-only matches must be unique.
+        for key, interchangeable in (
+            (lambda g, i: g.hashes.get(i), True),
+            (lambda g, i: g.role(i), False),
         ):
             la, lb = bucket(left, old, key), bucket(right, new, key)
             for k in la.keys() & lb.keys():
-                # Equal content is interchangeable; role-only matches must be unique.
-                if len(la[k]) == len(lb[k]) == 1 or isinstance(k, bytes):
+                if interchangeable or len(la[k]) == len(lb[k]) == 1:
                     for a, b in zip(la[k], lb[k]):
                         result.append((a, b))
                         left.remove(a)
@@ -262,9 +262,8 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
     for aa, bb in content_buckets():
         for a, b in zip(aa, bb):
             match(a, b, "content")
-    # Root GUID is intentionally excluded from exact resource content, but
-    # retained in the serialized NEW entity. This recovers resources whose
-    # exporter regenerated a GUID without treating that GUID as identity.
+    # Role keys ignore GlobalId, so rooted entities whose exporter regenerated it
+    # still match; the output keeps NEW's GlobalId.
     by_role = defaultdict(list)
     for a in old.entities:
         if a not in reverse:
