@@ -40,9 +40,13 @@ supports IFC4 `IfcSpatialElement` and IFC2X3 `IfcSpatialStructureElement` roots.
   locations should share the same geometry hash.
 - Shape-model classes (subtypes of `IfcProductRepresentation`,
   `IfcRepresentation`, `IfcRepresentationMap`, `IfcRepresentationItem`,
-  `IfcProfileDef`; the descriptor's `geometric` flag) hash their scalar
-  attributes into `vh_geometry` (canon-v9): extrusion `Depth`, profile
-  dimensions, transformation `Scale`. An axis placement's `Location`/`Axis`/
+  `IfcProfileDef`; the descriptor's `geometric` flag) hash their non-text
+  attributes into `vh_geometry` (canon-v9): numbers, enums, booleans, selects
+  and aggregates of them (extrusion `Depth`, profile dimensions, transformation
+  `Scale`, boolean `Operator`). String-typed attributes (the attribute
+  descriptor's `text` flag: `RepresentationIdentifier`, `RepresentationType`,
+  `ProfileName`, `Name`) are naming metadata and stay out of `vh_geometry`. An
+  axis placement's `Location`/`Axis`/
   `RefDirection` are include/geometry edges, and `MappingTarget` operators are
   geometry targets, so solid, profile and mapped-item positions are shape
   content. Object placements reach their axis placement only through placement

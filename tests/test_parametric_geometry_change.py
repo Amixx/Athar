@@ -3,8 +3,9 @@
 Each variant edits one value inside a product's shape subgraph that is not a
 point coordinate or direction: an extrusion Depth, a profile dimension, a
 profile or solid Position, a mapped item's transformation Scale. Truth: exactly
-one product modified, geometry changed, placement unchanged. Moving the
-product's ObjectPlacement stays a placement-only change.
+one product modified, geometry changed, placement unchanged. Renaming shape
+metadata (representation identifier/type, profile name) changes nothing, and
+moving the product's ObjectPlacement stays a placement-only change.
 """
 
 from __future__ import annotations
@@ -99,6 +100,29 @@ def test_parametric_edit_is_one_geometry_change(tmp_path, edit, victim):
     assert aspects["geometry"] == "changed"
     assert aspects["placement"] == "unchanged"
     assert aspects["data"] == "unchanged"
+
+
+def _representation_identifier(f, solid, operator):
+    for rep in f.by_type("IfcShapeRepresentation"):
+        rep.RepresentationIdentifier = "Shape"
+
+
+def _representation_type(f, solid, operator):
+    for rep in f.by_type("IfcShapeRepresentation"):
+        rep.RepresentationType = "SolidModel"
+
+
+def _profile_name(f, solid, operator):
+    solid.SweptArea.ProfileName = "RECT 40x2000"
+
+
+@pytest.mark.parametrize("edit", [_representation_identifier, _representation_type, _profile_name])
+def test_shape_naming_metadata_is_not_a_change(tmp_path, edit):
+    old, new = str(tmp_path / "old.ifc"), str(tmp_path / "new.ifc")
+    _build(old)
+    _build(new, edit)
+    report = diff_files(old, new)
+    assert report["stats"]["modified"] == 0
 
 
 def test_object_placement_move_is_not_a_geometry_change(tmp_path):

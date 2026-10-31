@@ -19,6 +19,7 @@ from .parser import (
     _LENGTH_MEASURES,
     _VOLUME_MEASURES,
     _is_aggregation_type,
+    _MAX_TYPE_CHAIN_HOPS,
     _is_select_type,
     _measure_type_from_attr_type,
 )
@@ -71,6 +72,24 @@ def _shape_of(attr_type) -> dict:
     return {"k": "leaf", "m": _measure_kind(attr_type)}
 
 
+def _is_text(attr_type) -> bool:
+    """True when the attribute's underlying simple type is a string."""
+    current = attr_type
+    for _ in range(_MAX_TYPE_CHAIN_HOPS):
+        if _is_select_type(current):
+            return False
+        if _is_aggregation_type(current):
+            current = current.type_of_element()
+            continue
+        declared = current.declared_type() if hasattr(current, "declared_type") else None
+        if isinstance(declared, str):
+            return declared == "string"
+        if declared is None:
+            return False
+        current = declared
+    return False
+
+
 def _supertype_names(decl) -> set[str]:
     names: set[str] = set()
     current = decl
@@ -116,6 +135,7 @@ def _build_descriptors(schema_name: str) -> dict:
                     "name": attr_name,
                     "direction": "DIRECTION" in attr_name.upper(),
                     "derived": bool(derived[index]),
+                    "text": _is_text(attr.type_of_attribute()),
                     "shape": _shape_of(attr.type_of_attribute()),
                 }
             )
