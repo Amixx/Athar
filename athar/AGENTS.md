@@ -28,6 +28,8 @@ GitHub comments, and other presentation concerns.
   configuration error. Property-level gates (`forbid_property_removal`,
   `forbid_property_value_change`) read the report's `property_deltas`, so they
   only fire when `delta/report.py` emitted them (a `property_index` was present).
+  Property deltas are keyed by (pset, property name, inherited); type-level
+  values are `inherited: true` entries beside the occurrence's own values.
   `resolve_policy` accepts a file path or a shipped pack name; packs live as
   JSON in `athar/policies/` and are wheel-bundled package data.
 - `__main__.py` is the minimal CLI for raw JSON, streaming output, generated-at
@@ -78,6 +80,6 @@ corpus evidence and tests.
   one content are reported from the end of the file. `stats.orphan_property_sets`
   carries `{old, new, added, removed}` counts; streams emit
   `orphan_property_set_added` / `_removed` records.
-- `property_deltas` compares properties by name; `count_changed` lists names
+- `count_changed` in `property_deltas` lists (pset, name, inherited) keys
   whose occurrence count differs, so an object gaining a second identical
   property set is not a silent data change.

@@ -84,7 +84,7 @@ def _collect_direct_properties(ifc, index: dict[int, list[PropertyEntry]]) -> No
         pset = rel.RelatingPropertyDefinition
         if pset is None:
             continue
-        entries = _extract_from_pset_or_qto(pset)
+        entries = _extract_from_pset_or_qto(pset, inherited=False)
         if not entries:
             continue
         for obj in rel.RelatedObjects or ():
@@ -102,7 +102,7 @@ def _collect_type_properties(ifc, index: dict[int, list[PropertyEntry]]) -> None
             continue
         entries: list[PropertyEntry] = []
         for pset in type_obj.HasPropertySets or ():
-            entries.extend(_extract_from_pset_or_qto(pset))
+            entries.extend(_extract_from_pset_or_qto(pset, inherited=True))
         if not entries:
             continue
         for obj in rel.RelatedObjects or ():
@@ -112,15 +112,16 @@ def _collect_type_properties(ifc, index: dict[int, list[PropertyEntry]]) -> None
             index.setdefault(step_id, []).extend(entries)
 
 
-def _extract_from_pset_or_qto(definition) -> list[PropertyEntry]:
+def _extract_from_pset_or_qto(definition, *, inherited: bool) -> list[PropertyEntry]:
     if hasattr(definition, "HasProperties"):
-        return _extract_from_property_set(definition)
+        return _extract_from_property_set(definition, inherited)
     if hasattr(definition, "Quantities"):
-        return _extract_from_quantity_set(definition)
+        return _extract_from_quantity_set(definition, inherited)
     return []
 
 
-def _extract_from_property_set(pset) -> list[PropertyEntry]:
+def _extract_from_property_set(pset, inherited: bool) -> list[PropertyEntry]:
+    pset_name = str(_safe_get(pset, "Name") or "")
     entries: list[PropertyEntry] = []
     for prop in pset.HasProperties or ():
         if prop.is_a("IfcPropertySingleValue"):
@@ -132,17 +133,18 @@ def _extract_from_property_set(pset) -> list[PropertyEntry]:
                 continue
             value = _safe_get(nominal, "wrappedValue")
             if value is not None:
-                entries.append(PropertyEntry(name=str(name), value=value))
+                entries.append(PropertyEntry(pset=pset_name, name=str(name), value=value, inherited=inherited))
         elif prop.is_a("IfcPropertyEnumeratedValue"):
             name = _safe_get(prop, "Name")
             if not name:
                 continue
             values = [_safe_get(v, "wrappedValue") for v in (prop.EnumerationValues or ())]
-            entries.append(PropertyEntry(name=str(name), value=values))
+            entries.append(PropertyEntry(pset=pset_name, name=str(name), value=values, inherited=inherited))
     return entries
 
 
-def _extract_from_quantity_set(qto) -> list[PropertyEntry]:
+def _extract_from_quantity_set(qto, inherited: bool) -> list[PropertyEntry]:
+    qto_name = str(_safe_get(qto, "Name") or "")
     value_attr = {
         "IfcQuantityLength": "LengthValue",
         "IfcQuantityArea": "AreaValue",
@@ -161,7 +163,7 @@ def _extract_from_quantity_set(qto) -> list[PropertyEntry]:
             continue
         value = _safe_get(qty, attr)
         if value is not None:
-            entries.append(PropertyEntry(name=str(name), value=value))
+            entries.append(PropertyEntry(pset=qto_name, name=str(name), value=value, inherited=inherited))
     return entries
 
 

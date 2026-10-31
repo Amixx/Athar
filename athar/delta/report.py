@@ -261,50 +261,44 @@ def _property_deltas(
     old_entries: list[PropertyEntry],
     new_entries: list[PropertyEntry],
 ) -> dict | None:
-    """Compare old and new property lists and return per-property deltas."""
-    old_map: dict[str, str | int | float | bool | list[str]] = {}
-    for entry in old_entries:
-        old_map[entry.name] = entry.value
-    old_counts = Counter(entry.name for entry in old_entries)
-    new_counts = Counter(entry.name for entry in new_entries)
+    """Compare old and new property lists per (pset, name, inherited-from-type)."""
+    old_map = {(e.pset, e.name, e.inherited): e.value for e in old_entries}
+    new_map = {(e.pset, e.name, e.inherited): e.value for e in new_entries}
+    old_counts = Counter((e.pset, e.name, e.inherited) for e in old_entries)
+    new_counts = Counter((e.pset, e.name, e.inherited) for e in new_entries)
 
-    new_map: dict[str, str | int | float | bool | list[str]] = {}
-    for entry in new_entries:
-        new_map[entry.name] = entry.value
+    def entry(key: tuple[str, str, bool], **values) -> dict:
+        pset, name, inherited = key
+        return {"pset": pset, "name": name, "inherited": inherited, **values}
 
-    changed: list[dict] = []
-    added: list[dict] = []
-    removed: list[dict] = []
-
-    for name, new_val in new_map.items():
-        if name in old_map:
-            old_val = old_map[name]
-            if old_val != new_val:
-                changed.append({"name": name, "old_value": old_val, "new_value": new_val})
-        else:
-            added.append({"name": name, "new_value": new_val})
-
-    for name, old_val in old_map.items():
-        if name not in new_map:
-            removed.append({"name": name, "old_value": old_val})
+    changed = [
+        entry(key, old_value=old_map[key], new_value=value)
+        for key, value in new_map.items()
+        if key in old_map and old_map[key] != value
+    ]
+    added = [entry(key, new_value=value) for key, value in new_map.items() if key not in old_map]
+    removed = [entry(key, old_value=value) for key, value in old_map.items() if key not in new_map]
 
     count_changed = [
-        {"name": name, "old_count": old_counts[name], "new_count": new_counts[name]}
-        for name in old_map.keys() & new_map.keys()
-        if old_counts[name] != new_counts[name]
+        entry(key, old_count=old_counts[key], new_count=new_counts[key])
+        for key in old_map.keys() & new_map.keys()
+        if old_counts[key] != new_counts[key]
     ]
 
     if not (changed or added or removed or count_changed):
         return None
 
+    def order(item: dict) -> tuple[str, str, bool]:
+        return (item["name"], item["pset"], item["inherited"])
+
     result: dict[str, list[dict]] = {}
     if changed:
-        result["changed"] = sorted(changed, key=lambda x: x["name"])
+        result["changed"] = sorted(changed, key=order)
     if added:
-        result["added"] = sorted(added, key=lambda x: x["name"])
+        result["added"] = sorted(added, key=order)
     if removed:
-        result["removed"] = sorted(removed, key=lambda x: x["name"])
+        result["removed"] = sorted(removed, key=order)
     if count_changed:
-        result["count_changed"] = sorted(count_changed, key=lambda x: x["name"])
+        result["count_changed"] = sorted(count_changed, key=order)
 
     return result
