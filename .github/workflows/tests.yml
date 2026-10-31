@@ -52,7 +52,8 @@ jobs:
         run: git lfs ls-files -l -I "$DEFAULT_SUITE_LFS" | cut -d' ' -f1 | sort > .lfs-assets-id
 
       - name: Restore LFS object cache
-        uses: actions/cache@v4
+        id: lfs-cache
+        uses: actions/cache/restore@v4
         with:
           path: .git/lfs
           key: lfs-default-${{ hashFiles('.lfs-assets-id') }}
@@ -62,6 +63,13 @@ jobs:
         run: |
           git lfs install --local
           git lfs pull --include="$DEFAULT_SUITE_LFS"
+
+      - name: Save LFS object cache
+        if: steps.lfs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .git/lfs
+          key: ${{ steps.lfs-cache.outputs.cache-primary-key }}
 
       - uses: actions/setup-python@v5
         with:
