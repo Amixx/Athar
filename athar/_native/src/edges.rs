@@ -63,6 +63,7 @@ const GEOM_TARGET_PREFIXES: &[&str] = &[
     "IFCREPRESENTATION",
     "IFCDIRECTION",
     "IFCAXIS2PLACEMENT",
+    "IFCCARTESIANTRANSFORMATIONOPERATOR",
 ];
 const SPATIAL_ROOTS: &[&str] = &[
     "IFCPROJECT",
@@ -95,8 +96,22 @@ const POLICY: &[Rule] = &[
     Rule { relationship: "IFCRELDEFINESBYTYPE", source_attr: "RelatedObjects", target_attr: "RelatingType", classification: INCLUDE, domain: DATA, bidirectional: false, dynamic_domain: false },
 ];
 
-fn classify_direct(attr_name: &str, target_keyword: &str) -> Option<(&'static str, &'static str)> {
-    if PLACEMENT_ATTRS.contains(&attr_name) {
+fn is_axis_placement(keyword: &str) -> bool {
+    keyword.starts_with("IFCAXIS2PLACEMENT") || keyword == "IFCAXIS1PLACEMENT"
+}
+
+fn classify_direct(
+    source_keyword: &str,
+    attr_name: &str,
+    target_keyword: &str,
+) -> Option<(&'static str, &'static str)> {
+    // An axis placement's own point/directions are shape content wherever the
+    // placement is reached from geometry (an extrusion or profile Position, a
+    // MappingOrigin). Object placements reach it only through placement edges,
+    // so this does not pull ObjectPlacement into vh_geometry.
+    if is_axis_placement(source_keyword) && matches!(attr_name, "Location" | "Axis" | "RefDirection") {
+        Some((INCLUDE, GEOMETRY))
+    } else if PLACEMENT_ATTRS.contains(&attr_name) {
         Some((INCLUDE, PLACEMENT))
     } else if DATA_ATTR_HINTS.contains(&attr_name) {
         Some((INCLUDE, DATA))
@@ -127,7 +142,7 @@ pub fn build_edges(entities: &[Entity], id_to_keyword: &HashMap<i64, String>) ->
                 Some(kw) => kw.as_str(),
                 None => continue,
             };
-            if let Some((classification, domain)) = classify_direct(&r.attr_name, target_kw) {
+            if let Some((classification, domain)) = classify_direct(&ent.keyword, &r.attr_name, target_kw) {
                 edges.push(Edge {
                     source: ent.step_id,
                     target: r.target,

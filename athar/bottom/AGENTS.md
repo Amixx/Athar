@@ -38,6 +38,16 @@ supports IFC4 `IfcSpatialElement` and IFC2X3 `IfcSpatialStructureElement` roots.
   semantic reason and coverage proving the change.
 - Placement is excluded from `vh_geometry`; identical components at different
   locations should share the same geometry hash.
+- Shape-model classes (subtypes of `IfcProductRepresentation`,
+  `IfcRepresentation`, `IfcRepresentationMap`, `IfcRepresentationItem`,
+  `IfcProfileDef`; the descriptor's `geometric` flag) hash their scalar
+  attributes into `vh_geometry` (canon-v9): extrusion `Depth`, profile
+  dimensions, transformation `Scale`. An axis placement's `Location`/`Axis`/
+  `RefDirection` are include/geometry edges, and `MappingTarget` operators are
+  geometry targets, so solid, profile and mapped-item positions are shape
+  content. Object placements reach their axis placement only through placement
+  edges, so `ObjectPlacement` stays out of `vh_geometry`. Representation
+  contexts are not shape-model classes; their precision never enters the hash.
 - `IfcPolygonalFaceSet.Faces` is an include/geometry edge (canon-v6): before
   it, face `CoordIndex` edits were invisible to `vh_geometry` because the
   face entities never reached the product Merkle. Face-list order stays

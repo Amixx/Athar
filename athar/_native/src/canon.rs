@@ -185,8 +185,8 @@ pub fn canonicalize(
             }
             collect_refs(token, &attr_rc, &mut refs);
 
-            let geom = matches_geometry(&attr.name);
             let data = matches_data(&attr.name);
+            let geom = matches_geometry(&attr.name) || (desc.geometric && data);
             if !geom && !data {
                 continue;
             }

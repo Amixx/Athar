@@ -24,6 +24,16 @@ from .parser import (
 )
 from .schema_dict import canonical_class_name
 
+_SHAPE_MODEL_ROOTS = frozenset(
+    {
+        "IfcProductRepresentation",
+        "IfcRepresentation",
+        "IfcRepresentationMap",
+        "IfcRepresentationItem",
+        "IfcProfileDef",
+    }
+)
+
 
 def _measure_kind(attr_type) -> str:
     """Map an attribute's measure to the native `Measure` enum tag.
@@ -116,6 +126,7 @@ def _build_descriptors(schema_name: str) -> dict:
             "spatial": bool(
                 supers & {"IfcSpatialElement", "IfcSpatialStructureElement"}
             ),
+            "geometric": bool(supers & _SHAPE_MODEL_ROOTS),
             "guid": guid_index,
             "name": name_index,
             "attrs": attrs,

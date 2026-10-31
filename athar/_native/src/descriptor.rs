@@ -91,6 +91,9 @@ pub struct ClassDesc {
     pub class: String,
     pub product: bool,
     pub spatial: bool,
+    /// Shape-model class (representation, representation item, profile): its
+    /// scalar attributes (Depth, XDim, Radius, Scale, ...) enter `vh_geometry`.
+    pub geometric: bool,
     /// Attribute index of GlobalId / Name, if the class declares them.
     pub guid: Option<usize>,
     pub name: Option<usize>,
