@@ -80,6 +80,8 @@ pub struct AttrDesc {
     /// fallback measure for typed/default reals under this attribute.
     #[serde(default)]
     pub direction: bool,
+    /// True where this entity redeclares the attribute as DERIVE.
+    pub derived: bool,
     pub shape: Shape,
 }
 

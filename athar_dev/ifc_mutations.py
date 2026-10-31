@@ -367,12 +367,21 @@ def _pick_exclusive_string_property(model: ifcopenshell.file):
             if (
                 prop.is_a("IfcPropertySingleValue")
                 and prop.NominalValue is not None
-                and isinstance(prop.NominalValue.wrappedValue, str)
+                and _is_string_typed(prop.NominalValue)
                 and prop.NominalValue.wrappedValue
                 and len(model.get_inverse(prop)) == 1
             ):
                 return product, prop
     raise AssertionError("seed has no exclusive single-product pset with a string property")
+
+
+def _is_string_typed(value) -> bool:
+    # IfcLogical surfaces .U. as the str "UNKNOWN", so the Python type alone is not enough.
+    declared = value.declaration.declared_type()
+    while declared.as_named_type() is not None:
+        declared = declared.as_named_type().declared_type().declared_type()
+    simple = declared.as_simple_type()
+    return simple is not None and simple.declared_type() == "string"
 
 
 def _pick_exclusive_type_property(model: ifcopenshell.file):
