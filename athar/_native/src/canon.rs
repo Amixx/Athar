@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use unicode_normalization::UnicodeNormalization;
 
-use crate::descriptor::{ClassDesc, Measure, SchemaDesc, Shape};
+use crate::descriptor::{AttrDesc, ClassDesc, Measure, SchemaDesc, Shape};
 use crate::step::{Record, Token};
 
 /// A canonicalized entity, holding only what the downstream native stages need.
@@ -168,7 +168,7 @@ pub fn canonicalize(
         let n = rec.attrs.len().min(desc.attrs.len());
         for i in 0..n {
             let attr = &desc.attrs[i];
-            let token = &rec.attrs[i];
+            let token = attr_token(&rec.attrs[i], attr);
             if tri_canon.is_some()
                 && matches!(attr.name.as_str(), "Coordinates" | "CoordIndex" | "PnIndex")
             {
@@ -527,6 +527,16 @@ fn round_half_even(x: f64) -> i64 {
 // per-aggregate `Vec<String>` + `join`. Output is byte-identical to the former
 // returning versions. Thin `String`-returning wrappers are kept for unit tests.
 
+/// Exporters write `$` where the entity redeclares an attribute as DERIVE.
+fn attr_token<'a>(token: &'a Token, attr: &AttrDesc) -> &'a Token {
+    const DERIVED: &Token = &Token::Derived;
+    if attr.derived && matches!(token, Token::Null) {
+        DERIVED
+    } else {
+        token
+    }
+}
+
 fn encode_inner_into(
     out: &mut String,
     token: &Token,
@@ -583,8 +593,8 @@ fn encode_scalar_into(
 ) {
     match token {
         Token::Ref(_) => out.push('R'),
-        // Exporters write `$` where the schema redeclares an attribute as DERIVE.
-        Token::Null | Token::Derived => out.push('$'),
+        Token::Null => out.push('$'),
+        Token::Derived => out.push('*'),
         Token::Int(i) => {
             out.push('i');
             let _ = write!(out, "{i}");
@@ -796,14 +806,21 @@ mod tests {
     }
 
     #[test]
-    fn unset_and_derived_scalars_hash_alike() {
+    fn unset_equals_derived_only_at_derive_redeclared_attributes() {
         let none = units(&[]);
-        let encode = |t: &Token| {
+        let encode = |t: &Token, derived: bool| {
+            let attr = AttrDesc {
+                name: "Precision".to_string(),
+                direction: false,
+                derived,
+                shape: Shape::Leaf { m: Measure::Default },
+            };
             let mut s = String::new();
-            encode_scalar_into(&mut s, t, Measure::Default, false, &none);
+            encode_inner_into(&mut s, attr_token(t, &attr), &attr.shape, false, &none);
             s
         };
-        assert_eq!(encode(&Token::Null), encode(&Token::Derived));
+        assert_eq!(encode(&Token::Null, true), encode(&Token::Derived, true));
+        assert_ne!(encode(&Token::Null, false), encode(&Token::Derived, false));
     }
 
     #[test]

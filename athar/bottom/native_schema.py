@@ -94,6 +94,7 @@ def _build_descriptors(schema_name: str) -> dict:
         type_name = decl.name()
         attrs = []
         guid_index = name_index = None
+        derived = decl.derived()
         for index, attr in enumerate(decl.all_attributes()):
             attr_name = attr.name()
             if attr_name == "GlobalId":
@@ -104,6 +105,7 @@ def _build_descriptors(schema_name: str) -> dict:
                 {
                     "name": attr_name,
                     "direction": "DIRECTION" in attr_name.upper(),
+                    "derived": bool(derived[index]),
                     "shape": _shape_of(attr.type_of_attribute()),
                 }
             )
