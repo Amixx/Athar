@@ -112,6 +112,9 @@ def _stream_ndjson(report: dict) -> Iterator[str]:
     for section in ("added", "deleted", "modified", "unchanged"):
         for item in report.get(section, []):
             yield json.dumps({"record_type": section, "item": item}, sort_keys=True)
+    for change, items in report.get("orphan_property_sets", {}).items():
+        for item in items:
+            yield json.dumps({"record_type": f"orphan_property_set_{change}", "item": item}, sort_keys=True)
     yield json.dumps({"record_type": "end", "stats": report.get("stats", {})}, sort_keys=True)
 
 
@@ -130,6 +133,10 @@ def _stream_chunked_json(report: dict, *, chunk_size: int) -> Iterator[str]:
         for i in range(0, len(rows), chunk_size):
             chunk = rows[i : i + chunk_size]
             yield json.dumps({"chunk_type": section, "items": chunk}, sort_keys=True)
+    for change, rows in report.get("orphan_property_sets", {}).items():
+        for i in range(0, len(rows), chunk_size):
+            chunk = rows[i : i + chunk_size]
+            yield json.dumps({"chunk_type": f"orphan_property_set_{change}", "items": chunk}, sort_keys=True)
     yield json.dumps({"chunk_type": "end", "stats": report.get("stats", {})}, sort_keys=True)
 
 

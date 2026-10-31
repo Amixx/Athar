@@ -7,7 +7,9 @@ preserve their original scale and unit — no quantization.
 
 from __future__ import annotations
 
-from .types import PropertyEntry
+import json
+
+from .types import OrphanPropertySet, PropertyEntry
 
 
 def extract_properties(ifc) -> dict[int, list[PropertyEntry]]:
@@ -19,6 +21,61 @@ def extract_properties(ifc) -> dict[int, list[PropertyEntry]]:
     _collect_type_properties(ifc, index)
 
     return index
+
+
+def extract_orphan_property_sets(ifc) -> tuple[OrphanPropertySet, ...]:
+    """Property set definitions that no relationship or type object references."""
+
+    referenced: set[int] = set()
+    for rel in ifc.by_type("IfcRelDefinesByProperties"):
+        definition = rel.RelatingPropertyDefinition
+        for item in definition if isinstance(definition, tuple) else (definition,):
+            if item is not None:
+                referenced.add(item.id())
+    for type_obj in ifc.by_type("IfcTypeObject"):
+        for pset in type_obj.HasPropertySets or ():
+            referenced.add(pset.id())
+
+    orphans: list[OrphanPropertySet] = []
+    for definition in ifc.by_type("IfcPropertySetDefinition"):
+        if definition.id() in referenced:
+            continue
+        orphans.append(
+            OrphanPropertySet(
+                step_id=definition.id(),
+                guid=definition.GlobalId,
+                name=definition.Name,
+                entity_type=definition.is_a(),
+                content_key=json.dumps(_content(definition), sort_keys=True, default=repr),
+            )
+        )
+    orphans.sort(key=lambda item: item.step_id)
+    return tuple(orphans)
+
+
+_UNORDERED_AGGREGATES = {"HasProperties", "Quantities"}
+_IDENTITY_ATTRIBUTES = {"id", "GlobalId", "OwnerHistory"}
+
+
+def _content(entity) -> dict:
+    info = entity.get_info(recursive=False)
+    out: dict = {}
+    for attr, value in info.items():
+        if attr in _IDENTITY_ATTRIBUTES:
+            continue
+        encoded = _content_value(value)
+        if attr in _UNORDERED_AGGREGATES and isinstance(encoded, list):
+            encoded = sorted(encoded, key=lambda item: json.dumps(item, sort_keys=True, default=repr))
+        out[attr] = encoded
+    return out
+
+
+def _content_value(value):
+    if isinstance(value, tuple):
+        return [_content_value(item) for item in value]
+    if hasattr(value, "get_info"):
+        return _content(value)
+    return value
 
 
 def _collect_direct_properties(ifc, index: dict[int, list[PropertyEntry]]) -> None:

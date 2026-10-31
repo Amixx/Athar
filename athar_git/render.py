@@ -40,6 +40,9 @@ def render_text_report(report: dict, *, max_items: int = DEFAULT_MAX_ITEMS) -> s
         )
 
     lines.extend(_class_count_lines(report))
+    orphan_line = _orphan_property_set_line(report)
+    if orphan_line:
+        lines.append(orphan_line)
 
     remaining = max_items
     for section, marker in (("modified", "~"), ("added", "+"), ("deleted", "-")):
@@ -61,7 +64,7 @@ def render_text_report(report: dict, *, max_items: int = DEFAULT_MAX_ITEMS) -> s
                 lines.append(f"... and {hidden_total} more changed entities")
             break
 
-    if stats.get("added", 0) == stats.get("deleted", 0) == stats.get("modified", 0) == 0:
+    if stats.get("added", 0) == stats.get("deleted", 0) == stats.get("modified", 0) == 0 and not orphan_line:
         lines.append("")
         lines.append("No semantic entity changes.")
 
@@ -105,9 +108,14 @@ def render_markdown_report(report: dict, *, max_items: int = DEFAULT_MAX_ITEMS) 
         lines.append("")
         lines.extend(class_lines)
 
+    orphan_line = _orphan_property_set_line(report)
+    if orphan_line:
+        lines.extend(["", orphan_line])
+
     changed_total = sum(int(stats.get(name, 0) or 0) for name in ("added", "deleted", "modified"))
     if changed_total == 0:
-        lines.extend(["", "No semantic entity changes."])
+        if not orphan_line:
+            lines.extend(["", "No semantic entity changes."])
     else:
         lines.extend(["", "<details>", "<summary>Changed entities</summary>", "", "```text"])
         text = render_text_report(report, max_items=max_items).rstrip()
@@ -126,6 +134,17 @@ def _summary_line(stats: dict) -> str:
         f"={stats.get('unchanged', 0)} "
         f"(old {stats.get('old_signatures', 0)}, new {stats.get('new_signatures', 0)})"
     )
+
+
+def _orphan_property_set_line(report: dict) -> str | None:
+    orphans = report.get("orphan_property_sets") or {}
+    added = orphans.get("added") or []
+    removed = orphans.get("removed") or []
+    if not added and not removed:
+        return None
+    names = Counter(item.get("name") or "?" for item in [*added, *removed])
+    top = ", ".join(f"{name} {count}" for name, count in sorted(names.items(), key=lambda pair: (-pair[1], pair[0]))[:5])
+    return f"Unattached property sets: +{len(added)} -{len(removed)} ({top})"
 
 
 def _class_count_lines(report: dict) -> list[str]:

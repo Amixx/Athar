@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from athar.bottom.types import PropertyEntry, SignatureBundle, SignatureVector
+from collections import Counter, defaultdict
+
+from athar.bottom.types import OrphanPropertySet, PropertyEntry, SignatureBundle, SignatureVector
 from athar.matcher.types import MatchedPair
 
 
@@ -62,6 +64,9 @@ def build_delta_report(
     unchanged.sort(key=lambda item: (item["new"]["class"], item["new"]["step_id"]))
     added.sort(key=lambda item: (item["class"], item["step_id"]))
     deleted.sort(key=lambda item: (item["class"], item["step_id"]))
+    orphans_added, orphans_removed = _orphan_property_set_diff(
+        old_bundle.orphan_property_sets, new_bundle.orphan_property_sets
+    )
 
     return {
         "engine": "athar",
@@ -81,12 +86,59 @@ def build_delta_report(
             "modified_change_scope": _scope_stats(modified),
             "placement_cohorts": _placement_cohorts(modified),
             "dropped_matches": dropped_matches,
+            "orphan_property_sets": {
+                "old": len(old_bundle.orphan_property_sets),
+                "new": len(new_bundle.orphan_property_sets),
+                "added": len(orphans_added),
+                "removed": len(orphans_removed),
+            },
         },
         "added": added,
         "deleted": deleted,
         "modified": modified,
         "unchanged": unchanged,
+        "orphan_property_sets": {"added": orphans_added, "removed": orphans_removed},
     }
+
+
+def _orphan_property_set_diff(
+    old_orphans: tuple[OrphanPropertySet, ...],
+    new_orphans: tuple[OrphanPropertySet, ...],
+) -> tuple[list[dict], list[dict]]:
+    """Multiset difference of orphan property sets by content, GlobalId ignored.
+
+    Surplus copies of one content are reported from the end of the file.
+    """
+    old_by_key: dict[str, list[OrphanPropertySet]] = defaultdict(list)
+    new_by_key: dict[str, list[OrphanPropertySet]] = defaultdict(list)
+    for orphan in old_orphans:
+        old_by_key[orphan.content_key].append(orphan)
+    for orphan in new_orphans:
+        new_by_key[orphan.content_key].append(orphan)
+
+    added: list[OrphanPropertySet] = []
+    removed: list[OrphanPropertySet] = []
+    for key in old_by_key.keys() | new_by_key.keys():
+        old_items = sorted(old_by_key.get(key, ()), key=lambda item: item.step_id)
+        new_items = sorted(new_by_key.get(key, ()), key=lambda item: item.step_id)
+        surplus = len(new_items) - len(old_items)
+        if surplus > 0:
+            added.extend(new_items[-surplus:])
+        elif surplus < 0:
+            removed.extend(old_items[surplus:])
+
+    def summary(orphan: OrphanPropertySet) -> dict:
+        return {
+            "step_id": orphan.step_id,
+            "guid": orphan.guid,
+            "name": orphan.name,
+            "entity_type": orphan.entity_type,
+        }
+
+    return (
+        [summary(item) for item in sorted(added, key=lambda item: item.step_id)],
+        [summary(item) for item in sorted(removed, key=lambda item: item.step_id)],
+    )
 
 
 def _entity_summary(sig: SignatureVector) -> dict:
@@ -213,6 +265,8 @@ def _property_deltas(
     old_map: dict[str, str | int | float | bool | list[str]] = {}
     for entry in old_entries:
         old_map[entry.name] = entry.value
+    old_counts = Counter(entry.name for entry in old_entries)
+    new_counts = Counter(entry.name for entry in new_entries)
 
     new_map: dict[str, str | int | float | bool | list[str]] = {}
     for entry in new_entries:
@@ -234,7 +288,13 @@ def _property_deltas(
         if name not in new_map:
             removed.append({"name": name, "old_value": old_val})
 
-    if not (changed or added or removed):
+    count_changed = [
+        {"name": name, "old_count": old_counts[name], "new_count": new_counts[name]}
+        for name in old_map.keys() & new_map.keys()
+        if old_counts[name] != new_counts[name]
+    ]
+
+    if not (changed or added or removed or count_changed):
         return None
 
     result: dict[str, list[dict]] = {}
@@ -244,5 +304,7 @@ def _property_deltas(
         result["added"] = sorted(added, key=lambda x: x["name"])
     if removed:
         result["removed"] = sorted(removed, key=lambda x: x["name"])
+    if count_changed:
+        result["count_changed"] = sorted(count_changed, key=lambda x: x["name"])
 
     return result

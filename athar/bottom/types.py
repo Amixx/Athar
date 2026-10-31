@@ -16,6 +16,21 @@ class PropertyEntry:
     value: str | int | float | bool | list[str]
 
 
+@dataclass(frozen=True)
+class OrphanPropertySet:
+    """A property set definition no object or type references.
+
+    ``content_key`` is the set's canonical content without ``GlobalId`` and
+    ``OwnerHistory``, so identical copies share a key.
+    """
+
+    step_id: int
+    guid: str | None
+    name: str | None
+    entity_type: str
+    content_key: str
+
+
 @dataclass
 class ParseDiagnostics:
     """Parse-time diagnostic counters."""
@@ -55,3 +70,4 @@ class SignatureBundle:
     diagnostics: ParseDiagnostics
     edge_stats: dict[str, int]
     property_index: dict[int, list[PropertyEntry]] | None = None
+    orphan_property_sets: tuple[OrphanPropertySet, ...] = ()

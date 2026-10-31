@@ -15,7 +15,7 @@ from athar.bottom.signatures import build_signature_bundle
 from athar.bottom.types import SignatureBundle
 from athar_git import __version__ as ATHAR_GIT_VERSION
 
-CACHE_FORMAT_VERSION = 1
+CACHE_FORMAT_VERSION = 2
 
 
 @dataclass(frozen=True)
