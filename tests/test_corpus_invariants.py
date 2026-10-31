@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import re
 import uuid
+from pathlib import Path
 
 import ifcopenshell
 import pytest
 
-from athar.bottom.parser import IfcParseError
+from athar.bottom.parser import IfcParseError, open_ifc
 from athar.engine import diff_files
 from tests.corpus import assert_report_invariants, assert_zero_diff, corpus_path
 
@@ -261,3 +262,30 @@ def test_id_above_ifcopenshell_range_fails_with_a_named_cause(tmp_path):
     assert str(path) in message
     assert f"entity id #{oversized}" in message
     assert "exceeds 2147483647" in message
+
+
+def test_parse_failure_lists_at_most_five_causes(tmp_path):
+    path = tmp_path / "many-errors.ifc"
+    unknown = "".join(f"#{n}=IFCNOTANENTITY{n}();\n" for n in range(1, 9))
+    path.write_text(
+        "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\nFILE_NAME('','',(''),(''),'','','');\n"
+        "FILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n" + unknown
+        + "#9=IFCWALL(#12345678901234567890123);\nENDSEC;\nEND-ISO-10303-21;\n"
+    )
+    with pytest.raises(IfcParseError) as excinfo:
+        open_ifc(str(path))
+    message = str(excinfo.value)
+    assert "entity id #12345678901234567890123" in message
+    assert message.endswith("(+4 more)")
+
+
+def test_parse_failure_without_a_recognised_cause_keeps_the_raw_log(tmp_path):
+    path = tmp_path / "oversized-id.ifc"
+    _with_aggregate_target(path, 12345678901234567890123)
+    ifcopenshell.ifcopenshell_wrapper.set_log_format_json()
+    try:
+        with pytest.raises(IfcParseError) as excinfo:
+            open_ifc(str(path))
+    finally:
+        ifcopenshell.ifcopenshell_wrapper.set_log_format_text()
+    assert "invalid instance name" in str(excinfo.value)

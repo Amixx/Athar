@@ -30,7 +30,9 @@ jobs:
       - name: List the default suite's LFS files
         run: |
           python -m pip install pytest
-          echo "DEFAULT_SUITE_LFS=$(python -m tests.corpus --default-lfs)" >> "$GITHUB_ENV"
+          list=$(python -m tests.corpus --default-lfs)
+          test -n "$list"
+          echo "DEFAULT_SUITE_LFS=$list" >> "$GITHUB_ENV"
 
       # LFS bandwidth is metered (~650MB corpus vs 1GB/month free), so the
       # default-suite objects are cached; runs on main save the cache that PR

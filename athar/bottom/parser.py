@@ -39,6 +39,10 @@ _LOG_ERROR = re.compile(r"^\[error\] \[[^\]]*\] (.*)$", re.MULTILINE)
 _INVALID_ID_TOKEN = re.compile(r"^token (\d+) at offset (\d+) invalid instance name$")
 
 
+_MAX_CAUSES = 5
+_MAX_RAW_LOG_CHARS = 2000
+
+
 class IfcParseError(ValueError):
     """An IFC file ifcopenshell cannot parse."""
 
@@ -52,7 +56,8 @@ def open_ifc(path: str):
     try:
         return ifcopenshell.open(path)
     except ifcopenshell.Error as exc:
-        cause = _parse_failure_cause(ifcopenshell.get_log()) or str(exc)
+        log = ifcopenshell.get_log()
+        cause = _parse_failure_cause(log) or f"{exc}: {log.strip()[:_MAX_RAW_LOG_CHARS] or 'no log output'}"
         raise IfcParseError(f"Cannot parse IFC file {path}: {cause}") from exc
 
 
@@ -61,13 +66,17 @@ def _parse_failure_cause(log: str) -> str:
     for message in _LOG_ERROR.findall(log):
         token = _INVALID_ID_TOKEN.match(message)
         if token and int(token.group(1)) > _MAX_IFCOPENSHELL_ID:
-            causes.append(
+            causes.insert(
+                0,
                 f"entity id #{token.group(1)} at byte offset {token.group(2)} exceeds "
-                f"{_MAX_IFCOPENSHELL_ID}, the largest id ifcopenshell accepts"
+                f"{_MAX_IFCOPENSHELL_ID}, the largest id ifcopenshell accepts",
             )
         else:
             causes.append(message)
-    return "; ".join(causes)
+    shown = "; ".join(causes[:_MAX_CAUSES])
+    if len(causes) > _MAX_CAUSES:
+        shown += f" (+{len(causes) - _MAX_CAUSES} more)"
+    return shown
 
 
 def _assert_supported_schema(schema: str) -> None:

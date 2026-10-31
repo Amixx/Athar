@@ -13,6 +13,7 @@ import json
 import sys
 from typing import Any
 
+from athar.bottom.parser import IfcParseError
 from athar.check import resolve_policy
 
 from .store import BaselineStore, StoreError
@@ -83,7 +84,7 @@ def run_store(args: argparse.Namespace) -> int:
     store = BaselineStore(args.root)
     try:
         return args.func(store, args)
-    except StoreError as exc:
+    except (StoreError, IfcParseError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

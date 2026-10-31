@@ -18,6 +18,7 @@ import ifcopenshell
 import pytest
 
 from athar.bottom.parser import IfcParseError
+from athar_store.cli import build_store_parser, run_store
 from athar_store import (
     BaselineStore,
     UnknownBaselineError,
@@ -217,3 +218,15 @@ def test_list_projects(store, models):
     projects = store.list_projects()
     assert [p["project_id"] for p in projects] == ["acme", "globex"]
     assert projects[0]["name"] == "Acme Tower"
+
+
+def test_store_cli_reports_unparseable_ifc_without_traceback(models, tmp_path, capsys):
+    corrupt = tmp_path / "corrupt.ifc"
+    text = models["baseline"].read_text(encoding="utf-8")
+    corrupt.write_text(re.sub(r"IFCUNITASSIGNMENT\(\(#\d+", "IFCUNITASSIGNMENT((#99999999999", text))
+    root = str(tmp_path / "cli-store")
+    parser = build_store_parser()
+    assert run_store(parser.parse_args(["--root", root, "init", "acme"])) == 0
+    args = parser.parse_args(["--root", root, "set-baseline", "acme", "arch", str(corrupt), "--actor", "alice"])
+    assert run_store(args) == 1
+    assert "Error: Cannot parse IFC file" in capsys.readouterr().err
