@@ -99,7 +99,8 @@ athar rekey base.ifc exported.ifc -o rekeyed.ifc
 This spike restores BASE's STEP IDs on matched entities in NEW and assigns
 unmatched entities IDs above BASE's maximum. It uses unique GUIDs, Athar's
 product matches, same-parent attribute roles, inverse relationship roles, and
-exact resource content. Identical duplicates are paired in STEP order. Shared
+exact resource content. Identical duplicates are paired through their matched
+parents first, then in STEP order. Shared
 resources remain shared; conflicting role proposals are not forced into a
 many-to-one match. Resource role recovery is a serialization heuristic, not an
 extension of the semantic diff matcher's identity policy.
