@@ -30,7 +30,7 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
 
     from .native_schema import schema_descriptors_json
     from .parser import _assert_supported_schema, _extract_unit_context
-    from .properties import extract_properties
+    from .properties import extract_orphan_property_sets, extract_properties
 
     # ifcopenshell is used for the schema name, unit factors, and raw property
     # values (relationship/pset traversal only, not the mesh primitives); it is
@@ -41,6 +41,7 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
     _assert_supported_schema(schema)
     unit_factors = _extract_unit_context(ifc).get("unit_factors", {})
     property_index = extract_properties(ifc)
+    orphan_property_sets = extract_orphan_property_sets(ifc)
     del ifc
 
     schema_json = schema_descriptors_json(schema)
@@ -92,4 +93,5 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
         diagnostics=diagnostics,
         edge_stats=dict(edge_stats_map),
         property_index=property_index,
+        orphan_property_sets=orphan_property_sets,
     )

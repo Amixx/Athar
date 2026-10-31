@@ -70,3 +70,14 @@ corpus evidence and tests.
   and singletons never join a cohort.
 - Because `geometry_hash` requires equal full vectors, every modified item is
   a GUID match by construction.
+- `orphan_property_sets{added,removed}` lists property set definitions that no
+  `IfcRelDefinesByProperties` or `IfcTypeObject.HasPropertySets` references.
+  They have no signature, so they are compared as a multiset of content keys
+  (GlobalId and OwnerHistory excluded): exporters regenerate orphan GlobalIds
+  on every export (Revit, 2026-10: ~14k orphans per file). Surplus copies of
+  one content are reported from the end of the file. `stats.orphan_property_sets`
+  carries `{old, new, added, removed}` counts; streams emit
+  `orphan_property_set_added` / `_removed` records.
+- `property_deltas` compares properties by name; `count_changed` lists names
+  whose occurrence count differs, so an object gaining a second identical
+  property set is not a silent data change.
