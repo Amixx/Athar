@@ -1,16 +1,24 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
 
 [project]
-name = "athar"
+name = "athar-ifc"
 version = "0.1.0"
 description = "Semantic IFC diff engine"
 readme = "README.md"
 requires-python = ">=3.10"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Rust",
+]
 dependencies = [
   "ifcopenshell",
 ]
+
+[project.urls]
+Repository = "https://github.com/Amixx/Athar"
 
 [project.optional-dependencies]
 benchmark = [
@@ -23,26 +31,32 @@ benchmark-ui = [
   "fastapi",
   "uvicorn",
 ]
-# Build-time tooling for the optional Rust accelerator (athar/_native).
-# Runtime requires nothing extra: athar.bottom imports `athar_native` when it
-# is present and falls back to pure Python otherwise.
-native = [
-  "maturin>=1.5,<2.0",
-]
-
-[tool.setuptools.packages.find]
-include = ["athar*", "athar_git*", "athar_store*", "athar_qa*"]
-
-[tool.setuptools.package-data]
-# Optional wheel-bundled viewer SPA: run `make viewer-package-static` before
-# building a release distribution (see athar_view.server.find_dist).
-athar_view = ["static/**/*"]
-# Shipped, reusable policy packs resolved by name via athar.check.resolve_policy.
-athar = ["policies/*.json"]
 
 [project.scripts]
 athar = "athar.__main__:main"
 athar-benchmark-ui = "athar_bench.ui:main"
+
+[tool.maturin]
+manifest-path = "athar/_native/Cargo.toml"
+module-name = "athar_native"
+python-packages = [
+  "athar",
+  "athar_bench",
+  "athar_dev",
+  "athar_git",
+  "athar_qa",
+  "athar_store",
+  "athar_view",
+]
+include = [
+  { path = "athar_view/static/**/*", format = ["sdist", "wheel"] },
+]
+exclude = [
+  { path = "athar/_native/**/*", format = "wheel" },
+  { path = "**/__pycache__/**/*", format = "wheel" },
+  { path = "**/AGENTS.md", format = ["sdist", "wheel"] },
+  { path = "**/CLAUDE.md", format = ["sdist", "wheel"] },
+]
 
 [tool.pytest.ini_options]
 markers = [

@@ -21,7 +21,7 @@ help:
 	"  make benchmark-ui-refresh   Regenerate benchmark JSON, then serve dashboard locally" \
 	"  make test                   Run the default test suite (fast; small real IFC fixtures)" \
 	"  make test-large-acceptance  Run opt-in large IFC acceptance checks" \
-	"  make native-build           Build the optional Rust accelerator into the venv (requires cargo + maturin)" \
+	"  make native-build           Build the Rust signature pipeline and install Athar editable into the venv (requires cargo + maturin)" \
 	"  make native-clean           Remove the Rust build artifacts (athar/_native/target)" \
 	"  make viewer-build           Build the viewer SPA into viewer/dist (requires bun)" \
 	"  make viewer-package-static  Build and copy viewer assets into athar_view/static for packaging" \
@@ -67,7 +67,7 @@ test-large-acceptance:
 native-build:
 	@$(PYTHON) -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('maturin') else 1)" \
 		|| $(PYTHON) -m pip install "maturin>=1.5,<2.0"
-	$(PYTHON) -m maturin develop --release --manifest-path athar/_native/Cargo.toml
+	$(PYTHON) -m maturin develop --release
 
 native-clean:
 	rm -rf athar/_native/target
