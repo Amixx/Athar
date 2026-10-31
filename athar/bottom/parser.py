@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from .constants import SUPPORTED_SCHEMA_PREFIXES
+from .constants import SUPPORTED_SCHEMAS
 
 _LENGTH_MEASURES = {
     "IFCLENGTHMEASURE",
@@ -34,8 +34,8 @@ _MAX_TYPE_CHAIN_HOPS = 32
 
 
 def _assert_supported_schema(schema: str) -> None:
-    if not any(schema.startswith(prefix) for prefix in SUPPORTED_SCHEMA_PREFIXES):
-        allowed = ", ".join(SUPPORTED_SCHEMA_PREFIXES)
+    if schema not in SUPPORTED_SCHEMAS:
+        allowed = ", ".join(SUPPORTED_SCHEMAS)
         raise ValueError(f"Unsupported schema: {schema!r}. Current engine supports {allowed}.")
 
 

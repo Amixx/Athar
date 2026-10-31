@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from athar.bottom.constants import SUPPORTED_SCHEMA_PREFIXES
+from athar.bottom.parser import _assert_supported_schema
 from athar.bottom.types import SignatureVector
 from athar.engine import SchemaMismatchError, _assert_schema_compatible, _guid_collision_count
 from athar.engine import diff_files, stream_diff_files
@@ -40,9 +40,12 @@ def test_engine_diff_detects_changes_between_versions():
     assert report["stats"]["modified_change_scope"] == {"intrinsic": 0, "transitive": 1, "mixed": 0}
 
 
-def test_engine_schema_support_includes_ifc4_and_ifc2x3():
-    assert "IFC4" in SUPPORTED_SCHEMA_PREFIXES
-    assert "IFC2X3" in SUPPORTED_SCHEMA_PREFIXES
+def test_engine_supports_exactly_ifc4_and_ifc2x3():
+    _assert_supported_schema("IFC4")
+    _assert_supported_schema("IFC2X3")
+    for schema in ("IFC4X3", "IFC4X1"):
+        with pytest.raises(ValueError, match="Unsupported schema"):
+            _assert_supported_schema(schema)
 
 
 def test_engine_rejects_cross_schema_comparison():
