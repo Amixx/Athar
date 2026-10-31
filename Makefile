@@ -7,7 +7,7 @@ BENCHMARK_PAGE ?= $(BENCHMARK_DIR)/site/index.html
 BENCHMARK_REPEATS ?= 3
 BENCHMARK_TIMEOUT_S ?= 300
 
-.PHONY: help dev-setup benchmark-setup benchmark-ui-setup benchmark-run benchmark-page benchmark-ui benchmark-ui-refresh test test-large-acceptance native-build native-clean viewer-build viewer-package-static viewer-test
+.PHONY: help dev-setup benchmark-setup benchmark-ui-setup benchmark-run benchmark-page benchmark-ui benchmark-ui-refresh test test-large-acceptance native-build native-clean viewer-build viewer-package-static viewer-test publish
 
 help:
 	@printf "%s\n" \
@@ -25,7 +25,8 @@ help:
 	"  make native-clean           Remove the Rust build artifacts (athar/_native/target)" \
 	"  make viewer-build           Build the viewer SPA into viewer/dist (requires bun)" \
 	"  make viewer-package-static  Build and copy viewer assets into athar_view/static for packaging" \
-	"  make viewer-test            Viewer unit tests + headless e2e smoke (requires bun)"
+	"  make viewer-test            Viewer unit tests + headless e2e smoke (requires bun)" \
+	"  make publish RUN=<id>       Upload a Python release run's wheels and sdist to PyPI (token from ~/.pypirc)"
 
 dev-setup:
 	@missing="$$( $(PYTHON) -c "import importlib.util; packages=['pytest','ifcopenshell']; print(' '.join(name for name in packages if importlib.util.find_spec(name) is None))" )"; \
@@ -82,3 +83,11 @@ viewer-package-static: viewer-build
 
 viewer-test:
 	cd viewer && bun test tests && bunx playwright test
+
+publish:
+	@test -n "$(RUN)" || { echo "usage: make publish RUN=<python-release run id>"; exit 2; }
+	@test "$$(gh run view $(RUN) --json conclusion -q .conclusion)" = success || { echo "run $(RUN) did not succeed"; exit 1; }
+	rm -rf dist
+	gh run download $(RUN) --pattern 'dist-*' --dir dist
+	uvx twine check dist/*/*
+	uvx twine upload dist/*/*

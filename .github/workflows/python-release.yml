@@ -2,16 +2,6 @@ name: Python release
 
 on:
   workflow_dispatch:
-    inputs:
-      publish:
-        description: "Where to publish the built Python distributions"
-        required: true
-        default: "artifact"
-        type: choice
-        options:
-          - artifact
-          - testpypi
-          - pypi
 
 permissions:
   contents: read
@@ -119,25 +109,3 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
-  publish:
-    if: inputs.publish != 'artifact'
-    needs: [wheels, sdist]
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: dist-*
-          path: dist
-          merge-multiple: true
-
-      - name: Publish to TestPyPI
-        if: inputs.publish == 'testpypi'
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-
-      - name: Publish to PyPI
-        if: inputs.publish == 'pypi'
-        uses: pypa/gh-action-pypi-publish@release/v1
