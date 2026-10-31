@@ -32,6 +32,14 @@ GitHub comments, and other presentation concerns.
   JSON in `athar/policies/` and are wheel-bundled package data.
 - `__main__.py` is the minimal CLI for raw JSON, streaming output, generated-at
   audit timestamps, and `check`.
+- `rekey.py` is an experimental serialization utility, not a semantic matcher
+  tier. It anchors all unique rooted GUIDs plus the existing product matches,
+  propagates same-attribute and inverse-relationship roles, and pairs remaining
+  exact resource content in STEP order. Role guesses never affect diff reports.
+  The native tokenizer preserves literal spellings while replacing ID tokens;
+  IfcOpenShell verifies the entire output graph before an atomic file replace.
+  Do not substitute a normal serializer: changed numeric/escape spellings can
+  dominate the text diff and expose the native hasher's undecoded STEP strings.
 
 ## Matching Contract
 

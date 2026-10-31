@@ -90,6 +90,33 @@ python -m athar old.ifc new.ifc --stream ndjson
 python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
 ```
 
+### Experimental STEP ID Restoration
+
+```bash
+athar rekey base.ifc exported.ifc -o rekeyed.ifc
+```
+
+This spike restores BASE's STEP IDs on matched entities in NEW and assigns
+unmatched entities IDs above BASE's maximum. It uses unique GUIDs, Athar's
+product matches, same-parent attribute roles, inverse relationship roles, and
+exact resource content. Identical duplicates are paired in STEP order. Shared
+resources remain shared; conflicting role proposals are not forced into a
+many-to-one match. Resource role recovery is a serialization heuristic, not an
+extension of the semantic diff matcher's identity policy.
+
+The native tokenizer rewrites ID tokens and orders records by output ID without
+changing NEW's literal spellings. Before publishing the output, IfcOpenShell
+reopens it and every entity's class, attributes, and mapped references are
+checked against NEW. Inputs cannot be overwritten. Schemas must match.
+Matching statistics, including per-class counts, are printed as JSON.
+
+This is not a general merge-safety guarantee: ambiguous resources, changed
+sharing, unordered collections, regenerated GUIDs, and geometry restructuring
+can still produce text churn or misleading identity continuity. Use the result
+as an experiment, not as an unattended merge driver. The repeatable study runner
+is `scripts/explore/rekey_study.py`; it requires a local corpus and an external
+evidence directory. Its merge demo includes an explicitly constructed fork.
+
 ### CI Policy Gates
 
 `athar check` evaluates an Athar JSON report against a small JSON policy and
