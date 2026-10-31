@@ -86,6 +86,7 @@ viewer-test:
 
 publish:
 	@test -n "$(RUN)" || { echo "usage: make publish RUN=<python-release run id>"; exit 2; }
+	@test "$$(gh run view $(RUN) --json conclusion -q .conclusion)" = success || { echo "run $(RUN) did not succeed"; exit 1; }
 	rm -rf dist
 	gh run download $(RUN) --pattern 'dist-*' --dir dist
 	uvx twine check dist/*/*
