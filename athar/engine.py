@@ -208,4 +208,9 @@ def _file_sha256(path: str) -> str:
 
 
 def _package_version() -> str:
-    return metadata.version("athar-ifc")
+    try:
+        return metadata.version("athar-ifc")
+    except metadata.PackageNotFoundError as error:
+        raise RuntimeError(
+            "athar-ifc is not installed; install it with `make native-build` or `pip install -e .`"
+        ) from error
