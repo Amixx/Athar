@@ -8,7 +8,6 @@ import os
 from collections import Counter
 from datetime import datetime, timezone
 from importlib import metadata
-from pathlib import Path
 from typing import Iterator
 
 from athar.bottom.constants import CANON_VERSION
@@ -210,26 +209,8 @@ def _file_sha256(path: str) -> str:
 
 def _package_version() -> str:
     try:
-        return metadata.version("athar")
-    except metadata.PackageNotFoundError:
-        return _pyproject_version()
-
-
-def _pyproject_version() -> str:
-    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    try:
-        lines = pyproject.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return "unknown"
-    in_project = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped == "[project]":
-            in_project = True
-            continue
-        if in_project and stripped.startswith("["):
-            return "unknown"
-        if in_project and stripped.startswith("version"):
-            _, _, value = stripped.partition("=")
-            return value.strip().strip('"') or "unknown"
-    return "unknown"
+        return metadata.version("athar-ifc")
+    except metadata.PackageNotFoundError as error:
+        raise RuntimeError(
+            "athar-ifc is not installed; install it with `make native-build` or `pip install -e .`"
+        ) from error

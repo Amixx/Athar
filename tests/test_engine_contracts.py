@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,9 @@ from tests.corpus import CORPUS, corpus_path
 
 OLD_IFC = str(CORPUS["bl_v1"].path)
 NEW_IFC = str(CORPUS["bl_v2"].path)
+PROJECT_VERSION = re.search(
+    r'^version = "(.+)"$', (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(), re.M
+).group(1)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -37,7 +41,7 @@ def test_diff_report_includes_audit_input_provenance():
 
     assert report["audit"]["report_schema_version"] == 1
     assert report["audit"]["producer"]["name"] == "athar"
-    assert report["audit"]["producer"]["version"] == "0.1.0"
+    assert report["audit"]["producer"]["version"] == PROJECT_VERSION
     assert report["audit"]["producer"]["canon_version"] == CANON_VERSION
     assert "generated_at" not in report["audit"]
 
