@@ -7,7 +7,7 @@ import ifcopenshell
 import pytest
 
 from athar.engine import SchemaMismatchError, diff_files
-from athar.rekey import RekeyRefused, rekey_files
+from athar.rekey import RekeyRefused, _ifcmerge_splits, rekey_files
 
 
 def model(path, offset=0, moved=False, schema="IFC4", extra=False):
@@ -213,3 +213,10 @@ def test_rekey_pairs_equal_content_twins_through_their_matched_parents(tmp_path)
     restored = ifcopenshell.open(str(out))
     assert restored.by_id(320).Location.id() == 300
     assert restored.by_id(330).Location.id() == 310
+
+
+@pytest.mark.parametrize(("members", "splits"), [(32768, True), (32769, False)])
+def test_ifcmerge_splits_stops_at_perls_group_repetition_cap(members, splits):
+    related = b",".join(b"#%d" % i for i in range(10, 10 + members))
+    record = b"IFCRELCONTAINEDINSPATIALSTRUCTURE('0000000000000000000005',$,$,$,(" + related + b"),#1)"
+    assert _ifcmerge_splits(record, 6) is splits

@@ -34,8 +34,13 @@ _QUOTED = rb"'.*?'"
 _SIMPLE = rb"[^',)(]+"
 _PARAMVALUE = _NAME + rb"\(.*?\)"
 _PARAMQUOTED = _NAME + rb"\('.*?'\)"
-_BRACKETED = rb"\((?:" + rb"|".join((_COMMA, _PARAMQUOTED, _PARAMVALUE, _QUOTED, _SIMPLE)) + rb")*\)"
+_ITEM = rb"|".join((_COMMA, _PARAMQUOTED, _PARAMVALUE, _QUOTED, _SIMPLE))
+_BRACKETED = rb"(?P<bracketed>\((?:" + _ITEM + rb")*\))"
 _TOKEN = re.compile(rb"(" + rb"|".join((_PARAMQUOTED, _PARAMVALUE, rb"^\(.*\)$", _BRACKETED, _QUOTED, _SIMPLE)) + rb")")
+_BRACKETED_ITEM = re.compile(_ITEM)
+# Perl fails a complex (?:...)* group beyond this many iterations, so ifcmerge
+# then splits the bracketed list into its elements.
+_PERL_GROUP_REPEAT_MAX = 65535
 
 
 def _float(match):
@@ -52,7 +57,12 @@ def _ifcmerge_splits(record, count):
     parts = _CLASS_ATTRIBUTES.match(record)
     if not parts:
         return False
-    tokens = [re.sub(rb"\s*$", b"", re.sub(rb"^[\s,]+", b"", t)) for t in _TOKEN.findall(parts[2])]
+    matches = list(_TOKEN.finditer(parts[2]))
+    for m in matches:
+        bracketed = m["bracketed"]
+        if bracketed and len(_BRACKETED_ITEM.findall(bracketed, 1, len(bracketed) - 1)) > _PERL_GROUP_REPEAT_MAX:
+            return False
+    tokens = [re.sub(rb"\s*$", b"", re.sub(rb"^[\s,]+", b"", m[1])) for m in matches]
     return len(tokens) == count and b",".join(tokens) == parts[2]
 
 
