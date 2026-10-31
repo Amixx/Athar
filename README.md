@@ -48,17 +48,23 @@ IFC2X3↔IFC4 translation).
 ## Installation
 
 ```bash
-pip install -e .
+pipx install athar-ifc
 ```
 
-Pure Python. Requires Python 3.10+ and [ifcopenshell](https://ifcopenshell.org/).
+This installs the `athar` command. The PyPI distribution is `athar-ifc`; the
+Python packages import as `athar`, `athar_git`, and so on. Wheels ship the Rust
+signature pipeline (`athar_native`) and the viewer bundle for Linux (x86_64,
+aarch64), macOS (arm64, x86_64), and Windows (x86_64); other platforms build
+from the sdist, which needs a Rust toolchain. Requires Python 3.10+ and
+[ifcopenshell](https://ifcopenshell.org/).
 
-Local development:
+Local development (needs a Rust toolchain):
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 make dev-setup
+make native-build   # builds athar_native and installs Athar editable
 make test
 ```
 
@@ -198,8 +204,8 @@ Perfetto-style: the page fetches the models back from the local server via
 
 Viewer development requires [bun](https://bun.sh) and lives entirely under
 `viewer/` (see [viewer/README.md](viewer/README.md)). Build the local bundle
-with `make viewer-build`; release builds can run `make viewer-package-static`
-before creating the Python distribution.
+with `make viewer-build`; `make viewer-package-static` copies it into
+`athar_view/static`, which the release workflow does before building wheels.
 
 ## Testing
 
