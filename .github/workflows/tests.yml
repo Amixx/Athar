@@ -1,0 +1,83 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The LFS corpus files the default suite reads (tests/corpus.py small tier,
+  # tests/fixtures, viewer/e2e/fixtures); the medium/large tier stays a pointer.
+  DEFAULT_SUITE_LFS: >-
+    tests/fixtures/tiny_no_products.ifc,
+    viewer/e2e/fixtures/old.ifc,
+    viewer/e2e/fixtures/new.ifc,
+    real-world-test/Building-Landscaping-v0-original.ifc,
+    real-world-test/Building-Landscaping-v1.ifc,
+    real-world-test/Building-Landscaping-v2.ifc,
+    real-world-test/Building-Landscaping-v3.ifc,
+    real-world-test/Duplex-Architecture.ifc,
+    corpus/gni-bim-sample/2025_BIMfundamentals/model_9.ifc,
+    corpus/gni-bim-sample/2025_BIMfundamentals/model_18.ifc,
+    corpus/gni-bim-sample/2025_BIMfundamentals/model_50.ifc,
+    corpus/gni-bim-sample/2025_BIMfundamentals/model_62.ifc,
+    corpus/gni-bim-sample/2025_BIMfundamentals/model_149.ifc,
+    corpus/gni-bim-sample/2025_BIMfundamentals/model_190.ifc,
+    corpus/gni-bim-sample/2026_BIMprojects/model_0_arc.ifc,
+    corpus/gni-bim-sample/2026_BIMprojects/model_0_structure.ifc,
+    corpus/gni-bim-sample/2026_BIMprojects/model_3_arc.ifc,
+    corpus/gni-bim-sample/2026_BIMprojects/model_3_structure.ifc
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout (LFS pointers only)
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      # LFS bandwidth is metered (~650MB corpus vs 1GB/month free), so the
+      # default-suite objects are cached; runs on main save the cache that PR
+      # runs restore, and `git lfs pull` only downloads objects missing from it.
+      - name: Compute LFS objects cache key
+        run: git lfs ls-files -l -I "$DEFAULT_SUITE_LFS" | cut -d' ' -f1 | sort > .lfs-assets-id
+
+      - name: Restore LFS object cache
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-default-${{ hashFiles('.lfs-assets-id') }}
+          restore-keys: lfs-default-
+
+      - name: Fetch LFS content
+        run: |
+          git lfs install --local
+          git lfs pull --include="$DEFAULT_SUITE_LFS"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: athar/_native
+
+      - name: Build Athar with the native extension
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install pytest
+          make native-build
+
+      - name: Default suite
+        run: .venv/bin/python -m pytest tests/ -q
