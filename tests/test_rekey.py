@@ -220,3 +220,14 @@ def test_ifcmerge_splits_stops_at_perls_group_repetition_cap(members, splits):
     related = b",".join(b"#%d" % i for i in range(10, 10 + members))
     record = b"IFCRELCONTAINEDINSPATIALSTRUCTURE('0000000000000000000005',$,$,$,(" + related + b"),#1)"
     assert _ifcmerge_splits(record, 6) is splits
+
+
+def test_rekey_refuses_fresh_records_spanning_lines(tmp_path):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    model(base)
+    model(new, 1000, extra=True)
+    new.write_bytes(new.read_bytes().replace(b"(11.,12.,13.)", b"(11.,\n12.,13.)"))
+    with pytest.raises(RekeyRefused, match="cannot split into attributes") as refused:
+        rekey_files(str(base), str(new), str(out))
+    assert refused.value.diagnostics["unmergeable_changes"] == [1110]
+    assert not out.exists()

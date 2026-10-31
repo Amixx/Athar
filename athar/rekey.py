@@ -302,10 +302,13 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
         native().rekey_step_file(str(new_path), temporary, mapping)
         before, after = _ifcmerge_records(base_path), _ifcmerge_records(temporary)
         unmergeable = []
-        for b, a in sorted(matched.items()):
+        for b, a in sorted(mapping.items()):
+            # ifcmerge's line reader drops records that span lines.
             x, y = before.get(a), after.get(a)
-            if x is None or y is None:
+            if y is None or (b in matched and x is None):
                 unmergeable.append(b)
+                continue
+            if b not in matched:
                 continue
             if x == y or _FLOAT.sub(_float, x) == _FLOAT.sub(_float, y):
                 continue

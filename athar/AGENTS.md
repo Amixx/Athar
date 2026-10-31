@@ -45,7 +45,8 @@ GitHub comments, and other presentation concerns.
   rekeys cannot deduplicate additions shared by both branches in ifcmerge.
   Changed records are refused unless ifcmerge's `_dissemble` (ported
   in `rekey.py`) splits both lines into exactly their attributes; ifcmerge
-  truncates a record changed on both branches when it cannot.
+  truncates a record changed on both branches when it cannot. Records spanning
+  lines are refused too, since ifcmerge's line reader drops them.
   Refusal JSON includes candidate match statistics; no merge-ready file exists.
 
 ## Matching Contract
