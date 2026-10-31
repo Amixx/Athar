@@ -221,14 +221,15 @@ def test_duplicated_guid_same_file_diff_is_clean(duplicated_guid_pair):
 def dangling_ref_variant(tmp_path_factory):
     """Copy of bl_v2 with one relationship target mangled to a nonexistent id.
 
-    Mirrors the corrupted real-world acceptance variant
-    (181MB spanish "-bad"): one `#N` ref rewritten to `#29999...9`.
-    ifcopenshell repairs the reference to an empty aggregate at load time.
+    Mirrors the corrupted real-world acceptance variant (181MB spanish "-bad"),
+    where one `#N` ref was rewritten to an id no record carries. The id here is
+    INT32_MAX: ifcopenshell rejects larger ids as a syntax error, and repairs a
+    reference to a missing in-range id to an empty aggregate at load time.
     """
     text = open(corpus_path("bl_v2"), encoding="utf-8").read()
     match = re.search(r"(#\d+=\s*IFCRELAGGREGATES\([^;]*\(#)(\d+)(\)\);)", text)
     assert match is not None
-    mangled = text[: match.start(2)] + "2" + "9" * 22 + text[match.end(2):]
+    mangled = text[: match.start(2)] + str(2**31 - 1) + text[match.end(2):]
     path = tmp_path_factory.mktemp("dangling") / "dangling.ifc"
     path.write_text(mangled, encoding="utf-8")
     return str(path)
