@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+import time
 
 import ifcopenshell
 import pytest
@@ -124,3 +125,17 @@ def test_rekey_orphan_psets_match_content_not_regenerated_guid(tmp_path):
     assert stats["fresh"] == 0
     assert restored.by_id(150).GlobalId == "0000000000000000000020"
     assert restored.by_id(150).HasProperties[0].id() == 140
+
+
+def test_rekey_role_fallback_scales_with_many_unmatched_resources(tmp_path):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    count = 1500
+    for path, offset, shift in ((base, 0, 0.0), (new, 5000, 0.5)):
+        f = model(path, offset)
+        for k in range(count):
+            f.create_entity("IfcCartesianPoint", id=1000 + offset + k, Coordinates=(k + shift, 0.0, 0.0))
+        f.write(str(path))
+    start = time.monotonic()
+    stats = rekey_files(str(base), str(new), str(out))
+    assert time.monotonic() - start < 10
+    assert stats["fresh"] == count

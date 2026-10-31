@@ -209,11 +209,15 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
     # Root GUID is intentionally excluded from exact resource content, but
     # retained in the serialized NEW entity. This recovers resources whose
     # exporter regenerated a GUID without treating that GUID as identity.
+    by_role = defaultdict(list)
+    for a in old.entities:
+        if a not in reverse:
+            by_role[old.role(a)].append(a)
     for b in sorted(new.entities):
         if b in mapping:
             continue
-        candidates = [a for a in old.entities if a not in reverse and old.entities[a].is_a() == new.entities[b].is_a() and old.role(a) == new.role(b)]
-        if len(candidates) == 1:
+        candidates = by_role.get(new.role(b), ())
+        if len(candidates) == 1 and candidates[0] not in reverse:
             match(candidates[0], b, "role")
     propagate()
 
