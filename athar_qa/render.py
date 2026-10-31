@@ -75,13 +75,26 @@ def _violation_detail_lines(violation: dict[str, Any]) -> list[str]:
 def _affected_line(code: str | None, entry: dict[str, Any]) -> str:
     label = _entity_label(entry)
     if code == "property_value_changed":
-        return f"{label}: {entry.get('property')} {_value(entry.get('old_value'))} -> {_value(entry.get('new_value'))}"
+        changes = "; ".join(
+            f"{_property_label(change.get('pset'), entry.get('property'), change.get('inherited'))} "
+            f"{_value(change.get('old_value'))} -> {_value(change.get('new_value'))}"
+            for change in entry.get("changes") or []
+        )
+        return f"{label}: {changes}"
     if code == "property_removed":
-        removed = ", ".join(str(name) for name in entry.get("removed_properties") or [])
+        removed = ", ".join(
+            _property_label(prop.get("pset"), prop.get("name"), prop.get("inherited"))
+            for prop in entry.get("removed_properties") or []
+        )
         return f"{label}: removed {removed}"
     if code == "placement_delta_limit":
         return f"{label}: placement delta {entry.get('placement_delta_mm')} mm (limit {entry.get('limit')})"
     return label
+
+
+def _property_label(pset: object, name: object, inherited: object) -> str:
+    source = " (type)" if inherited else ""
+    return f"{pset}.{name}{source}"
 
 
 def _entity_label(entry: dict[str, Any]) -> str:

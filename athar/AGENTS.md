@@ -30,6 +30,10 @@ GitHub comments, and other presentation concerns.
   only fire when `delta/report.py` emitted them (a `property_index` was present).
   Property deltas are keyed by (pset, property name, inherited); type-level
   values are `inherited: true` entries beside the occurrence's own values.
+  `forbid_property_value_change` keys are property names and match that name
+  in every pset and origin; each violating entity lists all matching
+  `changes` (pset, inherited, old/new value). `property_removed` lists
+  removed properties with their pset and origin.
   `resolve_policy` accepts a file path or a shipped pack name; packs live as
   JSON in `athar/policies/` and are wheel-bundled package data.
 - `__main__.py` is the minimal CLI for raw JSON, streaming output, generated-at

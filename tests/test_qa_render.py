@@ -21,14 +21,24 @@ def test_render_check_report_fail_shows_property_change():
                 "property": "FireRating",
                 "count": 1,
                 "affected": [
-                    {"class": "IfcWall", "step_id": 21, "guid": "WALL", "name": "Wall", "property": "FireRating", "old_value": "90", "new_value": "60"}
+                    {
+                        "class": "IfcWall",
+                        "step_id": 21,
+                        "guid": "WALL",
+                        "name": "Wall",
+                        "property": "FireRating",
+                        "changes": [
+                            {"pset": "Pset_WallCommon", "inherited": False, "old_value": "90", "new_value": "60"},
+                            {"pset": "Pset_WallCommon", "inherited": True, "old_value": "90", "new_value": "30"},
+                        ],
+                    }
                 ],
             }
         ],
     }
     text = render_check_report(result)
     assert "FAIL (1 violation)" in text
-    assert "FireRating 90 -> 60" in text
+    assert "Pset_WallCommon.FireRating 90 -> 60; Pset_WallCommon.FireRating (type) 90 -> 30" in text
     assert 'IfcWall "Wall" #21 WALL' in text
 
 
@@ -42,13 +52,16 @@ def test_render_check_report_schema_and_truncation():
                 "code": "property_removed",
                 "message": "Properties removed from 3 entity(s)",
                 "count": 3,
-                "affected": [{"class": "IfcWall", "step_id": 1, "removed_properties": ["A", "B"]}],
+                "affected": [{"class": "IfcWall", "step_id": 1, "removed_properties": [
+                    {"pset": "P", "name": "A", "inherited": False},
+                    {"pset": "P", "name": "B", "inherited": True},
+                ]}],
             },
         ],
     }
     text = render_check_report(result)
     assert "schema: IFC2X3 -> IFC4" in text
-    assert "removed A, B" in text
+    assert "removed P.A, P.B (type)" in text
     assert "... and 2 more" in text
 
 

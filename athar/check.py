@@ -275,7 +275,10 @@ def _check_property_removal(report: dict[str, Any], policy: dict[str, Any], viol
         if not removed:
             continue
         ref = _modified_entity_ref(item)
-        ref["removed_properties"] = [entry.get("name") for entry in removed]
+        ref["removed_properties"] = [
+            {"pset": entry.get("pset"), "name": entry.get("name"), "inherited": entry.get("inherited")}
+            for entry in removed
+        ]
         affected.append(ref)
     if affected:
         violations.append(
@@ -301,13 +304,20 @@ def _check_property_value_changes(report: dict[str, Any], policy: dict[str, Any]
             if not class_filter(_modified_class(item)):
                 continue
             changed = (item.get("property_deltas") or {}).get("changed") or []
-            entry = next((e for e in changed if e.get("name") == prop_name), None)
-            if entry is None:
+            matches = [e for e in changed if e.get("name") == prop_name]
+            if not matches:
                 continue
             ref = _modified_entity_ref(item)
             ref["property"] = prop_name
-            ref["old_value"] = entry.get("old_value")
-            ref["new_value"] = entry.get("new_value")
+            ref["changes"] = [
+                {
+                    "pset": e.get("pset"),
+                    "inherited": e.get("inherited"),
+                    "old_value": e.get("old_value"),
+                    "new_value": e.get("new_value"),
+                }
+                for e in matches
+            ]
             affected.append(ref)
         if affected:
             violations.append(
