@@ -46,14 +46,14 @@ def extract_orphan_property_sets(ifc) -> tuple[OrphanPropertySet, ...]:
                 guid=definition.GlobalId,
                 name=definition.Name,
                 entity_type=definition.is_a(),
-                content_key=json.dumps(_content(definition), sort_keys=True, default=repr),
+                content_key=json.dumps(_content(definition), sort_keys=True),
             )
         )
     orphans.sort(key=lambda item: item.step_id)
     return tuple(orphans)
 
 
-_UNORDERED_AGGREGATES = {"HasProperties", "Quantities"}
+_UNORDERED_AGGREGATES = {"HasProperties", "Quantities", "HasQuantities"}
 _IDENTITY_ATTRIBUTES = {"id", "GlobalId", "OwnerHistory"}
 
 
@@ -65,7 +65,7 @@ def _content(entity) -> dict:
             continue
         encoded = _content_value(value)
         if attr in _UNORDERED_AGGREGATES and isinstance(encoded, list):
-            encoded = sorted(encoded, key=lambda item: json.dumps(item, sort_keys=True, default=repr))
+            encoded = sorted(encoded, key=lambda item: json.dumps(item, sort_keys=True))
         out[attr] = encoded
     return out
 
@@ -79,6 +79,7 @@ def _content_value(value):
 
 
 def _collect_direct_properties(ifc, index: dict[int, list[PropertyEntry]]) -> None:
+    linked: set[tuple[int, int]] = set()
     for rel in ifc.by_type("IfcRelDefinesByProperties"):
         pset = rel.RelatingPropertyDefinition
         if pset is None:
@@ -88,8 +89,9 @@ def _collect_direct_properties(ifc, index: dict[int, list[PropertyEntry]]) -> No
             continue
         for obj in rel.RelatedObjects or ():
             step_id = obj.id()
-            if not _is_signature_eligible(obj):
+            if not _is_signature_eligible(obj) or (step_id, pset.id()) in linked:
                 continue
+            linked.add((step_id, pset.id()))
             index.setdefault(step_id, []).extend(entries)
 
 

@@ -9,6 +9,7 @@ names and values, so a name-keyed property comparison sees no change).
 from __future__ import annotations
 
 import ifcopenshell
+import ifcopenshell.util.element
 import ifcopenshell.guid
 import pytest
 
@@ -35,7 +36,7 @@ def seed(tmp_path_factory):
             OwnerHistory=pset.OwnerHistory,
             Name=pset.Name,
             Description=pset.Description,
-            HasProperties=pset.HasProperties,
+            HasProperties=[ifcopenshell.util.element.copy_deep(model, prop) for prop in pset.HasProperties],
         )
         edit(model, victim, copy)
         path = str(out / f"{name}.ifc")
