@@ -1,0 +1,41 @@
+name: Smoke-test an Athar distribution
+description: Install a built distribution into a fresh venv and diff two small IFC files with it.
+
+inputs:
+  dist:
+    description: Glob matching the wheel or sdist to install
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch the IFC fixture pair
+      shell: bash
+      run: git lfs pull --include="viewer/e2e/fixtures/old.ifc,viewer/e2e/fixtures/new.ifc"
+
+    - name: Install into a fresh venv and run athar git diff
+      shell: bash
+      env:
+        DIST_GLOB: ${{ inputs.dist }}
+      run: |
+        set -euo pipefail
+        dists=( $DIST_GLOB )
+        if [ "${#dists[@]}" -ne 1 ] || [ ! -f "${dists[0]}" ]; then
+          echo "expected exactly one distribution for '$DIST_GLOB', got: ${dists[*]}" >&2
+          exit 1
+        fi
+        dist="$(cd "$(dirname "${dists[0]}")" && pwd)/$(basename "${dists[0]}")"
+        tmp="$RUNNER_TEMP"
+        if command -v cygpath >/dev/null; then tmp="$(cygpath -u "$tmp")"; fi
+        work="$tmp/athar-smoke"
+        rm -rf "$work"
+        mkdir -p "$work"
+        cp viewer/e2e/fixtures/old.ifc viewer/e2e/fixtures/new.ifc "$work/"
+        python -m venv "$work/venv"
+        if [ -d "$work/venv/Scripts" ]; then bin="$work/venv/Scripts"; else bin="$work/venv/bin"; fi
+        "$bin/python" -m pip install --upgrade pip
+        "$bin/python" -m pip install "$dist"
+        cd "$work"
+        "$bin/athar" git diff old.ifc new.ifc --cache-dir cache | tee diff.txt
+        grep -q "^Athar IFC diff" diff.txt
+        grep -q "^Summary: " diff.txt
