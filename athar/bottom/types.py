@@ -12,8 +12,10 @@ HashHex = str
 class PropertyEntry:
     """One extracted property or quantity value."""
 
+    pset: str
     name: str
     value: str | int | float | bool | list[str]
+    inherited: bool
 
 
 @dataclass(frozen=True)

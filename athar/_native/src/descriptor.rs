@@ -82,6 +82,9 @@ pub struct AttrDesc {
     pub direction: bool,
     /// True where this entity redeclares the attribute as DERIVE.
     pub derived: bool,
+    /// String-valued (label/text/identifier, or an aggregate of them): naming
+    /// metadata, never shape content.
+    pub text: bool,
     pub shape: Shape,
 }
 
@@ -91,6 +94,9 @@ pub struct ClassDesc {
     pub class: String,
     pub product: bool,
     pub spatial: bool,
+    /// Shape-model class (representation, representation item, profile): its
+    /// non-text attributes (Depth, XDim, Scale, Operator, ...) enter `vh_geometry`.
+    pub geometric: bool,
     /// Attribute index of GlobalId / Name, if the class declares them.
     pub guid: Option<usize>,
     pub name: Option<usize>,

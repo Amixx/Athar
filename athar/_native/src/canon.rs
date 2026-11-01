@@ -185,8 +185,8 @@ pub fn canonicalize(
             }
             collect_refs(token, &attr_rc, &mut refs);
 
-            let geom = matches_geometry(&attr.name);
             let data = matches_data(&attr.name);
+            let geom = matches_geometry(&attr.name) || (desc.geometric && data && !attr.text);
             if !geom && !data {
                 continue;
             }
@@ -813,6 +813,7 @@ mod tests {
                 name: "Precision".to_string(),
                 direction: false,
                 derived,
+                text: false,
                 shape: Shape::Leaf { m: Measure::Default },
             };
             let mut s = String::new();

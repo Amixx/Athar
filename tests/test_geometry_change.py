@@ -2,10 +2,9 @@
 
 The mutation harness covers data, placement, add, and delete edits, but a pure
 *geometry* edit had no positive test — yet `geometry: changed` (with data and
-placement clean) is a first-class report state. The engine hashes explicit
-geometry data (coordinates, points, directions) into `vh_geometry`, not
-parametric scalars like an extrusion Depth, so this proves the contract through
-the path that actually feeds the hash: an explicit mesh vertex.
+placement clean) is a first-class report state. This proves it through an
+explicit mesh vertex; parametric edits are covered by
+`test_parametric_geometry_change.py`.
 
 Both files are the same tessellated cube at the same GlobalId, name, and
 placement, with no properties; they differ only in one vertex coordinate. Truth:

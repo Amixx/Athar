@@ -14,7 +14,8 @@ dicts), never the reverse: core engine modules under `athar/` must not import
 - `render_check_report(result, *, title=...)` — formats one `evaluate_report`
   verdict. Reads `ok`, `summary`, and each `violations[]` entry. Violation
   detail is rendered per `code`: `property_value_changed` shows
-  `Name old -> new`, `property_removed` lists dropped property names,
+  `Pset.Name old -> new` for every matching pset (`(type)` marks a value
+  inherited from the type), `property_removed` lists dropped `Pset.Name`s,
   `schema_changed` shows `old -> new`, `placement_delta_limit` shows the delta
   vs limit. `affected` is capped upstream (20); the renderer prints the
   `count`-vs-shown remainder as `... and N more`.

@@ -418,18 +418,18 @@ def test_build_delta_report_match_items_carry_only_score_reason_and_aspects():
 
 def test_property_deltas_detects_changed_values():
     old_props = [
-        PropertyEntry(name="FireRating", value="F90"),
-        PropertyEntry(name="Height", value=3000.0),
+        PropertyEntry(pset="P", inherited=False, name="FireRating", value="F90"),
+        PropertyEntry(pset="P", inherited=False, name="Height", value=3000.0),
     ]
     new_props = [
-        PropertyEntry(name="FireRating", value="F60"),
-        PropertyEntry(name="Height", value=3000.0),
+        PropertyEntry(pset="P", inherited=False, name="FireRating", value="F60"),
+        PropertyEntry(pset="P", inherited=False, name="Height", value=3000.0),
     ]
     result = _property_deltas(old_props, new_props)
     assert result is not None
     assert "changed" in result
     assert result["changed"] == [
-        {"name": "FireRating", "old_value": "F90", "new_value": "F60"},
+        {"pset": "P", "inherited": False, "name": "FireRating", "old_value": "F90", "new_value": "F60"},
     ]
     assert "added" not in result
     assert "removed" not in result
@@ -437,24 +437,24 @@ def test_property_deltas_detects_changed_values():
 
 def test_property_deltas_detects_added_and_removed():
     old_props = [
-        PropertyEntry(name="FireRating", value="F90"),
+        PropertyEntry(pset="P", inherited=False, name="FireRating", value="F90"),
     ]
     new_props = [
-        PropertyEntry(name="ThermalRating", value="T1"),
+        PropertyEntry(pset="P", inherited=False, name="ThermalRating", value="T1"),
     ]
     result = _property_deltas(old_props, new_props)
     assert result is not None
     assert result["added"] == [
-        {"name": "ThermalRating", "new_value": "T1"},
+        {"pset": "P", "inherited": False, "name": "ThermalRating", "new_value": "T1"},
     ]
     assert result["removed"] == [
-        {"name": "FireRating", "old_value": "F90"},
+        {"pset": "P", "inherited": False, "name": "FireRating", "old_value": "F90"},
     ]
 
 
 def test_property_deltas_returns_none_when_no_difference():
-    old_props = [PropertyEntry(name="FireRating", value="F90")]
-    new_props = [PropertyEntry(name="FireRating", value="F90")]
+    old_props = [PropertyEntry(pset="P", inherited=False, name="FireRating", value="F90")]
+    new_props = [PropertyEntry(pset="P", inherited=False, name="FireRating", value="F90")]
     assert _property_deltas(old_props, new_props) is None
 
 
@@ -462,32 +462,62 @@ def test_property_deltas_returns_none_when_both_empty():
     assert _property_deltas([], []) is None
 
 
-def test_property_deltas_handles_mixed_types():
+def test_property_deltas_keys_same_name_by_pset():
     old_props = [
-        PropertyEntry(name="Name", value="Wall A"),
-        PropertyEntry(name="Length", value=3500.0),
-        PropertyEntry(name="IsExternal", value=True),
-        PropertyEntry(name="Flags", value=["a", "b"]),
+        PropertyEntry(pset="Pset_WallCommon", inherited=False, name="FireRating", value="EI30"),
+        PropertyEntry(pset="Custom_Fire", inherited=False, name="FireRating", value="REI60"),
     ]
     new_props = [
-        PropertyEntry(name="Name", value="Wall B"),
-        PropertyEntry(name="Length", value=4200.0),
-        PropertyEntry(name="IsExternal", value=False),
-        PropertyEntry(name="Flags", value=["b", "c"]),
+        PropertyEntry(pset="Pset_WallCommon", inherited=False, name="FireRating", value="EI60"),
+        PropertyEntry(pset="Custom_Fire", inherited=False, name="FireRating", value="REI60"),
+    ]
+    assert _property_deltas(old_props, new_props) == {
+        "changed": [{"pset": "Pset_WallCommon", "name": "FireRating", "inherited": False, "old_value": "EI30", "new_value": "EI60"}],
+    }
+
+
+def test_property_deltas_keeps_type_value_apart_from_occurrence_value():
+    old_props = [
+        PropertyEntry(pset="Pset_WallCommon", name="IsExternal", value=False, inherited=False),
+        PropertyEntry(pset="Pset_WallCommon", name="IsExternal", value=True, inherited=True),
+    ]
+    new_props = [
+        PropertyEntry(pset="Pset_WallCommon", name="IsExternal", value=True, inherited=False),
+        PropertyEntry(pset="Pset_WallCommon", name="IsExternal", value=True, inherited=True),
+    ]
+    assert _property_deltas(old_props, new_props) == {
+        "changed": [
+            {"pset": "Pset_WallCommon", "name": "IsExternal", "inherited": False, "old_value": False, "new_value": True}
+        ],
+    }
+
+
+def test_property_deltas_handles_mixed_types():
+    old_props = [
+        PropertyEntry(pset="P", inherited=False, name="Name", value="Wall A"),
+        PropertyEntry(pset="P", inherited=False, name="Length", value=3500.0),
+        PropertyEntry(pset="P", inherited=False, name="IsExternal", value=True),
+        PropertyEntry(pset="P", inherited=False, name="Flags", value=["a", "b"]),
+    ]
+    new_props = [
+        PropertyEntry(pset="P", inherited=False, name="Name", value="Wall B"),
+        PropertyEntry(pset="P", inherited=False, name="Length", value=4200.0),
+        PropertyEntry(pset="P", inherited=False, name="IsExternal", value=False),
+        PropertyEntry(pset="P", inherited=False, name="Flags", value=["b", "c"]),
     ]
     result = _property_deltas(old_props, new_props)
     assert result is not None
     assert result["changed"] == [
-        {"name": "Flags", "old_value": ["a", "b"], "new_value": ["b", "c"]},
-        {"name": "IsExternal", "old_value": True, "new_value": False},
-        {"name": "Length", "old_value": 3500.0, "new_value": 4200.0},
-        {"name": "Name", "old_value": "Wall A", "new_value": "Wall B"},
+        {"pset": "P", "inherited": False, "name": "Flags", "old_value": ["a", "b"], "new_value": ["b", "c"]},
+        {"pset": "P", "inherited": False, "name": "IsExternal", "old_value": True, "new_value": False},
+        {"pset": "P", "inherited": False, "name": "Length", "old_value": 3500.0, "new_value": 4200.0},
+        {"pset": "P", "inherited": False, "name": "Name", "old_value": "Wall A", "new_value": "Wall B"},
     ]
 
 
 def test_build_delta_report_emits_property_deltas_when_data_changed():
-    old_props = {1: [PropertyEntry(name="FireRating", value="F90")]}
-    new_props = {10: [PropertyEntry(name="FireRating", value="F60")]}
+    old_props = {1: [PropertyEntry(pset="P", inherited=False, name="FireRating", value="F90")]}
+    new_props = {10: [PropertyEntry(pset="P", inherited=False, name="FireRating", value="F60")]}
 
     old_bundle = _bundle(
         schema="IFC4",
@@ -509,13 +539,13 @@ def test_build_delta_report_emits_property_deltas_when_data_changed():
     item = report["modified"][0]
     assert "property_deltas" in item
     assert item["property_deltas"]["changed"] == [
-        {"name": "FireRating", "old_value": "F90", "new_value": "F60"},
+        {"pset": "P", "inherited": False, "name": "FireRating", "old_value": "F90", "new_value": "F60"},
     ]
 
 
 def test_build_delta_report_omits_property_deltas_when_not_data_changed():
-    old_props = {1: [PropertyEntry(name="FireRating", value="F90")]}
-    new_props = {10: [PropertyEntry(name="FireRating", value="F90")]}
+    old_props = {1: [PropertyEntry(pset="P", inherited=False, name="FireRating", value="F90")]}
+    new_props = {10: [PropertyEntry(pset="P", inherited=False, name="FireRating", value="F90")]}
 
     old_bundle = _bundle(
         schema="IFC4",

@@ -142,8 +142,12 @@ def _report_with_property_deltas() -> dict:
                 "aspects": {"data": "changed"},
                 "change_scope": "intrinsic",
                 "property_deltas": {
-                    "changed": [{"name": "FireRating", "old_value": "90", "new_value": "60"}],
-                    "removed": [{"name": "AcousticRating", "old_value": "52"}],
+                    "changed": [
+                        {"pset": "Custom", "name": "FireRating", "inherited": False, "old_value": "REI90", "new_value": "REI60"},
+                        {"pset": "Pset_WallCommon", "name": "FireRating", "inherited": False, "old_value": "90", "new_value": "60"},
+                        {"pset": "Pset_WallCommon", "name": "FireRating", "inherited": True, "old_value": "90", "new_value": "30"},
+                    ],
+                    "removed": [{"pset": "Pset_WallCommon", "name": "AcousticRating", "inherited": False, "old_value": "52"}],
                 },
             },
             {
@@ -152,7 +156,7 @@ def _report_with_property_deltas() -> dict:
                 "aspects": {"data": "changed"},
                 "change_scope": "intrinsic",
                 "property_deltas": {
-                    "changed": [{"name": "Width", "old_value": 900, "new_value": 1000}],
+                    "changed": [{"pset": "Pset_DoorCommon", "name": "Width", "inherited": False, "old_value": 900, "new_value": 1000}],
                 },
             },
         ],
@@ -167,7 +171,9 @@ def test_check_flags_removed_properties():
     violation = next(v for v in result["violations"] if v["code"] == "property_removed")
     assert violation["count"] == 1
     assert violation["affected"][0]["class"] == "IfcWall"
-    assert violation["affected"][0]["removed_properties"] == ["AcousticRating"]
+    assert violation["affected"][0]["removed_properties"] == [
+        {"pset": "Pset_WallCommon", "name": "AcousticRating", "inherited": False}
+    ]
 
 
 def test_check_property_removal_respects_class_filter():
@@ -186,8 +192,12 @@ def test_check_flags_protected_property_value_change():
     assert result["ok"] is False
     violation = next(v for v in result["violations"] if v["code"] == "property_value_changed")
     assert violation["property"] == "FireRating"
-    assert violation["affected"][0]["old_value"] == "90"
-    assert violation["affected"][0]["new_value"] == "60"
+    assert violation["count"] == 1
+    assert violation["affected"][0]["changes"] == [
+        {"pset": "Custom", "inherited": False, "old_value": "REI90", "new_value": "REI60"},
+        {"pset": "Pset_WallCommon", "inherited": False, "old_value": "90", "new_value": "60"},
+        {"pset": "Pset_WallCommon", "inherited": True, "old_value": "90", "new_value": "30"},
+    ]
 
 
 def test_check_protected_property_change_ignores_other_properties():
