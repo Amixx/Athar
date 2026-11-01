@@ -38,6 +38,22 @@ GitHub comments, and other presentation concerns.
   JSON in `athar/policies/` and are wheel-bundled package data.
 - `__main__.py` is the minimal CLI for raw JSON, streaming output, generated-at
   audit timestamps, and `check`.
+- `rekey.py` is an experimental serialization utility, not a semantic matcher
+  tier. It anchors all unique rooted GUIDs plus the existing product matches,
+  propagates same-attribute and inverse-relationship roles, and pairs remaining
+  exact resource content, unique content first so roles reach duplicates before
+  the rest pair in STEP order. Role guesses never affect diff reports.
+  The native tokenizer preserves literal spellings while replacing ID tokens;
+  IfcOpenShell verifies the entire output graph before an atomic file replace.
+  Do not substitute a normal serializer: changed numeric/escape spellings can
+  dominate the text diff and expose the native hasher's undecoded STEP strings.
+  Unmatched rooted additions are refused before output publication: independent
+  rekeys cannot deduplicate additions shared by both branches in ifcmerge.
+  Changed records are refused unless ifcmerge's `_dissemble` (ported
+  in `rekey.py`) splits both lines into exactly their attributes; ifcmerge
+  truncates a record changed on both branches when it cannot. Records spanning
+  lines are refused too, since ifcmerge's line reader drops them.
+  Refusal JSON includes candidate match statistics; no merge-ready file exists.
 
 ## Matching Contract
 

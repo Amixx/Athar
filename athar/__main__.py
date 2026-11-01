@@ -15,6 +15,28 @@ from athar.engine import (
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "rekey":
+        from athar.rekey import RekeyRefused, rekey_files
+
+        parser = argparse.ArgumentParser(prog="athar rekey")
+        parser.add_argument("base")
+        parser.add_argument("new")
+        parser.add_argument("-o", "--output", required=True)
+        args = parser.parse_args(sys.argv[2:])
+        try:
+            print(json.dumps(rekey_files(args.base, args.new, args.output), indent=2))
+        except SchemaMismatchError as exc:
+            _emit_schema_incompatible(exc)
+            sys.exit(3)
+        except RekeyRefused as exc:
+            print(json.dumps(exc.diagnostics, indent=2))
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        return
+
     if len(sys.argv) > 1 and sys.argv[1] == "git":
         from athar_git.cli import build_git_parser, run_git_command
 

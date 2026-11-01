@@ -50,11 +50,55 @@ pub struct Record {
 pub struct Parser<'a> {
     bytes: &'a [u8],
     pos: usize,
+    id_spans: Option<Vec<(usize, usize, i64)>>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
-        Parser { bytes, pos: 0 }
+        Parser { bytes, pos: 0, id_spans: None }
+    }
+
+    /// Preserve literal spellings; only definition/reference integers may change.
+    pub fn rekey(mut self, mapping: &std::collections::HashMap<i64, i64>) -> Result<Vec<u8>, String> {
+        self.seek_data_section();
+        self.skip_trivia();
+        let prefix_end = self.pos;
+        let mut records = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        while self.peek() == Some(b'#') {
+            let start = self.pos;
+            self.id_spans = Some(Vec::new());
+            let record = self.parse_record()?.ok_or("expected entity definition")?;
+            if !seen.insert(record.step_id) {
+                return Err(format!("duplicate definition #{}", record.step_id));
+            }
+            self.skip_trivia();
+            let end = self.pos;
+            let mut rewritten = Vec::new();
+            let mut cursor = start;
+            for (a, b, id) in self.id_spans.take().unwrap() {
+                let target = mapping.get(&id).ok_or_else(|| format!("unmapped reference #{id}"))?;
+                rewritten.extend_from_slice(&self.bytes[cursor..a]);
+                rewritten.extend_from_slice(target.to_string().as_bytes());
+                cursor = b;
+            }
+            rewritten.extend_from_slice(&self.bytes[cursor..end]);
+            records.push((mapping[&record.step_id], rewritten));
+        }
+        if !self.looks_at(b"ENDSEC") || seen.len() != mapping.len() {
+            return Err("rekey requires one complete DATA section and a total entity mapping".to_string());
+        }
+        records.sort_by_key(|(id, _)| *id);
+        let mut output = self.bytes[..prefix_end].to_vec();
+        for (_, record) in records {
+            output.extend(record);
+            // Adjacent records without trivia must remain separable by text merge tools.
+            if output.last() != Some(&b'\n') {
+                output.push(b'\n');
+            }
+        }
+        output.extend_from_slice(&self.bytes[self.pos..]);
+        Ok(output)
     }
 
     /// Parse the whole file, returning every `#id = KEYWORD(...)` record in the
@@ -233,7 +277,11 @@ impl<'a> Parser<'a> {
         // some tools emit when a reference is broken) parses to a sentinel that
         // no real record carries, so it later resolves as a dangling reference
         // and is dropped — mirroring ifcopenshell's load-time repair.
-        Ok(text.parse::<i64>().unwrap_or(i64::MIN))
+        let id = text.parse::<i64>().unwrap_or(i64::MIN);
+        if let Some(spans) = &mut self.id_spans {
+            spans.push((start, self.pos, id));
+        }
+        Ok(id)
     }
 
     /// Read a `'...'` string; `''` is an escaped single quote.

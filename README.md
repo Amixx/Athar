@@ -90,6 +90,49 @@ python -m athar old.ifc new.ifc --stream ndjson
 python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
 ```
 
+### Experimental STEP ID Restoration
+
+```bash
+athar rekey base.ifc exported.ifc -o rekeyed.ifc
+```
+
+This experimental command restores BASE's STEP IDs on matched entities in NEW
+and assigns unmatched entities IDs above BASE's maximum. It uses unique GUIDs,
+Athar's product matches, same-parent attribute roles, inverse relationship
+roles, and exact resource content. Identical duplicates are paired through their
+matched parents first, then in STEP order. Shared
+resources remain shared; conflicting role proposals are not forced into a
+many-to-one match. Resource role recovery is a serialization heuristic, not an
+extension of the semantic diff matcher's identity policy.
+
+The native tokenizer rewrites ID tokens and orders records by output ID without
+changing NEW's literal spellings. Before publishing the output, IfcOpenShell
+reopens it and every entity's class, attributes, and mapped references are
+checked against NEW. Inputs cannot be overwritten. Schemas must match.
+Matching statistics, including per-class counts, are printed as JSON.
+
+Unmatched rooted additions are refused (exit 1, JSON `status: "refused"`,
+no output replacement). Two independent rekeys cannot tell whether both
+branches added the same root; ifcmerge copies both additions even when their
+GlobalIds agree. Any DATA line in BASE or the rekeyed output that is not one
+whole record, a one-line comment or blank is also refused: ifcmerge's line
+reader drops records spanning lines and truncates one whose first line holds a
+`;` inside a string.
+So is a matched record whose text differs from BASE when ifcmerge's attribute
+tokenizer cannot split the BASE or rekeyed line into exactly its attributes
+(nested lists, doubled quotes, lists of more than 16,383 plain members, the
+limit of Perl before 5.30): ifcmerge rebuilds a record changed on both
+branches from those tokens and silently truncates it. Refusal diagnostics
+include candidate matching statistics and the offending NEW ids (BASE ids for
+BASE records not alone on their line).
+
+This is not a general merge-safety guarantee: ambiguous resources, changed
+sharing, unordered collections, regenerated GUIDs, and geometry restructuring
+can still produce text churn or misleading identity continuity. Use the result
+as an experiment, not as an unattended merge driver. The repeatable study runner
+is `scripts/explore/rekey_study.py`; it requires a local corpus and an external
+evidence directory. Its merge demo includes an explicitly constructed fork.
+
 ### CI Policy Gates
 
 `athar check` evaluates an Athar JSON report against a small JSON policy and

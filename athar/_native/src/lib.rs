@@ -25,6 +25,16 @@ mod edges;
 mod spatial;
 mod step;
 
+#[pyfunction]
+fn rekey_step_file(input: &str, output: &str, mapping: HashMap<i64, i64>) -> PyResult<()> {
+    let bytes = std::fs::read(input)?;
+    let rewritten = step::Parser::new(&bytes)
+        .rekey(&mapping)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    std::fs::write(output, rewritten)?;
+    Ok(())
+}
+
 /// Lowercase hex sha256, matching `hashlib.sha256(...).hexdigest()`.
 fn sha256_hex(payload: &[u8]) -> String {
     let mut hasher = Sha256::new();
@@ -905,6 +915,7 @@ mod tests {
 #[pymodule]
 fn athar_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_function(wrap_pyfunction!(rekey_step_file, m)?)?;
     m.add_function(wrap_pyfunction!(compute_merkle_hashes, m)?)?;
     m.add_function(wrap_pyfunction!(compute_topology_hashes, m)?)?;
     m.add_function(wrap_pyfunction!(build_signature_bundle, m)?)?;
