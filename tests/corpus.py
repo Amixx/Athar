@@ -15,6 +15,7 @@ Invariant helpers assert the engine's structural contracts — accounting,
 
 from __future__ import annotations
 
+import argparse
 import math
 import os
 from dataclasses import dataclass
@@ -34,66 +35,80 @@ _KNOWN_TIER_SCORES = {
 _SECTIONS = ("added", "deleted", "modified", "unchanged")
 
 
+SMALL = "small"  # the default suite
+LARGE = "large"  # the opt-in acceptance tier
+
+VIEWER_FIXTURE_DIR = REPO_ROOT / "viewer" / "e2e" / "fixtures"
+VIEWER_OLD_IFC = VIEWER_FIXTURE_DIR / "old.ifc"
+VIEWER_NEW_IFC = VIEWER_FIXTURE_DIR / "new.ifc"
+
+
 @dataclass(frozen=True)
 class CorpusFile:
     key: str
     path: Path
     schema: str
+    tier: str
     required: bool  # required files fail on LFS pointers; optional ones skip
 
 
-def _repo(key: str, rel: str, schema: str) -> CorpusFile:
-    return CorpusFile(key, REPO_ROOT / rel, schema, required=True)
+def _repo(key: str, rel: str, schema: str, tier: str) -> CorpusFile:
+    return CorpusFile(key, REPO_ROOT / rel, schema, tier, required=True)
 
 
-def _external(key: str, name: str, schema: str) -> CorpusFile:
-    return CorpusFile(key, EXTERNAL_CORPUS_DIR / name, schema, required=False)
+def _external(key: str, name: str, schema: str, tier: str) -> CorpusFile:
+    return CorpusFile(key, EXTERNAL_CORPUS_DIR / name, schema, tier, required=False)
 
 
 CORPUS: dict[str, CorpusFile] = {
     f.key: f
     for f in (
-        # small (default tier)
-        _repo("tiny_no_products", "tests/fixtures/tiny_no_products.ifc", "IFC4"),
-        _external("cube_brep", "000.010611MB__Ifc4_CubeAdvancedBrep.ifc", "IFC4"),
-        _external("sample_house_roof", "000.063019MB__Ifc4_SampleHouse_1_Roof.ifc", "IFC4"),
-        _external("building_arch", "000.225635MB__Building-Architecture.ifc", "IFC4"),
-        _repo("bl_v0", "real-world-test/Building-Landscaping-v0-original.ifc", "IFC4"),
-        _repo("bl_v1", "real-world-test/Building-Landscaping-v1.ifc", "IFC4"),
-        _repo("bl_v2", "real-world-test/Building-Landscaping-v2.ifc", "IFC4"),
-        _repo("bl_v3", "real-world-test/Building-Landscaping-v3.ifc", "IFC4"),
-        _repo("duplex_arch", "real-world-test/Duplex-Architecture.ifc", "IFC2X3"),
-        _repo("gni_190", "corpus/gni-bim-sample/2025_BIMfundamentals/model_190.ifc", "IFC4"),
-        _repo("gni_9", "corpus/gni-bim-sample/2025_BIMfundamentals/model_9.ifc", "IFC4"),
-        _repo("gni_50", "corpus/gni-bim-sample/2025_BIMfundamentals/model_50.ifc", "IFC4"),
-        _repo("gni_62", "corpus/gni-bim-sample/2025_BIMfundamentals/model_62.ifc", "IFC4"),
-        _repo("gni_149", "corpus/gni-bim-sample/2025_BIMfundamentals/model_149.ifc", "IFC4"),
-        _repo("gni_18", "corpus/gni-bim-sample/2025_BIMfundamentals/model_18.ifc", "IFC2X3"),
-        _repo("gni_p0_arc", "corpus/gni-bim-sample/2026_BIMprojects/model_0_arc.ifc", "IFC2X3"),
-        _repo("gni_p0_str", "corpus/gni-bim-sample/2026_BIMprojects/model_0_structure.ifc", "IFC2X3"),
-        _repo("gni_p3_arc", "corpus/gni-bim-sample/2026_BIMprojects/model_3_arc.ifc", "IFC2X3"),
-        _repo("gni_p3_str", "corpus/gni-bim-sample/2026_BIMprojects/model_3_structure.ifc", "IFC2X3"),
-        # medium/large (opt-in acceptance tier)
-        _repo("gni_77", "corpus/gni-bim-sample/2025_BIMfundamentals/model_77.ifc", "IFC4"),
-        _repo("gni_68", "corpus/gni-bim-sample/2025_BIMfundamentals/model_68.ifc", "IFC4"),
-        _repo("gni_p5_arc", "corpus/gni-bim-sample/2026_BIMprojects/model_5_arc.ifc", "IFC2X3"),
-        _repo("gni_p5_str", "corpus/gni-bim-sample/2026_BIMprojects/model_5_structure.ifc", "IFC2X3"),
-        _repo("gni_p7_arc", "corpus/gni-bim-sample/2026_BIMprojects/model_7_arc.ifc", "IFC2X3"),
-        _repo("gni_p7_str", "corpus/gni-bim-sample/2026_BIMprojects/model_7_structure.ifc", "IFC2X3"),
-        _repo("gni_p8_arc", "corpus/gni-bim-sample/2026_BIMprojects/model_8_arc.ifc", "IFC4"),
-        _repo("gni_p8_str", "corpus/gni-bim-sample/2026_BIMprojects/model_8_structure.ifc", "IFC4"),
-        _external("duplex_mech", "008.781887MB__Ifc2x3_Duplex_Mechanical.ifc", "IFC2X3"),
-        _external("revit_arc", "013.646137MB__Ifc4_Revit_ARC.ifc", "IFC4"),
-        _external("duplex_mep", "017.871432MB__Ifc2x3_Duplex_MEP.ifc", "IFC2X3"),
-        _external("revit_mep", "029.165277MB__Ifc4_Revit_MEP.ifc", "IFC4"),
-        _repo("advanced_project", "real-world-test/AdvancedProject.ifc", "IFC2X3"),
-        _repo("adv_changed", "real-world-test/adv proj changed.ifc", "IFC2X3"),
-        _repo("basic_house", "data/BasicHouse.ifc", "IFC2X3"),
-        _repo("uni_house", "real-world-test/uni-project-house-50mb.ifc", "IFC2X3"),
-        _external("real_world_big", "168.047573MB__real-world-big.ifc", "IFC2X3"),
-        _repo("spanish", "real-world-test/real-world-spanish-180mb.ifc", "IFC2X3"),
+        _repo("tiny_no_products", "tests/fixtures/tiny_no_products.ifc", "IFC4", SMALL),
+        _external("cube_brep", "000.010611MB__Ifc4_CubeAdvancedBrep.ifc", "IFC4", SMALL),
+        _external("sample_house_roof", "000.063019MB__Ifc4_SampleHouse_1_Roof.ifc", "IFC4", SMALL),
+        _external("building_arch", "000.225635MB__Building-Architecture.ifc", "IFC4", SMALL),
+        _repo("bl_v0", "real-world-test/Building-Landscaping-v0-original.ifc", "IFC4", SMALL),
+        _repo("bl_v1", "real-world-test/Building-Landscaping-v1.ifc", "IFC4", SMALL),
+        _repo("bl_v2", "real-world-test/Building-Landscaping-v2.ifc", "IFC4", SMALL),
+        _repo("bl_v3", "real-world-test/Building-Landscaping-v3.ifc", "IFC4", SMALL),
+        _repo("duplex_arch", "real-world-test/Duplex-Architecture.ifc", "IFC2X3", SMALL),
+        _repo("gni_190", "corpus/gni-bim-sample/2025_BIMfundamentals/model_190.ifc", "IFC4", SMALL),
+        _repo("gni_9", "corpus/gni-bim-sample/2025_BIMfundamentals/model_9.ifc", "IFC4", SMALL),
+        _repo("gni_50", "corpus/gni-bim-sample/2025_BIMfundamentals/model_50.ifc", "IFC4", SMALL),
+        _repo("gni_62", "corpus/gni-bim-sample/2025_BIMfundamentals/model_62.ifc", "IFC4", SMALL),
+        _repo("gni_149", "corpus/gni-bim-sample/2025_BIMfundamentals/model_149.ifc", "IFC4", SMALL),
+        _repo("gni_18", "corpus/gni-bim-sample/2025_BIMfundamentals/model_18.ifc", "IFC2X3", SMALL),
+        _repo("gni_p0_arc", "corpus/gni-bim-sample/2026_BIMprojects/model_0_arc.ifc", "IFC2X3", SMALL),
+        _repo("gni_p0_str", "corpus/gni-bim-sample/2026_BIMprojects/model_0_structure.ifc", "IFC2X3", SMALL),
+        _repo("gni_p3_arc", "corpus/gni-bim-sample/2026_BIMprojects/model_3_arc.ifc", "IFC2X3", SMALL),
+        _repo("gni_p3_str", "corpus/gni-bim-sample/2026_BIMprojects/model_3_structure.ifc", "IFC2X3", SMALL),
+        _repo("gni_77", "corpus/gni-bim-sample/2025_BIMfundamentals/model_77.ifc", "IFC4", LARGE),
+        _repo("gni_68", "corpus/gni-bim-sample/2025_BIMfundamentals/model_68.ifc", "IFC4", LARGE),
+        _repo("gni_p5_arc", "corpus/gni-bim-sample/2026_BIMprojects/model_5_arc.ifc", "IFC2X3", LARGE),
+        _repo("gni_p5_str", "corpus/gni-bim-sample/2026_BIMprojects/model_5_structure.ifc", "IFC2X3", LARGE),
+        _repo("gni_p7_arc", "corpus/gni-bim-sample/2026_BIMprojects/model_7_arc.ifc", "IFC2X3", LARGE),
+        _repo("gni_p7_str", "corpus/gni-bim-sample/2026_BIMprojects/model_7_structure.ifc", "IFC2X3", LARGE),
+        _repo("gni_p8_arc", "corpus/gni-bim-sample/2026_BIMprojects/model_8_arc.ifc", "IFC4", LARGE),
+        _repo("gni_p8_str", "corpus/gni-bim-sample/2026_BIMprojects/model_8_structure.ifc", "IFC4", LARGE),
+        _external("duplex_mech", "008.781887MB__Ifc2x3_Duplex_Mechanical.ifc", "IFC2X3", LARGE),
+        _external("revit_arc", "013.646137MB__Ifc4_Revit_ARC.ifc", "IFC4", LARGE),
+        _external("duplex_mep", "017.871432MB__Ifc2x3_Duplex_MEP.ifc", "IFC2X3", LARGE),
+        _external("revit_mep", "029.165277MB__Ifc4_Revit_MEP.ifc", "IFC4", LARGE),
+        _repo("advanced_project", "real-world-test/AdvancedProject.ifc", "IFC2X3", LARGE),
+        _repo("adv_changed", "real-world-test/adv proj changed.ifc", "IFC2X3", LARGE),
+        _repo("basic_house", "data/BasicHouse.ifc", "IFC2X3", LARGE),
+        _repo("uni_house", "real-world-test/uni-project-house-50mb.ifc", "IFC2X3", LARGE),
+        _external("real_world_big", "168.047573MB__real-world-big.ifc", "IFC2X3", LARGE),
+        _repo("spanish", "real-world-test/real-world-spanish-180mb.ifc", "IFC2X3", LARGE),
     )
 }
+
+
+def default_suite_lfs() -> list[str]:
+    """Repo-relative paths of the LFS files the default suite reads."""
+    paths = [f.path for f in CORPUS.values() if f.tier == SMALL and f.required]
+    paths += [VIEWER_OLD_IFC, VIEWER_NEW_IFC]
+    return [path.relative_to(REPO_ROOT).as_posix() for path in paths]
 
 
 def _is_lfs_pointer(path: Path) -> bool:
@@ -226,3 +241,15 @@ def assert_zero_diff(report: dict) -> None:
     assert report["stats"]["modified"] == 0
     assert report["stats"]["unchanged"] == report["stats"]["old_signatures"]
     assert report["stats"]["unchanged"] == report["stats"]["new_signatures"]
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Inspect the test corpus registry.")
+    parser.add_argument(
+        "--default-lfs",
+        action="store_true",
+        required=True,
+        help="print the default suite's LFS files as a `git lfs pull --include` list",
+    )
+    parser.parse_args()
+    print(",".join(default_suite_lfs()))

@@ -26,17 +26,15 @@ def build_signature_bundle(filepath: str) -> SignatureBundle:
 
 
 def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle:
-    import ifcopenshell
-
     from .native_schema import schema_descriptors_json
-    from .parser import _assert_supported_schema, _extract_unit_context
+    from .parser import _assert_supported_schema, _extract_unit_context, open_ifc
     from .properties import extract_orphan_property_sets, extract_properties
 
     # ifcopenshell is used for the schema name, unit factors, and raw property
     # values (relationship/pset traversal only, not the mesh primitives); it is
     # released before the native parse so the file's geometry entities are never
     # held as Python/C++ model state during signature building.
-    ifc = ifcopenshell.open(filepath)
+    ifc = open_ifc(filepath)
     schema = str(ifc.schema or "")
     _assert_supported_schema(schema)
     unit_factors = _extract_unit_context(ifc).get("unit_factors", {})

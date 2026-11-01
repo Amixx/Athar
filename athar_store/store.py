@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from athar.bottom.parser import open_ifc
 from athar.check import evaluate_report
 from athar.engine import diff_files
 
@@ -299,6 +300,7 @@ class BaselineStore:
         src = Path(ifc_path)
         if not src.is_file():
             raise StoreError(f"IFC file not found: {ifc_path}")
+        schema = open_ifc(str(src)).schema
         sha256 = _file_sha256(src)
         dest = self._artifact_path(project_id, sha256)
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -306,7 +308,7 @@ class BaselineStore:
             shutil.copyfile(src, dest)
         return {
             "sha256": sha256,
-            "schema": _read_schema(src),
+            "schema": schema,
             "size_bytes": src.stat().st_size,
         }
 
@@ -372,15 +374,6 @@ def _stats_summary(report: dict[str, Any]) -> dict[str, Any]:
         "new_signatures",
     )
     return {key: stats.get(key) for key in keys if key in stats}
-
-
-def _read_schema(path: str | Path) -> str | None:
-    try:
-        import ifcopenshell
-
-        return ifcopenshell.open(str(path)).schema
-    except Exception:  # pragma: no cover - non-IFC or unreadable input
-        return None
 
 
 def _read_json(path: Path) -> dict[str, Any]:

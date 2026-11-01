@@ -35,27 +35,44 @@ jobs:
         run: git lfs ls-files -l | cut -d' ' -f1 | sort > .lfs-assets-id
 
       - name: Restore LFS object cache
-        uses: actions/cache@v4
+        id: lfs-cache
+        uses: actions/cache/restore@v4
         with:
           path: .git/lfs
-          key: lfs-${{ hashFiles('.lfs-assets-id') }}
-          restore-keys: lfs-
+          key: lfs-all-${{ hashFiles('.lfs-assets-id') }}
+          restore-keys: lfs-all-
 
       - name: Fetch LFS content
         run: |
           git lfs install --local
           git lfs pull
 
+      - name: Save LFS object cache
+        if: steps.lfs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .git/lfs
+          key: ${{ steps.lfs-cache.outputs.cache-primary-key }}
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: pip install pytest ifcopenshell
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: athar/_native
+
+      - name: Build Athar with the native extension
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install pytest
+          make native-build
 
       - name: Fast default suite (smoke gate)
-        run: python -m pytest tests/ -q
+        run: .venv/bin/python -m pytest tests/ -q
 
       - name: Large acceptance suite
         env:
@@ -63,4 +80,4 @@ jobs:
           # Per-test wall-clock bound; the 182MB model parse alone can take
           # ~30-60 min on a standard runner.
           ATHAR_ACCEPTANCE_TIMEOUT_S: "5400"
-        run: python -m pytest tests/test_acceptance_large_ifc.py -q --durations=20
+        run: .venv/bin/python -m pytest tests/test_acceptance_large_ifc.py -q --durations=20

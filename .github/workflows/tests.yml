@@ -1,0 +1,76 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout (LFS pointers only)
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The registry only needs paths, so it runs before any LFS content exists.
+      - name: List the default suite's LFS files
+        run: |
+          python -m pip install pytest
+          list=$(python -m tests.corpus --default-lfs)
+          test -n "$list"
+          echo "DEFAULT_SUITE_LFS=$list" >> "$GITHUB_ENV"
+
+      # LFS bandwidth is metered (~650MB corpus vs 1GB/month free), so the
+      # default-suite objects are cached; runs on main save the cache that PR
+      # runs restore, and `git lfs pull` only downloads objects missing from it.
+      - name: Compute LFS objects cache key
+        run: git lfs ls-files -l -I "$DEFAULT_SUITE_LFS" | cut -d' ' -f1 | sort > .lfs-assets-id
+
+      - name: Restore LFS object cache
+        id: lfs-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .git/lfs
+          key: lfs-default-${{ hashFiles('.lfs-assets-id') }}
+          restore-keys: lfs-default-
+
+      - name: Fetch LFS content
+        run: |
+          git lfs install --local
+          git lfs pull --include="$DEFAULT_SUITE_LFS"
+
+      - name: Save LFS object cache
+        if: steps.lfs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .git/lfs
+          key: ${{ steps.lfs-cache.outputs.cache-primary-key }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: athar/_native
+
+      - name: Build Athar with the native extension
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install pytest
+          make native-build
+
+      - name: Default suite
+        run: .venv/bin/python -m pytest tests/ -q

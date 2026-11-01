@@ -10,7 +10,6 @@ import threading
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
 import pytest
 
@@ -25,11 +24,10 @@ from athar_view.server import (
     make_chain_server,
     make_server,
 )
+from tests.corpus import REPO_ROOT
+from tests.corpus import VIEWER_NEW_IFC as NEW_IFC
+from tests.corpus import VIEWER_OLD_IFC as OLD_IFC
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-FIXTURE_DIR = REPO_ROOT / "viewer" / "e2e" / "fixtures"
-OLD_IFC = FIXTURE_DIR / "old.ifc"
-NEW_IFC = FIXTURE_DIR / "new.ifc"
 
 
 @pytest.fixture(scope="module")
