@@ -110,6 +110,7 @@ identity to descendants. Other twins get fresh IDs and are counted as unmatched
 twins. Shared resources remain shared; conflicting role proposals are not
 forced into a many-to-one match. A last role pass pairs entities whose class,
 name and named children are unique among the unmatched entities of both files.
+Unique-content recovery and role propagation then run to a fixed point.
 An object (product, type, spatial element) never takes the ID of one with a
 different GlobalId, so a product whose exporter regenerated its GUID is refused
 as an unmatched rooted addition; property sets and relationships still pair

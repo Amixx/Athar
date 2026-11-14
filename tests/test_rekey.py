@@ -423,3 +423,20 @@ def test_rekey_unequal_unordered_child_twins_stay_unmatched(tmp_path):
     restored = ifcopenshell.open(str(out))
     assert all(prop.id() > 340 for prop in restored.by_id(340).HasProperties)
     assert stats["fresh"] == stats["unmatched_twins"] == 3
+
+
+def test_rekey_recovers_unique_content_after_final_role_propagation(tmp_path):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    for path, offset, x in ((base, 0, 12.0), (new, 1000, 13.0)):
+        f = model(path, offset)
+        first = f.create_entity("IfcCartesianPoint", id=300 + offset, Coordinates=(4.0, 5.0, 6.0))
+        f.create_entity("IfcCartesianPoint", id=310 + offset, Coordinates=(4.0, 5.0, 6.0))
+        tail = f.create_entity("IfcCartesianPoint", id=320 + offset, Coordinates=(x, 0.0, 0.0))
+        f.create_entity("IfcPolyline", id=340 + offset, Points=(first, tail))
+        f.write(str(path))
+    stats = rekey_files(str(base), str(new), str(out))
+    restored = ifcopenshell.open(str(out))
+    assert stats["fresh"] == stats["unmatched_twins"] == 0
+    assert [point.id() for point in restored.by_id(340).Points] == [300, 320]
+    assert restored.by_id(310).Coordinates == (4.0, 5.0, 6.0)
+    assert restored.by_id(320).Coordinates == (13.0, 0.0, 0.0)

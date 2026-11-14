@@ -286,12 +286,15 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
                 new_buckets[new.hashes[b]].append(b)
         return [(buckets[k], new_buckets[k]) for k in sorted(buckets.keys() & new_buckets.keys())]
 
+    def match_unique_content():
+        while unique := [(aa[0], bb[0]) for aa, bb in content_buckets() if len(aa) == len(bb) == 1]:
+            for a, b in unique:
+                match(a, b, "content")
+            propagate()
+
     propagate()
     # Equal-content twins wait until unique content matches have propagated roles to them.
-    while unique := [(aa[0], bb[0]) for aa, bb in content_buckets() if len(aa) == len(bb) == 1]:
-        for a, b in unique:
-            match(a, b, "content")
-        propagate()
+    match_unique_content()
     # Arbitrary twin pairings require identical rewritten bodies and no incoming
     # NEW references. They provide no role identity evidence for propagation.
     referenced = {t for value in new.values.values() for t in new.refs(value)}
@@ -323,6 +326,7 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
             role_ambiguous += len(bb)
     role_matches = len(mapping) - before_roles
     propagate()
+    match_unique_content()
     unmatched_twins = sum(len(bb) for _, bb in content_buckets())
 
     matched = dict(mapping)

@@ -50,7 +50,8 @@ GitHub comments, and other presentation concerns.
   resolve through established mappings. Leaf twins satisfy the outgoing check.
   These pairings never enter the role-propagation queue. Other twins get fresh
   ids and are counted as `unmatched_twins`. A final role pass pairs entities
-  whose role key is unique among the unmatched on both sides.
+  whose role key is unique among the unmatched on both sides, followed by
+  unique-content recovery and propagation until no unique-content pair remains.
   No pass gives an `IfcObjectDefinition` the id of one with a different
   `GlobalId` (counted as `globalid_refusals`), Athar's
   GUID-free signature matches included: the rekey content hash of a uniquely
