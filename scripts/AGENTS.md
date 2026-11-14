@@ -16,7 +16,11 @@ Scripts are for inspection and repeatable investigation.
   - `explore/corpus_survey.py` regenerates the corpus survey JSON behind
     `docs/corpus/`.
   - `explore/benchmark_competitors.py` benchmarks Athar against other IFC
-    diff tools on curated pairs with known ground truth.
+    diff tools on curated pairs. Truth independent of every tool's output
+    exists for 13 default pairs (4 no-op rewrites, the GUID scramble, 8
+    mutation pairs whose truth comes from the mutation manifest) and the 2
+    `--large` same-file pairs; the `bl_v1→v2` revision is `unscored`, and the
+    9 Revit pairs are scored against Athar-derived truth (see below).
     - Count-level ground truth goes in `Expected.counts` (aggregate
       added/deleted/modified, with `_min`/`_max` suffixes for bounds).
     - GlobalId-level ground truth goes in `Expected.changed_guids`
