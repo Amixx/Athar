@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
+import os
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -14,8 +17,13 @@ from .cache import load_or_build_bundle
 from .render import DEFAULT_MAX_ITEMS, render_text_report
 
 ATTRIBUTES_LINE = "*.ifc diff=athar -merge"
-DIFF_COMMAND = "athar git diff --external"
-DIFFTOOL_COMMAND = 'athar view "$LOCAL" "$REMOTE"'
+# Git runs drivers from the worktree top level, so the command must not put the
+# current directory on sys.path: a repository's own athar.py or json.py would
+# shadow the installed modules.
+_BOOTSTRAP = (
+    "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; "
+    "from athar.__main__ import main; sys.exit(main())"
+)
 
 
 @dataclass(frozen=True)
@@ -54,7 +62,7 @@ def _add_git_subcommands(git_sub: argparse._SubParsersAction) -> None:
     install_parser.add_argument(
         "--no-attributes",
         action="store_true",
-        help="Do not append .gitattributes guidance in the current repository",
+        help="Do not append the *.ifc rule to .gitattributes at the repository top level",
     )
     install_parser.add_argument(
         "--difftool",
@@ -64,6 +72,19 @@ def _add_git_subcommands(git_sub: argparse._SubParsersAction) -> None:
     install_parser.set_defaults(func=_cmd_install)
 
     add_pr_comment_parser(git_sub)
+
+
+def _athar_command() -> list[str]:
+    try:
+        recorded = importlib.metadata.distribution("athar-ifc").files or []
+    except importlib.metadata.PackageNotFoundError:
+        recorded = []
+    for entry in recorded:
+        if entry.stem == "athar" and entry.parent.name in ("bin", "Scripts"):
+            script = Path(os.path.normpath(entry.locate()))
+            if script.is_file():
+                return [str(script)]
+    return [sys.executable, "-c", _BOOTSTRAP]
 
 
 def run_git_command(args: argparse.Namespace) -> int:
@@ -116,26 +137,44 @@ def _is_missing_path(path: str) -> bool:
 
 
 def _cmd_install(args: argparse.Namespace) -> int:
+    attributes_path = None
+    if not args.no_attributes and not args.global_config:
+        toplevel = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
+        )
+        if toplevel.returncode != 0:
+            print(
+                "Error: athar git install must run inside a Git repository "
+                f"(git rev-parse: {toplevel.stderr.strip()}); use --global outside one.",
+                file=sys.stderr,
+            )
+            return 1
+        attributes_path = Path(toplevel.stdout.strip()) / ".gitattributes"
+
+    athar = _athar_command()
+    diff_command = shlex.join([*athar, "git", "diff", "--external"])
     config_scope = "--global" if args.global_config else "--local"
-    _git_config(config_scope, "diff.athar.command", DIFF_COMMAND)
+    _git_config(config_scope, "diff.athar.command", diff_command)
     _git_config(config_scope, "diff.athar.binary", "true")
     difftool = getattr(args, "difftool", False)
     if difftool:
-        _git_config(config_scope, "difftool.athar.cmd", DIFFTOOL_COMMAND)
+        _git_config(config_scope, "difftool.athar.cmd", shlex.join([*athar, "view"]) + ' "$LOCAL" "$REMOTE"')
 
     wrote_attributes = False
-    if not args.no_attributes and not args.global_config:
-        wrote_attributes = _ensure_attributes_line(Path(".gitattributes"))
+    if attributes_path is not None:
+        wrote_attributes = _ensure_attributes_line(attributes_path)
 
-    print(f"Configured Git diff driver: {DIFF_COMMAND}")
+    print(f"Configured Git diff driver: {diff_command}")
     if difftool:
         print("Configured Git difftool: git difftool -t athar -- path/to/file.ifc")
     if args.global_config:
         print(f"Add this to each IFC repository's .gitattributes: {ATTRIBUTES_LINE}")
+    elif attributes_path is None:
+        print(f"Skipped .gitattributes; add this line yourself: {ATTRIBUTES_LINE}")
     elif wrote_attributes:
-        print(f"Updated .gitattributes: {ATTRIBUTES_LINE}")
+        print(f"Updated {attributes_path}: {ATTRIBUTES_LINE}")
     else:
-        print(f".gitattributes already contains: {ATTRIBUTES_LINE}")
+        print(f"{attributes_path} already contains: {ATTRIBUTES_LINE}")
     return 0
 
 

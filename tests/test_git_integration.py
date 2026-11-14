@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import os
+import pickle
+import shlex
+import shutil
+import stat
 import subprocess
 import sys
+import sysconfig
+from importlib import metadata
 from pathlib import Path
 
 import pytest
 
-import athar.__main__ as main_mod
 import athar_git.cache as cache_mod
 import athar_git.cli as cli_mod
 import athar_git.pr_bot as pr_bot
@@ -221,6 +226,48 @@ def test_persistent_cache_reuses_blob_key(tmp_path, monkeypatch):
     assert first.path == second.path
 
 
+def test_cache_entries_are_keyed_to_the_installed_distribution_version(tmp_path):
+    cache_dir = tmp_path / "cache"
+    first = cache_mod.load_or_build_bundle(TINY_IFC, cache_dir=cache_dir)
+    with first.path.open("rb") as handle:
+        payload = pickle.load(handle)
+    assert payload["producer_version"] == metadata.version("athar-ifc")
+    assert cache_mod.load_or_build_bundle(TINY_IFC, cache_dir=cache_dir).hit is True
+
+    payload["producer_version"] = metadata.version("athar-ifc") + ".other"
+    with first.path.open("wb") as handle:
+        pickle.dump(payload, handle)
+    assert cache_mod.load_or_build_bundle(TINY_IFC, cache_dir=cache_dir).hit is False
+
+
+def test_cache_directories_are_created_private(tmp_path):
+    cache_dir = tmp_path / "fresh" / "cache"
+    result = cache_mod.load_or_build_bundle(TINY_IFC, cache_dir=cache_dir)
+    assert stat.S_IMODE(cache_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(result.path.parent.stat().st_mode) == 0o700
+
+
+class _RunsOnLoad:
+    def __init__(self, marker: Path) -> None:
+        self.marker = marker
+
+    def __reduce__(self):
+        return (os.mkdir, (str(self.marker),))
+
+
+@pytest.mark.parametrize("loose", ["root", "canon"])
+def test_cache_refuses_a_directory_others_can_write_before_unpickling(tmp_path, loose):
+    cache_dir = tmp_path / "cache"
+    entry = cache_mod.load_or_build_bundle(TINY_IFC, cache_dir=cache_dir).path
+    marker = tmp_path / "unpickled"
+    entry.write_bytes(pickle.dumps(_RunsOnLoad(marker)))
+    (cache_dir if loose == "root" else entry.parent).chmod(0o777)
+
+    with pytest.raises(PermissionError, match="writable by group or others"):
+        cache_mod.load_or_build_bundle(TINY_IFC, cache_dir=cache_dir)
+    assert not marker.exists()
+
+
 def test_git_diff_external_mode_uses_blob_cache_keys(tmp_path, monkeypatch, capsys):
     seen = []
     old_path = tmp_path / "old.ifc"
@@ -371,26 +418,149 @@ def test_git_diff_manual_mode_returns_nonzero_on_engine_errors(monkeypatch, tmp_
     assert "Error: Schema mismatch" in captured.err
 
 
-def test_git_install_sets_config_and_appends_attributes(tmp_path, monkeypatch, capsys):
-    calls = []
+def _git_env(tmp_path: Path) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["GIT_CEILING_DIRECTORIES"] = str(tmp_path)
+    env["GIT_CONFIG_GLOBAL"] = str(tmp_path / "global.gitconfig")
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    return env
 
-    def fake_run(command, check):
-        calls.append((command, check))
-        return subprocess.CompletedProcess(command, 0)
 
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli_mod.subprocess, "run", fake_run)
-    parser = cli_mod.build_git_parser()
-    args = parser.parse_args(["install"])
+def _athar_install(
+    cwd: Path, env: dict[str, str], *args: str, python: str = sys.executable
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [python, "-m", "athar", "git", "install", *args],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
 
-    assert cli_mod.run_git_command(args) == 0
 
-    assert calls == [
-        (["git", "config", "--local", "diff.athar.command", "athar git diff --external"], True),
-        (["git", "config", "--local", "diff.athar.binary", "true"], True),
-    ]
-    assert (tmp_path / ".gitattributes").read_text(encoding="utf-8") == "*.ifc diff=athar -merge\n"
-    assert "Configured Git diff driver" in capsys.readouterr().out
+def _python_without_athar_script(tmp_path: Path, *, foreign_script: bool = False) -> str:
+    venv = tmp_path / "bare-venv"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
+    python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    purelib, scripts = (
+        Path(subprocess.run(
+            [str(python), "-c", f"import sysconfig; print(sysconfig.get_path({name!r}))"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip())
+        for name in ("purelib", "scripts")
+    )
+    host = sysconfig.get_path("purelib")
+    (purelib / "host.pth").write_text(f"import site; site.addsitedir({host!r})\n", encoding="utf-8")
+    version = metadata.version("athar-ifc")
+    record = purelib / f"athar_ifc-{version}.dist-info"
+    record.mkdir()
+    (record / "METADATA").write_text(f"Metadata-Version: 2.1\nName: athar-ifc\nVersion: {version}\n", encoding="utf-8")
+    (record / "RECORD").write_text(f"{record.name}/METADATA,,\n{record.name}/RECORD,,\n", encoding="utf-8")
+    if foreign_script:
+        (scripts / ("athar.exe" if os.name == "nt" else "athar")).write_text("foreign", encoding="utf-8")
+    return str(python)
+
+
+def test_a_console_script_the_distribution_does_not_record_is_not_used(tmp_path):
+    env = _git_env(tmp_path)
+    python = _python_without_athar_script(tmp_path, foreign_script=True)
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env)
+
+    installed = _athar_install(repo, env, python=python)
+    assert installed.returncode == 0, installed.stderr
+    command = shlex.split(subprocess.run(
+        ["git", "config", "--get", "diff.athar.command"],
+        cwd=repo, env=env, capture_output=True, text=True, check=True,
+    ).stdout)
+    assert command[:2] == [python, "-c"]
+
+
+@pytest.mark.parametrize("interpreter", ["console-script", "no-console-script"])
+def test_installed_git_commands_never_import_from_the_diffed_repository(tmp_path, interpreter):
+    env = _git_env(tmp_path)
+    python = sys.executable if interpreter == "console-script" else _python_without_athar_script(tmp_path)
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env)
+    for key, value in (("user.email", "athar-test@example.invalid"), ("user.name", "Athar Test")):
+        subprocess.run(["git", "config", key, value], cwd=repo, check=True, env=env)
+
+    installed = _athar_install(repo, env, "--difftool", python=python)
+    assert installed.returncode == 0, installed.stderr
+    command = shlex.split(subprocess.run(
+        ["git", "config", "--get", "diff.athar.command"],
+        cwd=repo, env=env, capture_output=True, text=True, check=True,
+    ).stdout)
+    assert Path(command[0]).is_absolute()
+    if interpreter == "console-script":
+        assert command[0] == str(Path(sysconfig.get_path("scripts")) / "athar")
+    else:
+        assert command[:2] == [python, "-c"]
+
+    model = repo / "model.ifc"
+    model.write_text(TINY_IFC.read_text(encoding="utf-8"), encoding="utf-8")
+    subprocess.run(["git", "add", ".gitattributes", "model.ifc"], cwd=repo, check=True, env=env)
+    subprocess.run(["git", "commit", "-qm", "baseline"], cwd=repo, check=True, env=env)
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    for module in ("athar", "json", "ifcopenshell"):
+        marker = markers / module
+        (repo / f"{module}.py").write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('imported')\n", encoding="utf-8"
+        )
+
+    model.write_text(
+        model.read_text(encoding="utf-8").replace("2026-05-17T00:00:00", "2026-05-18T00:00:00"),
+        encoding="utf-8",
+    )
+    bare_path = os.pathsep.join([str(Path(shutil.which("git")).parent), "/usr/bin", "/bin"])
+    assert shutil.which("athar", path=bare_path) is None
+    run_env = {**env, "PATH": bare_path, "ATHAR_CACHE_DIR": str(tmp_path / "cache")}
+    diffed = subprocess.run(
+        ["git", "diff", "--", "model.ifc"], cwd=repo, env=run_env, capture_output=True, text=True,
+    )
+    assert diffed.returncode == 0, diffed.stderr
+    assert "Athar IFC diff" in diffed.stdout
+    assert list(markers.iterdir()) == []
+
+    model.write_text("not an IFC file\n", encoding="utf-8")
+    viewed = subprocess.run(
+        ["git", "difftool", "-y", "-t", "athar", "--", "model.ifc"],
+        cwd=repo, env=run_env, capture_output=True, text=True, timeout=120,
+    )
+    assert "Error: Cannot parse IFC file" in viewed.stdout + viewed.stderr
+    assert list(markers.iterdir()) == []
+
+
+def test_git_install_writes_attributes_at_repository_top_level(tmp_path):
+    env = _git_env(tmp_path)
+    repo = tmp_path / "repo"
+    subdir = repo / "models" / "arch"
+    subdir.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env)
+
+    first = _athar_install(subdir, env)
+    assert first.returncode == 0, first.stderr
+    assert (repo / ".gitattributes").read_text(encoding="utf-8") == "*.ifc diff=athar -merge\n"
+    assert not (subdir / ".gitattributes").exists()
+
+    second = _athar_install(subdir, env)
+    assert second.returncode == 0
+    assert "already contains" in second.stdout
+    assert (repo / ".gitattributes").read_text(encoding="utf-8") == "*.ifc diff=athar -merge\n"
+
+
+def test_git_install_outside_a_repository_fails_without_writing(tmp_path):
+    env = _git_env(tmp_path)
+    outside = tmp_path / "plain"
+    outside.mkdir()
+
+    result = _athar_install(outside, env)
+
+    assert result.returncode == 1
+    assert "must run inside a Git repository" in result.stderr
+    assert not (outside / ".gitattributes").exists()
+    assert not (tmp_path / "global.gitconfig").exists()
 
 
 def test_git_diff_driver_e2e_invoked_by_real_git(tmp_path):
@@ -487,6 +657,7 @@ def test_cached_lfs_pointer_diffs_without_smudging(tmp_path, monkeypatch):
     pointer.write_text(_LFS_POINTER_TEXT.format(oid=oid), encoding="utf-8")
     cache_dir = tmp_path / "cache"
     entry = cache_mod._entry_path(cache_dir, f"sha256-{oid}")
+    entry.parent.mkdir(mode=0o700, parents=True)
     cache_mod._write_entry(entry, _bundle(), f"sha256-{oid}")
 
     def refuse_smudge(*args, **kwargs):

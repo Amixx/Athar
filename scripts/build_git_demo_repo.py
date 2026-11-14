@@ -18,6 +18,7 @@ Also reports how well Git's own packfile delta compression stores the lineage,
 as a baseline against the athar_store delta pack.
 
 Usage: python scripts/build_git_demo_repo.py [--dest DIR] [--force] [--revit]
+The running interpreter must have Athar installed; `athar git install` records it.
 """
 
 from __future__ import annotations
@@ -51,8 +52,6 @@ REVIT_VERSIONS = [
     (f"{_REVIT_EXPORTS}/r10.ifc", "r10: same door, one type property value changed"),
 ]
 
-DRIVER_COMMAND = f'PYTHONPATH="{REPO_ROOT}" "{sys.executable}" -m athar git diff --external'
-DIFFTOOL_COMMAND = f'PYTHONPATH="{REPO_ROOT}" "{sys.executable}" -m athar view "$LOCAL" "$REMOTE"'
 
 
 def _run(args: list[str], cwd: Path) -> str:
@@ -110,10 +109,7 @@ def main() -> int:
     dest.mkdir(parents=True)
 
     _run(["git", "init", "-q"], cwd=dest)
-    _run(["git", "config", "diff.athar.command", DRIVER_COMMAND], cwd=dest)
-    _run(["git", "config", "diff.athar.binary", "true"], cwd=dest)
-    _run(["git", "config", "difftool.athar.cmd", DIFFTOOL_COMMAND], cwd=dest)
-    (dest / ".gitattributes").write_text("*.ifc diff=athar -merge\n", encoding="utf-8")
+    _run([sys.executable, "-m", "athar", "git", "install", "--local", "--difftool"], cwd=dest)
 
     logical_bytes = 0
     for src, message in sources:

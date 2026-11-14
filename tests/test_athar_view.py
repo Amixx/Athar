@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import sysconfig
+import shlex
 import json
 import subprocess
 import sys
@@ -325,7 +327,9 @@ def test_install_difftool_writes_git_config(tmp_path, monkeypatch):
         text=True,
         check=True,
     ).stdout.strip()
-    assert configured == 'athar view "$LOCAL" "$REMOTE"'
+    assert shlex.split(configured) == [
+        str(Path(sysconfig.get_path("scripts")) / "athar"), "view", "$LOCAL", "$REMOTE"
+    ]
 
 
 def test_main_dispatches_view_subcommand():

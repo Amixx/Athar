@@ -229,15 +229,22 @@ signature bundles on disk by Git blob id (falling back to a content hash for
 working-tree files).
 
 ```bash
-# Configure the current repository and add .gitattributes guidance
+# Configure the current repository and add the .gitattributes rule
 athar git install
 
 # Manual terminal rendering without Git plumbing
 athar git diff old.ifc new.ifc
 ```
 
-`athar git install` sets `diff.athar.command` to
-`athar git diff --external` and appends:
+`athar git install` sets `diff.athar.command` to an absolute command for the
+installation that ran it: the `athar` console script that installation recorded,
+or that interpreter running a bootstrap that drops the current directory from
+`sys.path` when the record lists no script on disk. Git runs the
+driver from the repository's top level, so the command never imports modules
+from the repository being diffed, and it works without activating the
+virtualenv or having `athar` on `PATH`; run it again after moving or
+recreating that environment. It must run inside a repository and appends this
+rule to the `.gitattributes` at the repository's top level:
 
 ```gitattributes
 *.ifc diff=athar -merge
@@ -248,9 +255,13 @@ merge can silently splice two exported models into a corrupt file with
 duplicate or dangling STEP ids. Athar provides semantic diffing; it does not
 attempt semantic merge.
 
-The persistent signature cache is versioned and deterministic, but v1 does not
-evict old entries. Set `ATHAR_CACHE_DIR` to isolate or periodically clear a
-large repository's cache.
+The persistent signature cache is versioned (by the installed `athar-ifc`
+version) and deterministic, but v1 does not evict old entries. Set
+`ATHAR_CACHE_DIR` to isolate or periodically clear a large repository's cache.
+Cache entries are Python pickles, so the cache directory is trusted local
+state: Athar creates it with mode 0700, refuses one that another user owns or
+that group or others can write, and it must never be shared with or restored
+from a source you do not control.
 
 ### GitHub PR Comments
 
