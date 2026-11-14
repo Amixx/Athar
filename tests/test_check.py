@@ -306,9 +306,9 @@ def test_check_flags_protected_property_value_change():
     assert violation["property"] == "FireRating"
     assert violation["count"] == 1
     assert violation["affected"][0]["changes"] == [
-        {"pset": "Custom", "inherited": False, "old_value": "REI90", "new_value": "REI60"},
-        {"pset": "Pset_WallCommon", "inherited": False, "old_value": "90", "new_value": "60"},
-        {"pset": "Pset_WallCommon", "inherited": True, "old_value": "90", "new_value": "30"},
+        {"kind": "changed", "pset": "Custom", "inherited": False, "old_value": "REI90", "new_value": "REI60"},
+        {"kind": "changed", "pset": "Pset_WallCommon", "inherited": False, "old_value": "90", "new_value": "60"},
+        {"kind": "changed", "pset": "Pset_WallCommon", "inherited": True, "old_value": "90", "new_value": "30"},
     ]
 
 
@@ -551,3 +551,86 @@ def test_cli_check_diffs_ifc_files(tmp_path, capsys):
     assert code == 2
     assert out["violations"][0]["actual"] == 1
     assert out["summary"]["deleted"] == 1
+
+
+def _fire(value):
+    return {"Pset_WallCommon": {"FireRating": value}}
+
+
+def _property_verdict(tmp_path, old_wall, new_wall, policy):
+    report = _diff(tmp_path, {"walls": [{"id": "w1", **old_wall}]}, {"walls": [{"id": "w1", **new_wall}]})
+    return evaluate_report(report, policy)
+
+
+_PROTECT_FIRE = {"forbid_property_value_change": {"FireRating": "*"}}
+
+
+def test_property_edit_expressed_as_remove_and_add_is_a_value_change(tmp_path):
+    verdict = _property_verdict(
+        tmp_path, {"psets": _fire("REI90")}, {"psets": {"Custom_Fire": {"FireRating": "REI60"}}}, _PROTECT_FIRE
+    )
+
+    [violation] = verdict["violations"]
+    assert violation["code"] == "property_value_changed"
+    assert violation["affected"][0]["changes"] == [
+        {"kind": "removed", "pset": "Pset_WallCommon", "inherited": False, "old_value": "REI90"},
+        {"kind": "added", "pset": "Custom_Fire", "inherited": False, "new_value": "REI60"},
+    ]
+
+
+def test_property_moved_from_occurrence_to_type_with_a_new_value_is_a_value_change(tmp_path):
+    verdict = _property_verdict(tmp_path, {"psets": _fire("REI90")}, {"type_psets": _fire("REI60")}, _PROTECT_FIRE)
+
+    [violation] = verdict["violations"]
+    assert [(c["kind"], c["inherited"]) for c in violation["affected"][0]["changes"]] == [
+        ("removed", False),
+        ("added", True),
+    ]
+
+
+def test_property_moved_with_its_value_kept_is_not_a_value_change(tmp_path):
+    verdict = _property_verdict(
+        tmp_path,
+        {"psets": {**_fire("REI90"), "Other": {"Note": "a"}}},
+        {"type_psets": _fire("REI90"), "psets": {"Other": {"Note": "b"}}},
+        {**_PROTECT_FIRE, "forbid_property_addition": {"FireRating": "*"}},
+    )
+
+    assert verdict["violations"] == []
+
+
+def test_protected_property_removed_without_replacement_is_a_value_change(tmp_path):
+    verdict = _property_verdict(
+        tmp_path, {"psets": {"Pset_WallCommon": {"FireRating": "REI90", "Note": "a"}}}, {"psets": {"Pset_WallCommon": {"Note": "a"}}}, _PROTECT_FIRE
+    )
+
+    [violation] = verdict["violations"]
+    assert violation["affected"][0]["changes"] == [
+        {"kind": "removed", "pset": "Pset_WallCommon", "inherited": False, "old_value": "REI90"}
+    ]
+
+
+def test_property_addition_fails_only_when_the_policy_asks(tmp_path):
+    old, new = {"psets": {"Other": {"Note": "a"}}}, {"psets": {"Other": {"Note": "a"}, **_fire("REI60")}}
+
+    assert _property_verdict(tmp_path, old, new, _PROTECT_FIRE)["ok"] is True
+    verdict = _property_verdict(tmp_path, old, new, {"forbid_property_addition": {"FireRating": ["IfcWall"]}})
+    [violation] = verdict["violations"]
+    assert violation["code"] == "property_added"
+    assert violation["affected"][0]["added"] == [{"pset": "Pset_WallCommon", "inherited": False, "new_value": "REI60"}]
+
+
+def test_duplicate_property_count_change_fails_closed():
+    report = _report_with_property_deltas()
+    report["modified"][1]["property_deltas"] = {
+        "count_changed": [
+            {"pset": "Pset_DoorCommon", "name": "FireRating", "inherited": False, "old_count": 2, "new_count": 1}
+        ]
+    }
+
+    verdict = evaluate_report(report, {"forbid_property_value_change": {"FireRating": ["IfcDoor"]}})
+
+    [violation] = verdict["violations"]
+    assert violation["affected"][0]["changes"] == [
+        {"kind": "count_changed", "pset": "Pset_DoorCommon", "inherited": False, "old_count": 2, "new_count": 1}
+    ]

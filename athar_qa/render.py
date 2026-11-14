@@ -75,12 +75,14 @@ def _violation_detail_lines(violation: dict[str, Any]) -> list[str]:
 def _affected_line(code: str | None, entry: dict[str, Any]) -> str:
     label = _entity_label(entry)
     if code == "property_value_changed":
-        changes = "; ".join(
-            f"{_property_label(change.get('pset'), entry.get('property'), change.get('inherited'))} "
-            f"{_value(change.get('old_value'))} -> {_value(change.get('new_value'))}"
-            for change in entry.get("changes") or []
-        )
+        changes = "; ".join(_change_text(entry.get("property"), change) for change in entry.get("changes") or [])
         return f"{label}: {changes}"
+    if code == "property_added":
+        added = ", ".join(
+            f"{_property_label(prop.get('pset'), entry.get('property'), prop.get('inherited'))} {_value(prop.get('new_value'))}"
+            for prop in entry.get("added") or []
+        )
+        return f"{label}: added {added}"
     if code == "property_removed":
         removed = ", ".join(
             _property_label(prop.get("pset"), prop.get("name"), prop.get("inherited"))
@@ -90,6 +92,18 @@ def _affected_line(code: str | None, entry: dict[str, Any]) -> str:
     if code == "placement_delta_limit":
         return f"{label}: placement delta {entry.get('placement_delta_mm')} mm (limit {entry.get('limit')})"
     return label
+
+
+def _change_text(name: object, change: dict[str, Any]) -> str:
+    prop = _property_label(change.get("pset"), name, change.get("inherited"))
+    kind = change.get("kind")
+    if kind == "removed":
+        return f"{prop} {_value(change.get('old_value'))} removed"
+    if kind == "added":
+        return f"{prop} {_value(change.get('new_value'))} added"
+    if kind == "count_changed":
+        return f"{prop} occurs {change.get('old_count')} -> {change.get('new_count')} times"
+    return f"{prop} {_value(change.get('old_value'))} -> {_value(change.get('new_value'))}"
 
 
 def _property_label(pset: object, name: object, inherited: object) -> str:

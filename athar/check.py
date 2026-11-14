@@ -174,6 +174,7 @@ _POLICY_KEYS = {
     "forbid_aspect_changes": _aspect_bans,
     "forbid_property_removal": _class_filter,
     "forbid_property_value_change": _property_filters,
+    "forbid_property_addition": _property_filters,
 }
 
 
@@ -300,7 +301,7 @@ def _validate_rule_detail(item: dict[str, Any], where: str, policy: dict[str, An
                 )
 
 
-_PROPERTY_RULES = ("forbid_property_removal", "forbid_property_value_change")
+_PROPERTY_RULES = ("forbid_property_removal", "forbid_property_value_change", "forbid_property_addition")
 _PROPERTY_DELTA_VALUES = {
     "changed": ("old_value", "new_value"),
     "added": ("new_value",),
@@ -334,7 +335,10 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     - ``forbid_property_removal``: ``"*"``, a class string, or a list of classes
       — fail when a matched entity drops a property/quantity value
     - ``forbid_property_value_change``: ``{"FireRating": "*", "LoadBearing":
-      ["IfcWall"]}`` — fail when a protected property's value changes
+      ["IfcWall"]}`` — fail when a protected property's value changes or is
+      removed (see :func:`_check_property_value_changes`)
+    - ``forbid_property_addition``: same shape — fail when a matched entity
+      gains a protected property
 
     Any other key is an error.
     """
@@ -350,6 +354,7 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     _check_aspect_bans(report, policy, violations)
     _check_property_removal(report, policy, violations)
     _check_property_value_changes(report, policy, violations)
+    _check_property_additions(report, policy, violations)
 
     return {
         "ok": not violations,
@@ -511,13 +516,12 @@ def _check_property_removal(report: dict[str, Any], policy: dict[str, Any], viol
     for item in report["modified"]:
         if not _class_matches(classes, report, item):
             continue
-        removed = (item.get("property_deltas") or {}).get("removed") or []
+        removed = item.get("property_deltas", {}).get("removed", [])
         if not removed:
             continue
         ref = _modified_entity_ref(item)
         ref["removed_properties"] = [
-            {"pset": entry.get("pset"), "name": entry.get("name"), "inherited": entry.get("inherited")}
-            for entry in removed
+            {"pset": entry["pset"], "name": entry["name"], "inherited": entry["inherited"]} for entry in removed
         ]
         affected.append(ref)
     if affected:
@@ -532,27 +536,25 @@ def _check_property_removal(report: dict[str, Any], policy: dict[str, Any], viol
 
 
 def _check_property_value_changes(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
+    """Fail when a protected property's value on a matched entity may differ.
+
+    Reads each modified entity's ``property_deltas``, keyed by (pset, name,
+    inherited-from-type). A protected name violates the rule when an entry is
+    ``changed``; when it is ``removed`` and no ``added`` entry of that name on
+    the same entity carries an equal value (a move between psets, or between
+    the occurrence and its type, with the value kept is not a change); or when
+    it is in ``count_changed``. The report keeps one value per key, so for a
+    key that occurs more than once on an entity a count difference is the only
+    signal, and the rule fails on it without knowing which copy changed.
+    """
     for prop_name, classes in policy.get("forbid_property_value_change", {}).items():
         affected: list[dict[str, Any]] = []
         for item in report["modified"]:
             if not _class_matches(classes, report, item):
                 continue
-            changed = (item.get("property_deltas") or {}).get("changed") or []
-            matches = [e for e in changed if e.get("name") == prop_name]
-            if not matches:
-                continue
-            ref = _modified_entity_ref(item)
-            ref["property"] = prop_name
-            ref["changes"] = [
-                {
-                    "pset": e.get("pset"),
-                    "inherited": e.get("inherited"),
-                    "old_value": e.get("old_value"),
-                    "new_value": e.get("new_value"),
-                }
-                for e in matches
-            ]
-            affected.append(ref)
+            changes = _property_value_changes(item.get("property_deltas", {}), prop_name)
+            if changes:
+                affected.append({**_modified_entity_ref(item), "property": prop_name, "changes": changes})
         if affected:
             violations.append(
                 {
@@ -563,6 +565,76 @@ def _check_property_value_changes(report: dict[str, Any], policy: dict[str, Any]
                     "affected": affected[:20],
                 }
             )
+
+
+def _check_property_additions(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
+    """Fail when a matched entity gains a protected property it did not carry.
+
+    An ``added`` entry that pairs with a ``removed`` entry of the same name and
+    an equal value is a move, not an addition.
+    """
+    for prop_name, classes in policy.get("forbid_property_addition", {}).items():
+        affected: list[dict[str, Any]] = []
+        for item in report["modified"]:
+            if not _class_matches(classes, report, item):
+                continue
+            _, added = _unpaired_moves(item.get("property_deltas", {}), prop_name)
+            if added:
+                affected.append(
+                    {
+                        **_modified_entity_ref(item),
+                        "property": prop_name,
+                        "added": [_property_value(entry, "new_value") for entry in added],
+                    }
+                )
+        if affected:
+            violations.append(
+                {
+                    "code": "property_added",
+                    "message": f"Protected property {prop_name} added to {len(affected)} entity(s)",
+                    "property": prop_name,
+                    "count": len(affected),
+                    "affected": affected[:20],
+                }
+            )
+
+
+def _property_value_changes(deltas: dict[str, list[dict[str, Any]]], prop_name: str) -> list[dict[str, Any]]:
+    changes = [
+        {"kind": "changed", **_property_value(entry, "old_value", "new_value")}
+        for entry in deltas.get("changed", [])
+        if entry["name"] == prop_name
+    ]
+    removed, added = _unpaired_moves(deltas, prop_name)
+    if removed:
+        changes += [{"kind": "removed", **_property_value(entry, "old_value")} for entry in removed]
+        changes += [{"kind": "added", **_property_value(entry, "new_value")} for entry in added]
+    changes += [
+        {"kind": "count_changed", **_property_value(entry, "old_count", "new_count")}
+        for entry in deltas.get("count_changed", [])
+        if entry["name"] == prop_name
+    ]
+    return changes
+
+
+def _unpaired_moves(
+    deltas: dict[str, list[dict[str, Any]]], prop_name: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Removed and added entries of ``prop_name`` left after pairing equal values, in report order."""
+    removed = [entry for entry in deltas.get("removed", []) if entry["name"] == prop_name]
+    added = [entry for entry in deltas.get("added", []) if entry["name"] == prop_name]
+    unpaired_removed = []
+    for entry in removed:
+        match = next((i for i, candidate in enumerate(added) if candidate["new_value"] == entry["old_value"]), None)
+        if match is None:
+            unpaired_removed.append(entry)
+        else:
+            del added[match]
+    return unpaired_removed, added
+
+
+def _property_value(entry: dict[str, Any], *keys: str) -> dict[str, Any]:
+    return {"pset": entry["pset"], "inherited": entry["inherited"], **{key: entry[key] for key in keys}}
 
 
 def _section_count(report: dict[str, Any], section: str) -> int:
