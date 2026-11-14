@@ -16,10 +16,22 @@
 //!   * Raw 8-bit bytes inside strings: valid UTF-8 sequences decode as UTF-8,
 //!     every other byte as its Latin-1 code point, so `'H\xF6he'` and
 //!     `'H\X\F6he'` are the same string.
+//!   * Keywords and enumeration values in any letter case, normalized to upper
+//!     case.
+//!   * The HEADER section only as far as finding the `DATA` statement after its
+//!     `ENDSEC;`, outside strings and comments.
+//!
+//! Every byte from `DATA;` to its `ENDSEC;` belongs to a record, a bare `#id;`
+//! or trivia; anything else is an error naming the byte offset and the record
+//! being parsed (or the last completed one). Duplicate `#id` definitions are
+//! errors.
 //!
 //! What it does NOT do (by design — handled elsewhere or unsupported):
 //!   * `\S\` under ISO 8859 code pages other than `\PA\` (kept verbatim).
-//!   * The HEADER section beyond locating `DATA;`.
+//!   * Complex (multiple-inheritance) instances `#1=(A()B());`, which IFC2X3
+//!     and IFC4 exporters do not write; they are rejected.
+
+use std::collections::{HashMap, HashSet};
 
 /// A single parsed STEP argument.
 #[derive(Debug, Clone, PartialEq)]
@@ -54,28 +66,32 @@ pub struct Parser<'a> {
     bytes: &'a [u8],
     pos: usize,
     id_spans: Option<Vec<(usize, usize, i64)>>,
+    current_id: Option<i64>,
+    last_id: Option<i64>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
-        Parser { bytes, pos: 0, id_spans: None }
+        Parser { bytes, pos: 0, id_spans: None, current_id: None, last_id: None }
     }
 
     /// Preserve literal spellings; only definition/reference integers may change.
-    pub fn rekey(mut self, mapping: &std::collections::HashMap<i64, i64>) -> Result<Vec<u8>, String> {
-        self.seek_data_section();
-        self.skip_trivia();
+    pub fn rekey(mut self, mapping: &HashMap<i64, i64>) -> Result<Vec<u8>, String> {
+        self.seek_data_section()?;
+        self.skip_trivia()?;
         let prefix_end = self.pos;
         let mut records = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         while self.peek() == Some(b'#') {
             let start = self.pos;
             self.id_spans = Some(Vec::new());
-            let record = self.parse_record()?.ok_or("expected entity definition")?;
+            let record = self
+                .parse_record()?
+                .ok_or_else(|| self.error_at(start, "expected entity definition"))?;
             if !seen.insert(record.step_id) {
-                return Err(format!("duplicate definition #{}", record.step_id));
+                return Err(format!("duplicate definition of #{} at byte {start} in record #{}", record.step_id, record.step_id));
             }
-            self.skip_trivia();
+            self.skip_trivia()?;
             let end = self.pos;
             let mut rewritten = Vec::new();
             let mut cursor = start;
@@ -104,37 +120,82 @@ impl<'a> Parser<'a> {
         Ok(output)
     }
 
-    /// Parse the whole file, returning every `#id = KEYWORD(...)` record in the
-    /// DATA section. Definitions outside DATA (header) are skipped.
+    /// Parse every `#id = KEYWORD(...)` record of the DATA section, up to and
+    /// including its `ENDSEC;`.
     pub fn parse(mut self) -> Result<Vec<Record>, String> {
-        self.seek_data_section();
+        self.seek_data_section()?;
         let mut records = Vec::new();
+        let mut seen = HashSet::new();
         loop {
-            self.skip_trivia();
-            if self.pos >= self.bytes.len() {
-                break;
-            }
-            let b = self.bytes[self.pos];
-            if b == b'#' {
-                if let Some(rec) = self.parse_record()? {
-                    records.push(rec);
+            self.skip_trivia()?;
+            let start = self.pos;
+            match self.peek() {
+                None => return Err(self.error_at(start, "DATA section ends without ENDSEC")),
+                Some(b'#') => {
+                    if let Some(rec) = self.parse_record()? {
+                        if !seen.insert(rec.step_id) {
+                            return Err(format!("duplicate definition of #{} at byte {start} in record #{}", rec.step_id, rec.step_id));
+                        }
+                        records.push(rec);
+                    }
                 }
-            } else if self.looks_at(b"ENDSEC") {
-                break;
-            } else {
-                // Unknown construct at top level: skip to the next ';'.
-                self.skip_to_semicolon();
+                Some(b) if is_keyword_start(b) => {
+                    let keyword = self.read_keyword();
+                    if keyword != "ENDSEC" {
+                        return Err(self.error_at(start, format!("unexpected keyword {keyword} in DATA section")));
+                    }
+                    self.skip_trivia()?;
+                    self.expect(b';')?;
+                    return Ok(records);
+                }
+                found => {
+                    return Err(self.error_at(start, format!("unexpected {} in DATA section", describe(found))));
+                }
             }
         }
-        Ok(records)
     }
 
-    fn seek_data_section(&mut self) {
-        // Find "DATA;" (case-sensitive per spec); fall back to start if absent.
-        if let Some(idx) = find_subsequence(self.bytes, b"DATA;") {
-            self.pos = idx + b"DATA;".len();
-        } else if let Some(idx) = find_subsequence(self.bytes, b"DATA ") {
-            self.pos = idx;
+    /// Position just after the `DATA;` statement (`DATA(...);` in Part 21
+    /// edition 3) that follows the header's `ENDSEC;`.
+    fn seek_data_section(&mut self) -> Result<(), String> {
+        let mut in_header = false;
+        loop {
+            self.skip_trivia()?;
+            if self.peek().is_none() {
+                return Err(self.error_at(self.pos, "no DATA section"));
+            }
+            match self.read_keyword().as_str() {
+                "DATA" if !in_header => {
+                    self.skip_trivia()?;
+                    if self.peek() == Some(b'(') {
+                        self.read_list()?;
+                        self.skip_trivia()?;
+                    }
+                    return self.expect(b';');
+                }
+                "HEADER" => in_header = true,
+                "ENDSEC" => in_header = false,
+                _ => {}
+            }
+            self.skip_statement()?;
+        }
+    }
+
+    /// Skip a header statement through its `;`, stepping over strings and comments.
+    fn skip_statement(&mut self) -> Result<(), String> {
+        loop {
+            self.skip_trivia()?;
+            match self.peek() {
+                None => return Err(self.error_at(self.pos, "no DATA section")),
+                Some(b'\'') => {
+                    self.read_string()?;
+                }
+                Some(b';') => {
+                    self.pos += 1;
+                    return Ok(());
+                }
+                Some(_) => self.pos += 1,
+            }
         }
     }
 
@@ -142,62 +203,70 @@ impl<'a> Parser<'a> {
         // At '#'.
         self.pos += 1;
         let step_id = self.read_int_literal()?;
-        self.skip_trivia();
-        if self.peek() != Some(b'=') {
-            // e.g. `#12;` reference-only line; skip.
-            self.skip_to_semicolon();
+        self.current_id = Some(step_id);
+        self.skip_trivia()?;
+        if self.peek() == Some(b';') {
+            // `#12;` reference-only line; not a record.
+            self.pos += 1;
+            self.current_id = None;
             return Ok(None);
         }
-        self.pos += 1; // '='
-        self.skip_trivia();
+        self.expect(b'=')?;
+        self.skip_trivia()?;
+        if self.peek() == Some(b'(') {
+            return Err(self.error_at(self.pos, "complex entity instance not supported"));
+        }
+        let keyword_start = self.pos;
         let keyword = self.read_keyword();
         if keyword.is_empty() {
-            return Err(format!("missing keyword after #{step_id}="));
+            let found = describe(self.peek());
+            return Err(self.error_at(keyword_start, format!("expected entity keyword, found {found}")));
         }
-        self.skip_trivia();
-        let attrs = if self.peek() == Some(b'(') {
-            self.read_list()?
-        } else {
-            Vec::new()
-        };
-        self.skip_trivia();
-        if self.peek() == Some(b';') {
-            self.pos += 1;
+        self.skip_trivia()?;
+        if self.peek() != Some(b'(') {
+            let found = describe(self.peek());
+            return Err(self.error_at(self.pos, format!("expected '(' after {keyword}, found {found}")));
         }
-        Ok(Some(Record {
-            step_id,
-            keyword,
-            attrs,
-        }))
+        let attrs = self.read_list()?;
+        self.skip_trivia()?;
+        self.expect(b';')?;
+        self.last_id = self.current_id.take();
+        Ok(Some(Record { step_id, keyword, attrs }))
     }
 
     /// Read a parenthesized, comma-separated token list. Assumes current is '('.
     fn read_list(&mut self) -> Result<Vec<Token>, String> {
+        let start = self.pos;
         self.pos += 1; // '('
         let mut items = Vec::new();
+        self.skip_trivia()?;
+        if self.peek() == Some(b')') {
+            self.pos += 1;
+            return Ok(items);
+        }
         loop {
-            self.skip_trivia();
+            items.push(self.read_token()?);
+            self.skip_trivia()?;
             match self.peek() {
-                None => return Err("unterminated list".to_string()),
+                Some(b',') => self.pos += 1,
                 Some(b')') => {
                     self.pos += 1;
-                    break;
+                    return Ok(items);
                 }
-                Some(b',') => {
-                    self.pos += 1;
-                }
-                _ => {
-                    let tok = self.read_token()?;
-                    items.push(tok);
+                None => return Err(self.error_at(start, "unterminated list")),
+                found => {
+                    return Err(self.error_at(self.pos, format!("expected ',' or ')' in list, found {}", describe(found))));
                 }
             }
         }
-        Ok(items)
     }
 
     fn read_token(&mut self) -> Result<Token, String> {
-        self.skip_trivia();
-        let b = self.peek().ok_or("unexpected end of input")?;
+        self.skip_trivia()?;
+        let b = match self.peek() {
+            Some(b) => b,
+            None => return Err(self.error_at(self.pos, "unexpected end of input")),
+        };
         match b {
             b'#' => {
                 self.pos += 1;
@@ -213,11 +282,11 @@ impl<'a> Parser<'a> {
                 Ok(Token::Derived)
             }
             b'(' => Ok(Token::List(self.read_list()?)),
-            b'.' => Ok(Token::Enum(self.read_enum())),
+            b'.' => Ok(Token::Enum(self.read_enum()?)),
             b'-' | b'+' | b'0'..=b'9' => self.read_number(),
             _ if is_keyword_start(b) => {
                 let kw = self.read_keyword();
-                self.skip_trivia();
+                self.skip_trivia()?;
                 if self.peek() == Some(b'(') {
                     let inner = self.read_list()?;
                     Ok(Token::Typed(kw, inner))
@@ -226,7 +295,7 @@ impl<'a> Parser<'a> {
                     Ok(Token::Enum(kw))
                 }
             }
-            other => Err(format!("unexpected byte '{}' in token", other as char)),
+            other => Err(self.error_at(self.pos, format!("unexpected {} in value", describe(Some(other))))),
         }
     }
 
@@ -253,16 +322,15 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        let text = std::str::from_utf8(&self.bytes[start..self.pos])
-            .map_err(|_| "invalid utf8 in number".to_string())?;
+        let text = std::str::from_utf8(&self.bytes[start..self.pos]).expect("ASCII bytes");
         if is_real {
             text.parse::<f64>()
                 .map(Token::Real)
-                .map_err(|_| format!("bad real literal {text:?}"))
+                .map_err(|_| self.error_at(start, format!("bad real literal {text:?}")))
         } else {
             text.parse::<i64>()
                 .map(Token::Int)
-                .map_err(|_| format!("bad int literal {text:?}"))
+                .map_err(|_| self.error_at(start, format!("bad int literal {text:?}")))
         }
     }
 
@@ -271,11 +339,15 @@ impl<'a> Parser<'a> {
         if matches!(self.peek(), Some(b'-') | Some(b'+')) {
             self.pos += 1;
         }
+        let digits_start = self.pos;
         while matches!(self.peek(), Some(b'0'..=b'9')) {
             self.pos += 1;
         }
-        let text = std::str::from_utf8(&self.bytes[start..self.pos])
-            .map_err(|_| "invalid utf8 in integer".to_string())?;
+        if self.pos == digits_start {
+            let found = describe(self.peek());
+            return Err(self.error_at(self.pos, format!("expected digits after '#', found {found}")));
+        }
+        let text = std::str::from_utf8(&self.bytes[start..self.pos]).expect("ASCII bytes");
         // Lenient on overflow: a corrupted/mangled id (e.g. a 23-digit ref that
         // some tools emit when a reference is broken) parses to a sentinel that
         // no real record carries, so it later resolves as a dangling reference
@@ -291,12 +363,13 @@ impl<'a> Parser<'a> {
     /// quote is found by byte: 0x27 never occurs inside a multi-byte UTF-8
     /// sequence, and raw 8-bit bytes need not form one.
     fn read_string(&mut self) -> Result<String, String> {
+        let start = self.pos;
         self.pos += 1; // opening quote
         let mut raw = Vec::new();
         loop {
             let rest = &self.bytes[self.pos..];
             let Some(quote) = rest.iter().position(|&b| b == b'\'') else {
-                return Err("unterminated string".to_string());
+                return Err(self.error_at(start, "unterminated string"));
             };
             raw.extend_from_slice(&rest[..quote]);
             self.pos += quote + 1;
@@ -310,39 +383,32 @@ impl<'a> Parser<'a> {
         Ok(decode_control_directives(&decode_string_bytes(raw)))
     }
 
-    fn read_enum(&mut self) -> String {
-        self.pos += 1; // leading '.'
+    fn read_enum(&mut self) -> Result<String, String> {
         let start = self.pos;
-        while let Some(b) = self.peek() {
-            if b == b'.' {
-                break;
-            }
-            self.pos += 1;
+        self.pos += 1; // leading '.'
+        let text = self.read_keyword();
+        if text.is_empty() || self.peek() != Some(b'.') {
+            return Err(self.error_at(start, "malformed enumeration value"));
         }
-        let text = String::from_utf8_lossy(&self.bytes[start..self.pos]).into_owned();
-        if self.peek() == Some(b'.') {
-            self.pos += 1; // trailing '.'
-        }
-        text
+        self.pos += 1; // trailing '.'
+        Ok(text)
     }
 
+    /// Read a keyword, normalized to upper case.
     fn read_keyword(&mut self) -> String {
         let start = self.pos;
-        while let Some(b) = self.peek() {
-            if is_keyword_char(b) {
-                self.pos += 1;
-            } else {
-                break;
-            }
+        while matches!(self.peek(), Some(b) if is_keyword_char(b)) {
+            self.pos += 1;
         }
-        String::from_utf8_lossy(&self.bytes[start..self.pos]).into_owned()
+        self.bytes[start..self.pos].iter().map(|b| char::from(b.to_ascii_uppercase())).collect()
     }
 
-    fn skip_trivia(&mut self) {
+    fn skip_trivia(&mut self) -> Result<(), String> {
         loop {
             match self.peek() {
                 Some(b) if b.is_ascii_whitespace() => self.pos += 1,
                 Some(b'/') if self.bytes.get(self.pos + 1) == Some(&b'*') => {
+                    let start = self.pos;
                     self.pos += 2;
                     while self.pos < self.bytes.len()
                         && !(self.bytes[self.pos] == b'*'
@@ -350,19 +416,34 @@ impl<'a> Parser<'a> {
                     {
                         self.pos += 1;
                     }
-                    self.pos = (self.pos + 2).min(self.bytes.len());
+                    if self.pos == self.bytes.len() {
+                        return Err(self.error_at(start, "unterminated comment"));
+                    }
+                    self.pos += 2;
                 }
-                _ => break,
+                _ => return Ok(()),
             }
         }
     }
 
-    fn skip_to_semicolon(&mut self) {
-        while let Some(b) = self.peek() {
-            self.pos += 1;
-            if b == b';' {
-                break;
+    fn expect(&mut self, wanted: u8) -> Result<(), String> {
+        match self.peek() {
+            Some(b) if b == wanted => {
+                self.pos += 1;
+                Ok(())
             }
+            found => {
+                let message = format!("expected '{}', found {}", char::from(wanted), describe(found));
+                Err(self.error_at(self.pos, message))
+            }
+        }
+    }
+
+    fn error_at(&self, offset: usize, message: impl std::fmt::Display) -> String {
+        match (self.current_id, self.last_id) {
+            (Some(id), _) => format!("{message} at byte {offset} in record #{id}"),
+            (None, Some(id)) => format!("{message} at byte {offset} after record #{id}"),
+            (None, None) => format!("{message} at byte {offset} before the first record"),
         }
     }
 
@@ -376,14 +457,22 @@ impl<'a> Parser<'a> {
     }
 }
 
+fn describe(byte: Option<u8>) -> String {
+    match byte {
+        None => "end of input".to_string(),
+        Some(b) if b.is_ascii_graphic() => format!("'{}'", char::from(b)),
+        Some(b) => format!("byte 0x{b:02X}"),
+    }
+}
+
 #[inline]
 fn is_keyword_start(b: u8) -> bool {
-    b.is_ascii_uppercase() || b == b'_'
+    b.is_ascii_alphabetic() || b == b'_'
 }
 
 #[inline]
 fn is_keyword_char(b: u8) -> bool {
-    b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 /// Valid UTF-8 sequences decode as UTF-8; every other byte decodes as its
@@ -501,12 +590,6 @@ fn hex_value(digits: &[u8]) -> Option<u32> {
     u32::from_str_radix(s, 16).ok()
 }
 
-fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -594,6 +677,10 @@ END-ISO-10303-21;
         Parser::new(src).parse().expect("ok").into_iter().map(|rec| rec.attrs[0].clone()).collect()
     }
 
+    fn parse_error(src: &[u8]) -> String {
+        Parser::new(src).parse().expect_err("parse must fail")
+    }
+
     #[test]
     fn raw_latin1_bytes_decode_like_their_escapes() {
         let src = b"DATA;\n#1=IFCLABEL('m\xb2');\n#2=IFCLABEL('m\\X\\B2');\n#3=IFCLABEL('m\xb3');\n\
@@ -630,6 +717,70 @@ END-ISO-10303-21;
     fn valid_utf8_is_untouched() {
         let got = strings("DATA;\n#1=IFCLABEL('Höhe \u{1f600} 漢');\nENDSEC;".as_bytes());
         assert_eq!(got[0], Token::Str("Höhe \u{1f600} 漢".to_string()));
+    }
+
+    #[test]
+    fn data_inside_header_strings_and_comments_is_not_the_data_section() {
+        let src = b"\
+ISO-10303-21;
+HEADER;
+/* DATA; */
+FILE_DESCRIPTION(('DATA; #9=IFCWALL(1);'),'2;1');
+FILE_NAME('C:\\\\DATA;\\\\x.ifc','',(''),(''),'','','');
+FILE_SCHEMA(('IFC4'));
+ENDSEC;
+DATA;
+#1=IFCPROJECT('g');
+ENDSEC;
+END-ISO-10303-21;
+";
+        let recs = Parser::new(src).parse().expect("ok");
+        assert_eq!(recs.len(), 1);
+        assert_eq!((recs[0].step_id, recs[0].keyword.as_str()), (1, "IFCPROJECT"));
+    }
+
+    #[test]
+    fn file_without_data_section_is_an_error() {
+        let err = parse_error(b"ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('x'),'2;1');\nENDSEC;\n#1=IFCWALL('g');\n");
+        assert!(err.starts_with("no DATA section at byte "), "{err}");
+    }
+
+    #[test]
+    fn keywords_and_enums_are_case_insensitive() {
+        let src = b"DATA;\n#1=IfcWall('g',.notDefined.,ifcLabel('x'),.t.);\nendsec;";
+        let rec = &Parser::new(src).parse().expect("ok")[0];
+        assert_eq!(rec.keyword, "IFCWALL");
+        assert_eq!(rec.attrs[1], Token::Enum("NOTDEFINED".to_string()));
+        assert_eq!(rec.attrs[2], Token::Typed("IFCLABEL".to_string(), vec![Token::Str("x".to_string())]));
+        assert_eq!(rec.attrs[3], Token::Enum("T".to_string()));
+    }
+
+    #[test]
+    fn duplicate_definition_is_an_error_naming_the_id() {
+        let err = parse_error(b"DATA;\n#7=IFCX(1);\n#8=IFCX(2);\n#7=IFCX(3);\nENDSEC;");
+        assert_eq!(err, "duplicate definition of #7 at byte 30 in record #7");
+    }
+
+    #[test]
+    fn complex_instance_is_rejected_with_id_and_offset() {
+        let err = parse_error(b"DATA;\n#1=IFCX(1);\n#2=(IFCA(1)IFCB(2));\nENDSEC;");
+        assert_eq!(err, "complex entity instance not supported at byte 21 in record #2");
+    }
+
+    #[test]
+    fn errors_carry_offset_record_and_hex_byte() {
+        let src = b"DATA;\n#1=IFCX(1);\n#2=IFCY(\x01);\nENDSEC;";
+        assert_eq!(parse_error(src), "unexpected byte 0x01 in value at byte 26 in record #2");
+        let src = b"DATA;\n#1=IFCX(1);\n#2=IFCY('a' m);\nENDSEC;";
+        assert_eq!(parse_error(src), "expected ',' or ')' in list, found 'm' at byte 30 in record #2");
+        let src = b"DATA;\n#1=IFCX(1);\n#2=IFCY('abc";
+        assert_eq!(parse_error(src), "unterminated string at byte 26 in record #2");
+        let src = b"DATA;\n#1=IFCX(1);\n";
+        assert_eq!(parse_error(src), "DATA section ends without ENDSEC at byte 18 after record #1");
+        let src = b"DATA;\nIFCX(1);\nENDSEC;";
+        assert_eq!(parse_error(src), "unexpected keyword IFCX in DATA section at byte 6 before the first record");
+        let src = b"DATA;\n#1=IFCX(1)\n#2=IFCX(2);\nENDSEC;";
+        assert_eq!(parse_error(src), "expected ';', found '#' at byte 17 in record #1");
     }
 
     #[test]

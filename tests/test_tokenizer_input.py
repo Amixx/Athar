@@ -7,6 +7,8 @@ produce them.
 
 from __future__ import annotations
 
+import re
+
 import ifcopenshell
 import pytest
 
@@ -73,3 +75,31 @@ def test_raw_bytes_hash_like_their_escaped_twin(tmp_path, template, raw, escaped
     [value] = ifcopenshell.open(escaped_path).by_type("IfcPropertySingleValue")
     assert value.NominalValue.wrappedValue == text
     assert change_counts(diff_files(raw_path, escaped_path)) == (0, 0, 0)
+
+
+def test_data_keyword_inside_header_does_not_start_the_data_section(tmp_path, template):
+    header = template.replace(b"ViewDefinition [CoordinationView]", b"DATA; #1=IFCWALL($);")
+    assert header != template
+    report = diff_files(write(tmp_path, "header.ifc", header), write(tmp_path, "plain.ifc", template))
+
+    assert change_counts(report) == (0, 0, 0)
+    assert report["stats"]["unchanged"] == 1
+
+
+def test_lowercase_keywords_parse_as_their_upper_case_class(tmp_path, template):
+    lowercase = template.replace(b"=IFCWALL(", b"=IfcWall(").replace(b"IFCLABEL(", b"ifclabel(")
+    assert lowercase != template
+    report = diff_files(write(tmp_path, "lower.ifc", lowercase), write(tmp_path, "upper.ifc", template))
+
+    assert change_counts(report) == (0, 0, 0)
+    assert report["stats"]["unchanged"] == 1
+
+
+def test_truncated_file_error_names_offset_and_record(tmp_path, template):
+    match = re.search(rb"#(\d+)=IFCPROPERTYSET\('", template)
+    quote = match.end() - 1
+    truncated = write(tmp_path, "truncated.ifc", template[: quote + 5])
+
+    with pytest.raises(ValueError) as error:
+        diff_files(truncated, write(tmp_path, "full.ifc", template))
+    assert str(error.value) == f"unterminated string at byte {quote} in record #{match.group(1).decode()}"
