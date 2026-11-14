@@ -147,7 +147,7 @@ def _producer() -> dict[str, str]:
 
 
 def _validate_id(value: str, kind: str) -> str:
-    if not isinstance(value, str) or not _ID_RE.match(value):
+    if not isinstance(value, str) or value in {".", ".."} or _ID_RE.fullmatch(value) is None:
         raise StoreError(f"Invalid {kind} {value!r}: use only letters, digits, '.', '_', '-'")
     return value
 
@@ -225,7 +225,15 @@ class BaselineStore:
         the name of ``ifc_path``.
         """
         actor = _require_actor(actor)
+        _validate_id(project_id, "project_id")
         _validate_id(model_key, "model_key")
+        src = Path(ifc_path)
+        if not src.is_file():
+            raise StoreError(f"IFC file not found: {ifc_path}")
+        try:
+            schema = open_ifc(str(src)).schema
+        except IfcParseError as exc:
+            raise EngineError(str(exc)) from exc
         with self._locked(project_id, exclusive=True, create=True):
             self.init_project(project_id)
             previous = self.current_baseline(project_id, model_key)
@@ -233,13 +241,6 @@ class BaselineStore:
                 raise StoreConflictError(
                     f"Baseline for {project_id}/{model_key} already exists; pass replace=True."
                 )
-            src = Path(ifc_path)
-            if not src.is_file():
-                raise StoreError(f"IFC file not found: {ifc_path}")
-            try:
-                schema = open_ifc(str(src)).schema
-            except IfcParseError as exc:
-                raise EngineError(str(exc)) from exc
             artifact = self._ingest_artifact(project_id, src, schema)
             event = self._append_event(
                 project_id,

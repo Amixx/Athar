@@ -73,8 +73,7 @@ per-revision deltas — but without any Git dependency, via `ArtifactPack`:
   (temporary materialization); `review` materializes the baseline the same
   way. `athar store export` and `athar store stats` expose this on the CLI.
 
-`project_id` and `model_key` are validated to `[A-Za-z0-9._-]` to keep them
-safe as path components. The default root is `~/.athar/store` (override with
+`project_id` and `model_key` must fully match `[A-Za-z0-9._-]+`, excluding `.` and `..`, to keep them safe as path components. The default root is `~/.athar/store` (override with
 `ATHAR_STORE_ROOT` or the CLI `--root`).
 
 ## Event Model
@@ -115,7 +114,7 @@ Event kinds:
 
 Each project has a `.lock` file. Store mutations take an exclusive `fcntl.flock`;
 all but `init_project` and `set_baseline` refuse an unknown project before
-locking, so they create nothing on disk;
+locking, so they create nothing on disk. `set_baseline` parses the IFC before creating project storage, so a refused first upload leaves no project;
 artifact materialization and record reads take a shared lock. A review copies
 the candidate into its temporary directory and diffs and ingests that copy, so
 the recorded artifact is the bytes the report describes. It holds the shared
