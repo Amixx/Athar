@@ -286,3 +286,17 @@ def test_rekey_never_hands_a_products_id_to_a_different_globalid(tmp_path, new_l
     assert diagnostics["globalid_refusals"] == 1
     assert not out.exists()
 
+
+def test_rekey_role_fallback_refuses_a_role_ambiguous_on_the_new_side(tmp_path):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    for path, offset, values in ((base, 0, (1,)), (new, 1000, (2, 3))):
+        f = model(path, offset)
+        for k, value in enumerate(values):
+            f.create_entity("IfcPropertySingleValue", id=140 + k + offset, Name="Orphan", NominalValue=f.create_entity("IfcInteger", value))
+        f.write(str(path))
+    stats = rekey_files(str(base), str(new), str(out))
+    assert 140 not in {e.id() for e in ifcopenshell.open(str(out))}
+    assert stats["fresh"] == 2
+    assert stats["role_fallback_ambiguous"] == 2
+    assert stats["role_fallback_matches"] == 0
+

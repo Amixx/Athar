@@ -288,16 +288,24 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
     for aa, bb in content_buckets():
         for a, b in zip(aa, bb):
             match(a, b, "content")
-    by_role = defaultdict(list)
+    old_roles, new_roles = defaultdict(list), defaultdict(list)
     for a in old.entities:
         if a not in reverse:
-            by_role[old.role(a)].append(a)
-    for b in sorted(new.entities):
-        if b in mapping:
+            old_roles[old.role(a)].append(a)
+    for b in new.entities:
+        if b not in mapping:
+            new_roles[new.role(b)].append(b)
+    before_roles = len(mapping)
+    role_ambiguous = 0
+    for key, bb in new_roles.items():
+        aa = old_roles.get(key)
+        if not aa:
             continue
-        candidates = by_role.get(new.role(b), ())
-        if len(candidates) == 1 and candidates[0] not in reverse:
-            match(candidates[0], b, "role")
+        if len(aa) == len(bb) == 1:
+            match(aa[0], bb[0], "role")
+        else:
+            role_ambiguous += len(bb)
+    role_matches = len(mapping) - before_roles
     propagate()
 
     matched = dict(mapping)
@@ -315,6 +323,7 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
         "entities": len(new.entities), "matched": len(matched),
         "fresh": len(new.entities) - len(matched), "base_max_id": max(old.entities, default=0),
         "matched_by": dict(Counter(reasons.values())), "role_conflicts": conflicts,
+        "role_fallback_matches": role_matches, "role_fallback_ambiguous": role_ambiguous,
         "globalid_refusals": len(globalid_refusals),
         "cyclic_content_unavailable": {"base": old.cycles, "new": new.cycles},
         "classes": {k: dict(v) for k, v in sorted(classes.items())},

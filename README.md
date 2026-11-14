@@ -102,7 +102,8 @@ Athar's product matches, same-parent attribute roles, inverse relationship
 roles, and exact resource content. Identical duplicates are paired through their
 matched parents first, then in STEP order. Shared
 resources remain shared; conflicting role proposals are not forced into a
-many-to-one match. An object (product, type, spatial element) never takes the
+many-to-one match. A last role pass pairs entities whose class, name and named
+children are unique among the unmatched entities of both files. An object (product, type, spatial element) never takes the
 ID of one with a different GlobalId, so a product whose exporter regenerated its
 GUID is refused as an unmatched rooted addition; property sets and
 relationships still pair across regenerated GUIDs. Resource role recovery is a
