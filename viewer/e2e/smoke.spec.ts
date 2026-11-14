@@ -113,6 +113,21 @@ test('the legend shows report and drawn counts and lists undrawn entities for in
   await expect(page.locator('.inspector .badge')).toHaveText('modified')
 })
 
+test('every legend row keeps its label visibly apart from its count', async ({ page }) => {
+  await page.goto(`/?src=${srcOrigin}`)
+  await waitReady(page)
+
+  const rows = page.locator('.legendrow')
+  expect(await rows.count()).toBeGreaterThan(1)
+  for (const row of await rows.all()) {
+    const gap = await row.evaluate((el) => {
+      const [label, count] = Array.from(el.children).map((child) => child.getBoundingClientRect())
+      return count.left - label.right
+    })
+    expect(gap, await row.innerText()).toBeGreaterThanOrEqual(8)
+  }
+})
+
 test('the legend says drawing is unavailable instead of drawn counts without WebGL', async ({ page }) => {
   await page.addInitScript(() => {
     const getContext = HTMLCanvasElement.prototype.getContext
