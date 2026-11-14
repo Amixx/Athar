@@ -343,8 +343,7 @@
   function select(target: { side: Side; stepId: number } | null): void {
     selection = target
     scene?.setHighlight(target)
-    publishDebug({ selection: target })
-    requestAnimationFrame(() => publishDebug({ rendererMemory: scene?.memoryInfo() }))
+    publishDebug({ selection: target, highlightObjects: scene?.highlightObjects() ?? null })
   }
 
   function fmtDelta(mm: [number, number, number] | null): string {

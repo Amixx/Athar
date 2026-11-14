@@ -371,8 +371,9 @@ export class DiffScene {
     this.invalidate()
   }
 
-  memoryInfo(): { geometries: number; textures: number } {
-    return { geometries: this.renderer.info.memory.geometries, textures: this.renderer.info.memory.textures }
+  highlightObjects(): { geometry: string; material: string } | null {
+    if (!this.highlight?.visible) return null
+    return { geometry: this.highlight.geometry.uuid, material: (this.highlight.material as THREE.Material).uuid }
   }
 
   entityBox(side: Side, stepId: number): THREE.Box3 | undefined {

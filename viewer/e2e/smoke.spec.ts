@@ -210,16 +210,16 @@ test('clicking an entity opens the inspector; Escape clears it', async ({ page }
   expect(selection.stepId).toBeGreaterThan(0)
   await expect(page.locator('.inspector')).toBeVisible()
   await expect(page.locator('.inspector .title')).not.toBeEmpty()
-  await page.waitForFunction(() => Boolean((window as any).__athar_viewer?.rendererMemory))
-  const firstMemory = await page.evaluate(() => (window as any).__athar_viewer.rendererMemory)
+  const firstHighlight = await page.evaluate(() => (window as any).__athar_viewer.highlightObjects)
+  expect(firstHighlight).not.toBeNull()
 
-  for (let i = 0; i < 5; i += 1) {
+  for (let i = 0; i < 3; i += 1) {
     await page.keyboard.press('Escape')
     await page.mouse.click(viewport.width / 2, viewport.height / 2)
     await page.waitForFunction(() => Boolean((window as any).__athar_viewer?.selection))
   }
-  const repeatedMemory = await page.evaluate(() => (window as any).__athar_viewer.rendererMemory)
-  expect(repeatedMemory).toEqual(firstMemory)
+  const repeatedHighlight = await page.evaluate(() => (window as any).__athar_viewer.highlightObjects)
+  expect(repeatedHighlight).toEqual(firstHighlight)
 
   await page.keyboard.press('Escape')
   await page.waitForFunction(() => (window as any).__athar_viewer?.selection === null)

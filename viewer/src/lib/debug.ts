@@ -21,7 +21,8 @@ export interface ViewerDebugState {
   appearances?: Record<Bucket, Appearance>
   displacementLines?: number
   selection?: { side: string; stepId: number } | null
-  rendererMemory?: { geometries: number; textures: number }
+  /** three.js uuids of the visible highlight overlay's geometry and material. */
+  highlightObjects?: { geometry: string; material: string } | null
   /** Chain navigation: total steps, active index, and its label. */
   stepCount?: number
   activeStep?: number
