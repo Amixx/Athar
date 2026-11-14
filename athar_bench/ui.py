@@ -349,7 +349,7 @@ def _changeset_line(score: Any) -> str:
     return (
         f'<div class="font-monospace small" title="{_e(detail)}">'
         f"P {_score_fmt(score.get('precision'))}, R {_score_fmt(score.get('recall'))}"
-        f", F1 {_score_fmt(score.get('f1'))}</div>"
+        f", F1 {_score_fmt(score.get('f1'))}, FP {_e(score.get('fp', '—'))}</div>"
     )
 
 

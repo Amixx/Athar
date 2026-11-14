@@ -181,9 +181,12 @@ def _mutation_pair(key: str, mutator: Callable[[Any], mutations.Mutation]) -> Pa
     return build
 
 
+EMPTY_CHANGESET: dict[str, list[str]] = {"added": [], "deleted": [], "modified": []}
+NO_CHANGE = Expected(counts={"added": 0, "deleted": 0, "modified": 0}, changed_guids=EMPTY_CHANGESET)
 ZERO_DIFF = Expected(
     counts={"added": 0, "deleted": 0, "modified": 0},
     athar={"matched_by_tier": {"guid": 0}},
+    changed_guids=EMPTY_CHANGESET,
     note="No semantic product changes expected.",
 )
 
@@ -194,28 +197,28 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
         kind="same_file",
         builder=_static_pair("gni_190", "gni_190"),
         expectation="zero semantic changes",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        expected=NO_CHANGE,
     ),
     Pair(
         name="reserialize_gni_190",
         kind="reserialize",
         builder=_ifcopenshell_rewrite_pair("gni_190"),
         expectation="zero semantic changes after IfcOpenShell rewrite",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        expected=NO_CHANGE,
     ),
     Pair(
         name="reserialize_asymmetric_gni_190",
         kind="reserialize_asymmetric",
         builder=_asymmetric_rewrite_pair("gni_190"),
         expectation="zero semantic changes when only one side is rewritten (line order/formatting churn)",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        expected=NO_CHANGE,
     ),
     Pair(
         name="owner_history_churn_gni_190",
         kind="metadata_churn",
         builder=_owner_history_churn_pair("gni_190"),
         expectation="zero semantic changes when only OwnerHistory changes",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        expected=NO_CHANGE,
     ),
     Pair(
         name="revision_building_landscaping_v1_v2",
@@ -245,6 +248,7 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
         expected=Expected(
             counts={"added": 0, "deleted": 0, "modified": 0},
             athar={"guid_collisions": {"old": 0, "new": 1}},
+            changed_guids=EMPTY_CHANGESET,
         ),
     ),
     Pair(
@@ -294,7 +298,7 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
         kind="large_same_file",
         builder=_static_pair("gni_p5_arc", "gni_p5_arc", acceptance=True),
         expectation="76MB same-file: zero semantic changes, isolates parse cost",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        expected=NO_CHANGE,
         large=True,
     ),
     Pair(
@@ -302,7 +306,7 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
         kind="large_same_file",
         builder=_static_pair("spanish", "spanish", acceptance=True),
         expectation="180MB same-file: zero semantic changes, parse-bound stress",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        expected=NO_CHANGE,
         large=True,
     ),
 )
@@ -933,7 +937,7 @@ def _assess_run(name: str, run: dict, expected: Expected) -> str:
 
 
 def _score_pair(entry: dict, expected: Expected | None) -> dict[str, dict]:
-    if expected is None or not expected.changed_guids:
+    if expected is None or expected.changed_guids is None:
         return {}
     scores = {}
     for name, run in entry.get("runs", {}).items():

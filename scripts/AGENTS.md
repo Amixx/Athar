@@ -27,7 +27,10 @@ Scripts are for inspection and repeatable investigation.
       `ifcgit_port`, `ifcdiff_default`/`ifcdiff_relationships`, and `ifcfast`
       all emit `reported_guids` (ifcfast's runner passes `sample=0` so its
       added/removed/changed arrays are unclipped, since its `sample=5` default
-      truncates them while counts stay exact). Precision counts a
+      truncates them while counts stay exact). A pair whose truth is empty
+      (re-exports, no-op rewrites) is scored too: an empty report scores
+      precision = recall = F1 = 1, any reported change is a false positive
+      and scores F1 0. Precision counts a
       transitive/indirect change as a false positive
       unless the truth set names it, so a real revision's ground truth must
       enumerate every genuinely-changed entity, not just the primary edit.
