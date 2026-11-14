@@ -60,7 +60,7 @@ def _summary_line(summary: dict[str, Any]) -> str:
 
 def _violation_detail_lines(violation: dict[str, Any]) -> list[str]:
     code = violation.get("code")
-    if code == "schema_changed":
+    if code == "schema_mismatch":
         return [f"  schema: {violation.get('old')} -> {violation.get('new')}"]
 
     lines: list[str] = []

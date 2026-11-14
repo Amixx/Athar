@@ -161,7 +161,6 @@ def _lineage(schema: str, class_name: str) -> tuple[str, ...]:
 
 _POLICY_KEYS = {
     "description": _description,
-    "forbid_schema_change": _flag,
     "max_added": _count_limit,
     "max_deleted": _count_limit,
     "max_modified": _count_limit,
@@ -229,6 +228,10 @@ def _validate_report(report: Any, policy: dict[str, Any]) -> None:
     schemas = report.get("schemas")
     if not isinstance(schemas, dict) or any(schemas.get(side) not in SUPPORTED_SCHEMAS for side in ("old", "new")):
         raise ValueError(f"Report 'schemas.old' and 'schemas.new' must each be one of {', '.join(SUPPORTED_SCHEMAS)}")
+    if schemas["old"] != schemas["new"]:
+        raise ValueError(
+            f"Report compares {schemas['old']} with {schemas['new']}; Athar only diffs files of one schema"
+        )
     stats = report.get("stats")
     if not isinstance(stats, dict):
         raise ValueError("Report lacks 'stats'")
@@ -320,7 +323,6 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     The policy format is deliberately small and JSON-only:
 
     - ``description``: free text label
-    - ``forbid_schema_change``: bool, defaults true
     - ``max_added`` / ``max_deleted`` / ``max_modified``: integer limits
     - ``max_added_by_class`` / ``max_deleted_by_class`` /
       ``max_modified_by_class``: ``{"IfcWall": 0}``
@@ -340,7 +342,6 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     policy = normalize_policy(policy)
     _validate_report(report, policy)
     violations: list[dict[str, Any]] = []
-    _check_schema(report, policy, violations)
     _check_section_limits(report, policy, violations)
     _check_class_limits(report, policy, violations)
     _check_scope_limits(report, policy, violations)
@@ -362,21 +363,22 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     }
 
 
-def _check_schema(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
-    if policy.get("forbid_schema_change", True) is False:
-        return
-    schemas = report.get("schemas") or {}
-    old_schema = schemas.get("old")
-    new_schema = schemas.get("new")
-    if old_schema and new_schema and old_schema != new_schema:
-        violations.append(
+def schema_mismatch_result(old_schema: str, new_schema: str) -> dict[str, Any]:
+    """The failing verdict for a delivery whose schema differs from its baseline.
+
+    No report exists for such a pair, so the verdict has no summary.
+    """
+    return {
+        "ok": False,
+        "violations": [
             {
-                "code": "schema_changed",
-                "message": f"Schema changed from {old_schema} to {new_schema}",
+                "code": "schema_mismatch",
+                "message": f"Schema changed from {old_schema} to {new_schema}; the files cannot be diffed",
                 "old": old_schema,
                 "new": new_schema,
             }
-        )
+        ],
+    }
 
 
 def _check_section_limits(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:

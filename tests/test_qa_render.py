@@ -47,7 +47,7 @@ def test_render_check_report_schema_and_truncation():
         "ok": False,
         "summary": {},
         "violations": [
-            {"code": "schema_changed", "message": "Schema changed", "old": "IFC2X3", "new": "IFC4"},
+            {"code": "schema_mismatch", "message": "Schema changed", "old": "IFC2X3", "new": "IFC4"},
             {
                 "code": "property_removed",
                 "message": "Properties removed from 3 entity(s)",

@@ -80,14 +80,42 @@ def test_check_reports_forbidden_aspect_changes():
     assert result["violations"][0]["affected"][0]["class"] == "IfcWall"
 
 
-def test_check_reports_schema_change_in_existing_report():
+def test_report_comparing_two_schemas_is_an_error():
     report = _report()
     report["schemas"] = {"old": "IFC2X3", "new": "IFC4"}
 
-    result = evaluate_report(report, {})
+    with pytest.raises(ValueError, match="compares IFC2X3 with IFC4"):
+        evaluate_report(report, {})
 
-    assert result["ok"] is False
-    assert result["violations"][0]["code"] == "schema_changed"
+
+def test_schema_change_rule_is_not_a_policy_key():
+    with pytest.raises(ValueError, match="Unknown policy key.*forbid_schema_change"):
+        normalize_policy({"forbid_schema_change": True})
+
+
+@pytest.mark.parametrize("output", ["json", "text"])
+def test_cli_schema_mismatch_fails_the_gate(tmp_path, capsys, output):
+    old = _write_ifc(tmp_path / "old.ifc", walls=_WALLS, schema="IFC2X3")
+    new = _write_ifc(tmp_path / "new.ifc", walls=_WALLS)
+
+    code = main_mod._run_check([old, new, "--policy", "no-deletions", "--format", output])
+
+    out = capsys.readouterr().out
+    assert code == 2
+    if output == "json":
+        verdict = json.loads(out)
+        assert verdict["ok"] is False
+        assert verdict["violations"] == [
+            {
+                "code": "schema_mismatch",
+                "message": "Schema changed from IFC2X3 to IFC4; the files cannot be diffed",
+                "old": "IFC2X3",
+                "new": "IFC4",
+            }
+        ]
+    else:
+        assert "FAIL (1 violation)" in out
+        assert "schema: IFC2X3 -> IFC4" in out
 
 
 def test_check_rejects_invalid_policy_shape():
