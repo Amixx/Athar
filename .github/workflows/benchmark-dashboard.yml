@@ -67,7 +67,7 @@ jobs:
         with:
           path: .athar-benchmark/competitor-benchmark.json
           key: >-
-            benchmark-${{ runner.os }}-${{ hashFiles('athar/**/*.py', 'athar_dev/**/*.py', 'scripts/explore/benchmark_competitors.py', 'tests/corpus.py', 'corpus/**/*.ifc', 'corpus/**/*.IFC', 'pyproject.toml') }}
+            benchmark-${{ runner.os }}-${{ hashFiles('athar/**/*', 'athar_dev/**/*', 'scripts/explore/benchmark_competitors.py', 'tests/corpus.py', 'corpus/**/*', 'pyproject.toml') }}
 
       - name: Install benchmark dependencies
         if: steps.benchmark-cache.outputs.cache-hit != 'true' || github.event.inputs.force == 'true'

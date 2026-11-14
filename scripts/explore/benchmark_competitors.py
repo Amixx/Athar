@@ -574,7 +574,7 @@ def main() -> int:
     parser.add_argument("--timeout-s", type=int, default=300)
     parser.add_argument("--repeats", type=int, default=3, help="runs per tool; medians are reported")
     parser.add_argument("--large", action="store_true", help="include opt-in large corpus pairs")
-    parser.add_argument("--revit", action="store_true", help="include opt-in Revit round-trip corpus pairs")
+    parser.add_argument("--revit", action="store_true", help="include Revit round-trip corpus pairs")
     parser.add_argument("--only", default=None, help="run only pairs whose name contains this substring")
     parser.add_argument("--no-ifcfast", action="store_true", help="disable optional ifcfast runner even if installed")
     parser.add_argument("--no-speckle", action="store_true", help="disable optional Speckle runner even if installed")
@@ -591,8 +591,9 @@ def main() -> int:
         include_ifcgit=not args.no_ifcgit,
     )
     results = {
-        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S%z"),
         "repo": str(REPO_ROOT),
+        "provenance": _provenance(tools),
         "environment": _environment(),
         "settings": {"timeout_s": args.timeout_s, "repeats": args.repeats, "large": args.large, "revit": args.revit},
         "tools": tools,
@@ -1227,6 +1228,17 @@ def _tool_inventory(*, include_ifcfast: bool, include_speckle: bool = True, incl
             ),
         }
     return tools
+
+
+def _provenance(tools: dict) -> dict:
+    from athar.bottom.constants import CANON_VERSION
+
+    return {
+        "athar_commit": _git_commit(),
+        "canon_version": CANON_VERSION,
+        "tools": {name: info.get("version") for name, info in tools.items() if isinstance(info, dict)},
+        "run_date": time.strftime("%Y-%m-%d"),
+    }
 
 
 def _environment() -> dict:

@@ -15,7 +15,7 @@ help:
 	"  make dev-setup              Install runtime/dev deps into the active venv" \
 	"  make benchmark-setup        Install optional benchmark deps" \
 	"  make benchmark-ui-setup     Install optional benchmark UI deps" \
-	"  make benchmark-run          Generate local benchmark JSON artifact" \
+	"  make benchmark-run          Generate local benchmark JSON artifact (includes Revit pairs; --large adds stress pairs)" \
 	"  make benchmark-page         Generate static benchmark HTML artifact" \
 	"  make benchmark-ui           Generate if missing, then serve dashboard locally" \
 	"  make benchmark-ui-refresh   Regenerate benchmark JSON, then serve dashboard locally" \
@@ -44,7 +44,8 @@ benchmark-run:
 		--out $(BENCHMARK_JSON) \
 		--workdir $(BENCHMARK_WORKDIR) \
 		--timeout-s $(BENCHMARK_TIMEOUT_S) \
-		--repeats $(BENCHMARK_REPEATS)
+		--repeats $(BENCHMARK_REPEATS) \
+		--revit
 
 benchmark-page:
 	@if [ ! -f "$(BENCHMARK_JSON)" ]; then $(MAKE) benchmark-run; fi

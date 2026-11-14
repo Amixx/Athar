@@ -157,6 +157,19 @@ def test_failed_runs_count_as_misses_and_lower_coverage():
     assert "absent" not in aggregates
 
 
+def test_benchmark_provenance_is_stamped_and_rendered():
+    from athar_bench import ui
+
+    provenance = bench._provenance({"athar": {"version": "0.1.1"}, "ifcdiff": {"version": "0.8.5"}})
+    assert provenance["canon_version"].startswith("athar-canon-")
+    assert provenance["tools"]["ifcdiff"] == "0.8.5"
+    data = {"summary": [], "aggregates": {}, "tools": {}, "settings": {}, "provenance": provenance}
+    page = ui._page(data, Path("bench.json"), ui._dashboard_tabs(data))
+    assert provenance["athar_commit"] in page
+    assert provenance["canon_version"] in page
+    assert provenance["run_date"] in page
+
+
 def test_dashboard_shows_coverage_and_failed_pairs():
     from athar_bench import ui
 
