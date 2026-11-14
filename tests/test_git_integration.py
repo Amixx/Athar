@@ -445,21 +445,16 @@ def test_git_diff_driver_e2e_invoked_by_real_git(tmp_path):
     assert "ISO-10303-21" not in result.stdout
 
 
-def test_main_dispatches_git_subcommand(monkeypatch):
-    called = {}
+def test_main_dispatches_git_subcommand():
+    result = subprocess.run(
+        [sys.executable, "-m", "athar", "git", "diff", str(TINY_IFC), str(TINY_IFC)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
 
-    def fake_run(args):
-        called["command"] = args.git_command
-        return 0
-
-    monkeypatch.setattr(cli_mod, "run_git_command", fake_run)
-    monkeypatch.setattr(sys, "argv", ["athar", "git", "install", "--no-attributes"])
-
-    with pytest.raises(SystemExit) as exc:
-        main_mod.main()
-
-    assert exc.value.code == 0
-    assert called == {"command": "install"}
+    assert result.returncode == 0, result.stderr
+    assert "Athar IFC diff" in result.stdout
 
 
 _LFS_POINTER_TEXT = (

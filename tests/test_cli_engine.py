@@ -1,5 +1,8 @@
-import sys
 import json
+import subprocess
+import sys
+from importlib import metadata
+from pathlib import Path
 
 import pytest
 
@@ -104,9 +107,7 @@ def test_cli_schema_mismatch_emits_structured_result_and_exit_3(monkeypatch, cap
     monkeypatch.setattr(main_mod, "diff_files", fake_diff_files)
     monkeypatch.setattr(sys, "argv", ["athar", "old.ifc", "new.ifc"])
 
-    with pytest.raises(SystemExit) as excinfo:
-        main_mod.main()
-    assert excinfo.value.code == 3
+    assert main_mod.main() == 3
 
     captured = capsys.readouterr()
     result = json.loads(captured.out)
@@ -133,3 +134,63 @@ def test_cli_rejects_removed_timings_flag(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["athar", "old.ifc", "new.ifc", "--timings"])
     with pytest.raises(SystemExit):
         main_mod.main()
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TINY_IFC = REPO_ROOT / "tests" / "fixtures" / "tiny_no_products.ifc"
+
+
+def _athar(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-m", "athar", *args], cwd=REPO_ROOT, capture_output=True, text=True
+    )
+
+
+def test_top_level_help_lists_every_subcommand_under_the_athar_name():
+    result = _athar("--help")
+    assert result.returncode == 0
+    assert result.stdout.startswith("usage: athar ")
+    assert "athar-core" not in result.stdout
+    for command in ("diff", "check", "git", "view", "store", "rekey"):
+        assert f"    {command} " in result.stdout, command
+
+
+def test_version_prints_the_distribution_version():
+    result = _athar("--version")
+    assert result.returncode == 0
+    assert result.stdout == f"athar {metadata.version('athar-ifc')}\n"
+
+
+def test_unknown_subcommand_is_an_error_not_a_diff():
+    result = _athar("bogus")
+    assert result.returncode == 2
+    assert "invalid choice: 'bogus'" in result.stderr
+    assert "old, new" not in result.stderr
+
+
+def test_empty_argument_is_a_usage_error_not_a_diff():
+    result = _athar("")
+    assert result.returncode == 2
+    assert "invalid choice: ''" in result.stderr
+    assert "old, new" not in result.stderr
+
+
+def test_no_arguments_prints_help_and_fails():
+    result = _athar()
+    assert result.returncode == 2
+    assert "COMMAND" in result.stderr
+
+
+def test_explicit_and_implicit_diff_produce_the_same_report():
+    explicit = _athar("diff", str(TINY_IFC), str(TINY_IFC))
+    implicit = _athar(str(TINY_IFC), str(TINY_IFC))
+    assert explicit.returncode == 0, explicit.stderr
+    assert json.loads(explicit.stdout)["engine"] == "athar"
+    assert implicit.stdout == explicit.stdout
+
+
+@pytest.mark.parametrize("command", ["diff", "check", "git", "view", "store", "rekey"])
+def test_each_subcommand_owns_its_help(command):
+    result = _athar(command, "--help")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith(f"usage: athar {command}")

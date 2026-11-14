@@ -49,10 +49,12 @@ IFC2X3↔IFC4 translation).
 ## Installation
 
 ```bash
-pipx install athar-ifc
+pip install athar-ifc     # into the active virtualenv
+pipx install athar-ifc    # or as a standalone command
 ```
 
-This installs the `athar` command. The PyPI distribution is `athar-ifc`; the
+Either installs the `athar` command (`athar --help` lists the subcommands,
+`athar --version` prints the installed version). The PyPI distribution is `athar-ifc`; the
 Python packages import as `athar`, `athar_git`, and so on. Wheels ship the Rust
 signature pipeline (`athar_native`) and the viewer bundle for Linux (x86_64,
 aarch64), macOS (arm64, x86_64), and Windows (x86_64); other platforms build
@@ -72,24 +74,27 @@ make test
 ## Usage
 
 ```bash
-# Two-file diff (JSON output)
-python -m athar old.ifc new.ifc
+# Two-file diff (JSON output); `athar diff old.ifc new.ifc` is the same
+athar old.ifc new.ifc
 
 # Include an audit generation timestamp for an archived report
-python -m athar old.ifc new.ifc --generated-at now
+athar old.ifc new.ifc --generated-at now
 
 # CI policy gate over a fresh diff; exits 2 on policy violations
-python -m athar check old.ifc new.ifc --policy athar-policy.json
+athar check old.ifc new.ifc --policy athar-policy.json
 
 # CI policy gate over an existing JSON report
-python -m athar check --report report.json --policy athar-policy.json
+athar check --report report.json --policy athar-policy.json
 
 # Stream output as NDJSON records (header, one record per entity, end with stats)
-python -m athar old.ifc new.ifc --stream ndjson
+athar old.ifc new.ifc --stream ndjson
 
 # Stream output as chunked JSON
-python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
+athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
 ```
+
+`athar COMMAND --help` documents each subcommand (`diff`, `check`, `git`,
+`view`, `store`, `rekey`).
 
 ### Experimental STEP ID Restoration
 

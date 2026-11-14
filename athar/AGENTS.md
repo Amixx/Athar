@@ -44,8 +44,14 @@ GitHub comments, and other presentation concerns.
   failure returned by the CLI because the engine cannot compare schemas.
   `resolve_policy` accepts a file path or a shipped pack name; packs live as
   JSON in `athar/policies/` and are wheel-bundled package data.
-- `__main__.py` is the minimal CLI for raw JSON, streaming output, generated-at
-  audit timestamps, and `check`.
+- `__main__.py` is the top-level `athar` command. `main(argv) -> int` parses
+  only the first argument against the subcommand list (`diff`, `check`, `git`,
+  `view`, `store`, `rekey`) plus `--help`/`--version` (the `athar-ifc`
+  distribution version), then hands the rest to the subcommand's own parser;
+  integration subcommands import their packages lazily. A first argument that
+  is an option, ends in `.ifc`, or names an existing path means `diff`, so
+  `athar OLD NEW` stays the raw JSON diff (streaming, generated-at audit
+  timestamps); any other unknown word is an argparse error.
 - `rekey.py` is an experimental serialization utility, not a semantic matcher
   tier. It anchors all unique rooted GUIDs plus the existing product matches,
   propagates same-attribute and inverse-relationship roles, and pairs remaining
