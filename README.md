@@ -102,8 +102,12 @@ Athar's product matches, same-parent attribute roles, inverse relationship
 roles, and exact resource content. Identical duplicates are paired through their
 matched parents first, then in STEP order. Shared
 resources remain shared; conflicting role proposals are not forced into a
-many-to-one match. Resource role recovery is a serialization heuristic, not an
-extension of the semantic diff matcher's identity policy.
+many-to-one match. An object (product, type, spatial element) never takes the
+ID of one with a different GlobalId, so a product whose exporter regenerated its
+GUID is refused as an unmatched rooted addition; property sets and
+relationships still pair across regenerated GUIDs. Resource role recovery is a
+serialization heuristic, not an extension of the semantic diff matcher's
+identity policy.
 
 The native tokenizer rewrites ID tokens and orders records by output ID without
 changing NEW's literal spellings. Before publishing the output, IfcOpenShell

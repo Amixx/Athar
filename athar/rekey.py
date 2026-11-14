@@ -183,9 +183,17 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
     old, new = _Graph(base_model), _Graph(new_model)
     mapping, reverse, reasons = {}, {}, {}
     queue = deque()
+    globalid_refusals = set()
+
+    def distinct_objects(a, b):
+        x, y = old.entities[a], new.entities[b]
+        if x.is_a("IfcObjectDefinition") and x.GlobalId != y.GlobalId:
+            globalid_refusals.add((a, b))
+            return True
+        return False
 
     def match(a, b, reason):
-        if a in reverse or b in mapping or old.entities[a].is_a() != new.entities[b].is_a():
+        if a in reverse or b in mapping or old.entities[a].is_a() != new.entities[b].is_a() or distinct_objects(a, b):
             return
         mapping[b], reverse[a], reasons[b] = a, b, reason
         queue.append((a, b))
@@ -252,15 +260,7 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
                     agg = attributes[cls][index].type_of_attribute().as_aggregation_type()
                     ordered = agg is None or agg.type_of_aggregation_string() in {"list", "array"}
                     for x, y in child_pairs(aa, bb, ordered):
-                        if old.entities[x].is_a() == new.entities[y].is_a():
-                            # Products cannot inherit the identity of a different role occupant.
-                            gx = getattr(old.entities[x], "GlobalId", None)
-                            gy = getattr(new.entities[y], "GlobalId", None)
-                            if gx != gy and not (
-                                old.entities[x].is_a("IfcPropertyDefinition")
-                                or old.entities[x].is_a("IfcRelationship")
-                            ):
-                                continue
+                        if old.entities[x].is_a() == new.entities[y].is_a() and not distinct_objects(x, y):
                             proposals.add((x, y))
             counts_a, counts_b = Counter(a for a, _ in proposals), Counter(b for _, b in proposals)
             for a, b in sorted(proposals):
@@ -288,8 +288,6 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
     for aa, bb in content_buckets():
         for a, b in zip(aa, bb):
             match(a, b, "content")
-    # Role keys ignore GlobalId, so rooted entities whose exporter regenerated it
-    # still match; the output keeps NEW's GlobalId.
     by_role = defaultdict(list)
     for a in old.entities:
         if a not in reverse:
@@ -317,6 +315,7 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
         "entities": len(new.entities), "matched": len(matched),
         "fresh": len(new.entities) - len(matched), "base_max_id": max(old.entities, default=0),
         "matched_by": dict(Counter(reasons.values())), "role_conflicts": conflicts,
+        "globalid_refusals": len(globalid_refusals),
         "cyclic_content_unavailable": {"base": old.cycles, "new": new.cycles},
         "classes": {k: dict(v) for k, v in sorted(classes.items())},
     }

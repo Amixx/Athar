@@ -254,3 +254,35 @@ def test_rekey_refuses_records_broken_after_a_string_holding_a_semicolon(tmp_pat
         rekey_files(str(base), str(new), str(out))
     assert refused.value.diagnostics["records_off_their_line"] == {"base": [], "new": [], side: [120 + offset]}
     assert not out.exists()
+
+
+def storey_with_wall(path, offset, guid, length):
+    f = model(path, offset)
+
+    def entity(cls, number, **attrs):
+        return f.create_entity(cls, id=number + offset, **attrs)
+
+    context = entity("IfcGeometricRepresentationContext", 200, ContextType="Model", CoordinateSpaceDimension=3, Precision=1e-5, WorldCoordinateSystem=f.by_id(20 + offset))
+    start = entity("IfcCartesianPoint", 210, Coordinates=(0.0, 0.0, 0.0))
+    end = entity("IfcCartesianPoint", 220, Coordinates=(length, 0.0, 0.0))
+    curve = entity("IfcPolyline", 230, Points=(start, end))
+    representation = entity("IfcShapeRepresentation", 240, ContextOfItems=context, RepresentationIdentifier="Axis", RepresentationType="Curve3D", Items=(curve,))
+    shape = entity("IfcProductDefinitionShape", 250, Representations=(representation,))
+    wall = entity("IfcWall", 260, GlobalId=guid, Name="W", ObjectPlacement=f.by_id(30 + offset), Representation=shape)
+    storey = entity("IfcBuildingStorey", 270, GlobalId="0000000000000000000030", Name="Level 1")
+    entity("IfcRelContainedInSpatialStructure", 280, GlobalId="0000000000000000000031", RelatedElements=(f.by_id(40 + offset), f.by_id(50 + offset), wall), RelatingStructure=storey)
+    f.write(str(path))
+
+
+@pytest.mark.parametrize("new_length", [3.0, 5.0], ids=["regenerated guid", "replaced wall"])
+def test_rekey_never_hands_a_products_id_to_a_different_globalid(tmp_path, new_length):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    storey_with_wall(base, 0, "0000000000000000000041", 3.0)
+    storey_with_wall(new, 1000, "0000000000000000000042", new_length)
+    with pytest.raises(RekeyRefused, match="unmatched rooted") as refused:
+        rekey_files(str(base), str(new), str(out))
+    diagnostics = refused.value.diagnostics
+    assert diagnostics["unsafe_rooted_additions"] == [1260]
+    assert diagnostics["globalid_refusals"] == 1
+    assert not out.exists()
+

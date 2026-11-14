@@ -42,7 +42,13 @@ GitHub comments, and other presentation concerns.
   tier. It anchors all unique rooted GUIDs plus the existing product matches,
   propagates same-attribute and inverse-relationship roles, and pairs remaining
   exact resource content, unique content first so roles reach duplicates before
-  the rest pair in STEP order. Role guesses never affect diff reports.
+  the rest pair in STEP order. No pass gives an `IfcObjectDefinition` the id of
+  one with a different `GlobalId` (counted as `globalid_refusals`), Athar's
+  GUID-free signature matches included: the rekey content hash of a uniquely
+  GUIDed root is its GUID, so content cannot vouch for a regenerated one, and
+  such a product ends as a refused rooted addition. Property definitions and
+  relationships may still pair across regenerated GUIDs. Role guesses never
+  affect diff reports.
   The native tokenizer preserves literal spellings while replacing ID tokens;
   IfcOpenShell verifies the entire output graph before an atomic file replace.
   Do not substitute a normal serializer: changed numeric/escape spellings can
