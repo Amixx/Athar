@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import sys
 import time
@@ -326,3 +327,62 @@ def test_rekey_leaves_referenced_twins_without_matched_parents_unmatched(tmp_pat
     assert not {e.id() for e in ifcopenshell.open(str(out))} & {300, 330}
     assert stats["fresh"] == 6
     assert stats["unmatched_twins"] == 2
+
+
+def test_rekey_equal_hash_sharing_twins_are_unmatched_and_step_order_independent(tmp_path):
+    base, new, permuted, out, permuted_out = (
+        tmp_path / name for name in ("base.ifc", "new.ifc", "permuted.ifc", "out.ifc", "permuted-out.ifc")
+    )
+    for path, offset in ((base, 0), (new, 1000)):
+        f = model(path, offset)
+        first = f.create_entity("IfcCartesianPoint", id=400 + offset, Coordinates=(4.0, 5.0, 6.0))
+        second = f.create_entity("IfcCartesianPoint", id=410 + offset, Coordinates=(4.0, 5.0, 6.0))
+        for number, point in ((300, first), (310, first), (320, second)):
+            f.create_entity("IfcAxis2Placement3D", id=number + offset, Location=point)
+        f.write(str(path))
+    data = new.read_text()
+    ids = [int(m[1]) for m in re.finditer(r"^#([0-9]+)=", data, re.MULTILINE)]
+    renumber = dict(zip(ids, reversed(ids)))
+    permuted.write_text(re.sub(r"#([0-9]+)", lambda m: f"#{renumber.get(int(m[1]), int(m[1]))}", data))
+
+    original_stats = rekey_files(str(base), str(new), str(out))
+    permuted_stats = rekey_files(str(base), str(permuted), str(permuted_out))
+    assert original_stats["unmatched_twins"] == permuted_stats["unmatched_twins"] == 5
+    assert original_stats["fresh"] == permuted_stats["fresh"] == 5
+    assert original_stats["role_conflicts"] == permuted_stats["role_conflicts"] == 0
+
+    graphs = []
+    for path in (out, permuted_out):
+        restored = ifcopenshell.open(str(path))
+        assert not {300, 310, 320, 400, 410} & {e.id() for e in restored}
+        anchored = [str(e) for e in restored if e.id() <= 410]
+        points = restored.by_type("IfcCartesianPoint")
+        sharing = sorted(
+            sum(axis.Location.id() == point.id() for axis in restored.by_type("IfcAxis2Placement3D"))
+            for point in points if point.id() > 410
+        )
+        assert sharing == [1, 2]
+        graphs.append((anchored, sharing))
+    assert graphs[0] == graphs[1]
+
+
+@pytest.mark.parametrize("same_target", [False, True])
+def test_rekey_twins_require_identical_resolved_reference_targets(tmp_path, same_target):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    for path, offset in ((base, 0), (new, 1000)):
+        f = model(path, offset)
+        for number, x in ((300, 12.0), (310, 13.0)):
+            point = f.create_entity("IfcCartesianPoint", id=number + offset, Coordinates=(4.0, 5.0, 6.0))
+            other = f.create_entity("IfcCartesianPoint", id=number + 1 + offset, Coordinates=(x, 0.0, 0.0))
+            f.create_entity("IfcPolyline", id=number + 2 + offset, Points=(point, other))
+        for number, target in ((400, 300), (410, 300 if same_target else 310)):
+            f.create_entity("IfcAxis2Placement3D", id=number + offset, Location=f.by_id(target + offset))
+        f.write(str(path))
+    stats = rekey_files(str(base), str(new), str(out))
+    restored = ifcopenshell.open(str(out))
+    assert stats["fresh"] == (0 if same_target else 2)
+    assert stats["unmatched_twins"] == (0 if same_target else 2)
+    if same_target:
+        assert restored.by_id(400).Location.id() == restored.by_id(410).Location.id() == 300
+    else:
+        assert not {400, 410} & {e.id() for e in restored}

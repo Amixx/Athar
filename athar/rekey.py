@@ -192,11 +192,12 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
             return True
         return False
 
-    def match(a, b, reason):
+    def match(a, b, reason, *, enqueue=True):
         if a in reverse or b in mapping or old.entities[a].is_a() != new.entities[b].is_a() or distinct_objects(a, b):
             return
         mapping[b], reverse[a], reasons[b] = a, b, reason
-        queue.append((a, b))
+        if enqueue:
+            queue.append((a, b))
 
     for guid, ids in sorted(old.guids.items()):
         other = new.guids.get(guid, ())
@@ -285,12 +286,18 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
         for a, b in unique:
             match(a, b, "content")
         propagate()
-    # Unreferenced NEW twins are indistinguishable, so every pairing yields the same output.
+    # Arbitrary twin pairings require identical rewritten bodies and no incoming
+    # NEW references. They provide no role identity evidence for propagation.
     referenced = {t for value in new.values.values() for t in new.refs(value)}
     for aa, bb in content_buckets():
-        if len(aa) == len(bb) and referenced.isdisjoint(bb):
+        if len(aa) != len(bb) or not referenced.isdisjoint(bb):
+            continue
+        if any(t not in mapping for b in bb for t in new.refs(new.values[b])):
+            continue
+        bodies = [_value(new.values[b], lambda i: ("ref", mapping[i])) for b in bb]
+        if all(body == bodies[0] for body in bodies[1:]):
             for a, b in zip(aa, bb):
-                match(a, b, "content")
+                match(a, b, "content", enqueue=False)
     old_roles, new_roles = defaultdict(list), defaultdict(list)
     for a in old.entities:
         if a not in reverse:
