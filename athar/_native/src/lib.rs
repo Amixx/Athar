@@ -1,20 +1,12 @@
-//! Native acceleration for Athar's bottom signature pipeline.
+//! Athar's bottom signature pipeline.
 //!
-//! Two entry points:
-//!
-//!   * Stage A — `compute_merkle_hashes` / `compute_topology_hashes`: drop-in,
-//!     byte-identical ports of the two CPU-bound hashing stages, fed by the
-//!     Python pipeline.
-//!   * Stage B — `build_signature_bundle`: the full native parse path. Rust
-//!     tokenizes the STEP bytes, canonicalizes against a schema descriptor map
-//!     (built once by Python from ifcopenshell, file-independently), classifies
-//!     edges, and runs Merkle + WL + spatial, returning only the product/
-//!     spatial signature vectors. The ~1M mesh-primitive entities never become
-//!     Python objects (the memory win) and ifcopenshell never parses the file
-//!     (the time win). Stage B is intentionally NOT byte-identical with the old
-//!     Python output; it defines its own canonical form.
+//! `build_signature_bundle` tokenizes the STEP bytes, canonicalizes them
+//! against a schema descriptor map (built by Python from ifcopenshell, once per
+//! schema), classifies edges, and runs Merkle + WL + spatial. It returns the
+//! signature vectors of the roots (products, spatial elements, the project)
+//! and an account of what no signature examined.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use pyo3::prelude::*;
 use sha2::{Digest, Sha256};
@@ -35,7 +27,7 @@ fn rekey_step_file(input: &str, output: &str, mapping: HashMap<i64, i64>) -> PyR
     Ok(())
 }
 
-/// Lowercase hex sha256, matching `hashlib.sha256(...).hexdigest()`.
+/// Lowercase hex sha256.
 fn sha256_hex(payload: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(payload);
@@ -46,22 +38,12 @@ fn sha256_hex(payload: &[u8]) -> String {
 // Per-stage memory/time profiler
 // ---------------------------------------------------------------------------
 //
-// `build_bundle` is one opaque call from Python's perspective, so the
-// `profile_memory.py` phase view bottoms out at "native_build". This breaks that
-// stage open from the inside.
-//
-// Rust's std has no RSS API, and shelling to `ps` would measure OS resident
-// pages — which include the lingering ifcopenshell C++ model and freed-but-
-// unreturned pages, i.e. exactly the noise that made our RSS readings jump ~20%
-// run-to-run. Instead we install a tracking global allocator: two atomics count
-// live Rust heap bytes and a high-water mark. This measures the native
-// pipeline's *own* working set precisely and deterministically (Python's heap
-// uses its own allocator and is not counted). The OS-level RSS picture still
-// comes from `profile_memory.py`; this is the Rust-internal breakdown.
-//
-// The counting allocator is always active (a global allocator cannot be toggled
-// at runtime) and adds two relaxed atomic ops per allocation. The per-stage
-// report is opt-in via ATHAR_NATIVE_PROFILE=1 (stderr only, no FFI change).
+// `build_bundle` is one call from Python's side; this reports its stages from
+// the inside. A tracking global allocator counts live Rust heap bytes and a
+// high-water mark, which measures the native pipeline's own working set
+// deterministically (Python's heap is not counted). The allocator is always
+// installed and costs two relaxed atomic ops per allocation; the per-stage
+// report is opt-in via ATHAR_NATIVE_PROFILE=1 (stderr only).
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -240,288 +222,563 @@ impl StageProfiler {
 // Merkle pass
 // ---------------------------------------------------------------------------
 
-/// Recursive per-domain entity hash. Mirrors `merkle._hash_entity`.
-///
-/// `cache` memoizes completed hashes; `visiting` is the active DFS stack used
-/// for cycle detection; `cycles` records `(domain, step_id)` back-edge events
-/// in traversal order so Python can reproduce the diagnostics counters.
-#[allow(clippy::too_many_arguments)]
-fn hash_entity(
-    step_id: i64,
-    domain: &str,
-    classes: &HashMap<i64, String>,
-    parts: &HashMap<i64, Vec<String>>,
-    adj: &HashMap<i64, Vec<(String, i64)>>,
-    cache: &mut HashMap<i64, String>,
-    visiting: &mut HashSet<i64>,
-    cycles: &mut Vec<(String, i64)>,
-) -> String {
-    if let Some(cached) = cache.get(&step_id) {
-        return cached.clone();
-    }
-
-    if visiting.contains(&step_id) {
-        cycles.push((domain.to_string(), step_id));
-        let digest = sha256_hex(format!("cycle:{domain}:{step_id}").as_bytes());
-        cache.insert(step_id, digest.clone());
-        return digest;
-    }
-
-    let class = match classes.get(&step_id) {
-        Some(class) => class,
-        None => {
-            // Adjacency referenced a step id with no parsed entity.
-            let digest = sha256_hex(format!("missing:{domain}:{step_id}").as_bytes());
-            cache.insert(step_id, digest.clone());
-            return digest;
-        }
-    };
-
-    visiting.insert(step_id);
-
-    // Collect child hashes first (recursion); borrow labels rather than clone.
-    let mut child_entries: Vec<(&str, String)> = Vec::new();
-    if let Some(children) = adj.get(&step_id) {
-        for (label, child_step) in children {
-            let child_hash =
-                hash_entity(*child_step, domain, classes, parts, adj, cache, visiting, cycles);
-            child_entries.push((label.as_str(), child_hash));
-        }
-    }
-    // Re-sort by (label, child_hash); identical to Python's
-    // child_entries.sort(key=lambda item: (item[0], item[1])).
-    child_entries.sort();
-
-    // Stream the canonical payload directly into the hasher instead of building
-    // a `Vec<String>` and joining on U+001F. Byte-identical to
-    // `parts.join("\u{1f}")` — same bytes, same digest — but without the
-    // per-part `format!`/clone and the joined `String`, which were the bulk of
-    // the merkle stage's allocation churn.
-    let mut hasher = Sha256::new();
-    hasher.update(b"class=");
-    hasher.update(class.as_bytes());
-    if let Some(entity_parts) = parts.get(&step_id) {
-        for part in entity_parts {
-            hasher.update([0x1f]);
-            hasher.update(part.as_bytes());
-        }
-    }
-    for (label, child_hash) in &child_entries {
-        hasher.update([0x1f]);
-        hasher.update(b"edge=");
-        hasher.update(label.as_bytes());
-        hasher.update(b":");
-        hasher.update(child_hash.as_bytes());
-    }
-    let digest = hex::encode(hasher.finalize());
-    cache.insert(step_id, digest.clone());
-    visiting.remove(&step_id);
-    digest
+/// One hashed child of an entity: the edge label, its position, and the
+/// child's digest (64 bytes when a data edge carries a shape entity's
+/// geometry and data digests together).
+struct Child<'a> {
+    label: &'a str,
+    ord: u32,
+    cyclic: bool,
+    /// Member of a SET: children of equal label and digest are one member.
+    per_content: bool,
+    /// Data digest of a shape child reached through a geometry edge.
+    via_geometry: bool,
+    hash: [u8; 64],
+    len: usize,
 }
 
-fn merkle_compute(
-    classes: &HashMap<i64, String>,
-    geom_parts: &HashMap<i64, Vec<String>>,
-    data_parts: &HashMap<i64, Vec<String>>,
-    geom_adj: &HashMap<i64, Vec<(String, i64)>>,
-    data_adj: &HashMap<i64, Vec<(String, i64)>>,
-) -> (HashMap<i64, (String, String)>, Vec<(String, i64)>) {
-    let mut sorted_ids: Vec<i64> = classes.keys().copied().collect();
-    sorted_ids.sort_unstable();
-
-    let mut geom_cache: HashMap<i64, String> = HashMap::with_capacity(classes.len());
-    let mut data_cache: HashMap<i64, String> = HashMap::with_capacity(classes.len());
-    let mut geom_visiting: HashSet<i64> = HashSet::new();
-    let mut data_visiting: HashSet<i64> = HashSet::new();
-    let mut cycles: Vec<(String, i64)> = Vec::new();
-    let mut out: HashMap<i64, (String, String)> = HashMap::with_capacity(classes.len());
-
-    // Interleave geometry then data per step id so the cycle-event order
-    // matches the Python outer loop exactly.
-    for &step_id in &sorted_ids {
-        let geom = hash_entity(
-            step_id,
-            "geometry",
-            classes,
-            geom_parts,
-            geom_adj,
-            &mut geom_cache,
-            &mut geom_visiting,
-            &mut cycles,
-        );
-        let data = hash_entity(
-            step_id,
-            "data",
-            classes,
-            data_parts,
-            data_adj,
-            &mut data_cache,
-            &mut data_visiting,
-            &mut cycles,
-        );
-        out.insert(step_id, (geom, data));
+impl Child<'_> {
+    fn digest(&self) -> &[u8] {
+        &self.hash[..self.len]
     }
-
-    (out, cycles)
 }
 
-/// Compute per-entity `(vh_geometry, vh_data)` Merkle hashes.
-///
-/// Inputs (all keyed by STEP id):
-///   * `classes`    — canonical class string per parsed entity.
-///   * `geom_parts` / `data_parts` — domain-filtered, JSON-encoded attribute
-///     parts (`attr=Name:encoded`), already produced by Python so the
-///     canonicalization is byte-identical. Entities with no parts may be
-///     omitted from these maps.
-///   * `geom_adj` / `data_adj` — include-edge adjacency, `step -> [(label,
-///     child)]`.
-///
-/// Returns `(hashes, cycles)` where `hashes[step] = (vh_geometry, vh_data)`
-/// and `cycles` is the ordered list of `(domain, step)` back-edge events.
-#[pyfunction]
-fn compute_merkle_hashes(
-    py: Python<'_>,
-    classes: HashMap<i64, String>,
-    geom_parts: HashMap<i64, Vec<String>>,
-    data_parts: HashMap<i64, Vec<String>>,
-    geom_adj: HashMap<i64, Vec<(String, i64)>>,
-    data_adj: HashMap<i64, Vec<(String, i64)>>,
-) -> PyResult<(HashMap<i64, (String, String)>, Vec<(String, i64)>)> {
-    // The compute is pure Rust over owned data, so release the GIL.
-    let result = py.allow_threads(|| {
-        merkle_compute(&classes, &geom_parts, &data_parts, &geom_adj, &data_adj)
-    });
-    Ok(result)
-}
-
-// ---------------------------------------------------------------------------
-// WL topology gossip
-// ---------------------------------------------------------------------------
-
-/// BFS neighborhood up to `depth` hops (inclusive of `start`), written into
-/// caller-owned scratch buffers. Mirrors `wl_gossip._neighbors_within_k`. The
-/// result is left in `seen`; `queue` is scratch. Both are cleared on entry so
-/// topology_compute can reuse one pair across ~1M nodes instead of allocating a
-/// fresh `HashSet` + `VecDeque` per call (the dominant WL allocation source).
-fn neighbors_within_k_into(
-    adj: &HashMap<i64, Vec<i64>>,
-    start: i64,
-    depth: i64,
-    seen: &mut HashSet<i64>,
-    queue: &mut VecDeque<(i64, i64)>,
-) {
-    seen.clear();
-    queue.clear();
-    seen.insert(start);
-    if depth <= 0 {
+/// Renumber every closed-loop sibling group from its lexicographically
+/// smallest rotation, keeping the direction.
+fn canonicalize_loops(children: &mut [Child]) {
+    if !children.iter().any(|c| c.cyclic) {
         return;
     }
-    queue.push_back((start, 0));
-    while let Some((node, d)) = queue.pop_front() {
-        if d >= depth {
+    children.sort_by(|a, b| (a.via_geometry, a.label, a.ord).cmp(&(b.via_geometry, b.label, b.ord)));
+    let mut start = 0;
+    while start < children.len() {
+        let mut end = start + 1;
+        while end < children.len()
+            && children[end].via_geometry == children[start].via_geometry
+            && children[end].label == children[start].label
+        {
+            end += 1;
+        }
+        if children[start].cyclic {
+            let group = &mut children[start..end];
+            let n = group.len();
+            let best = (0..n)
+                .min_by(|&a, &b| {
+                    (0..n)
+                        .map(|k| group[(a + k) % n].digest())
+                        .cmp((0..n).map(|k| group[(b + k) % n].digest()))
+                })
+                .unwrap_or(0);
+            group.rotate_left(best);
+            for (position, child) in group.iter_mut().enumerate() {
+                child.ord = position as u32;
+            }
+        }
+        start = end;
+    }
+}
+
+fn entity_digest(domain: u8, class: &str, parts: &[String], children: &mut Vec<Child>) -> [u8; 32] {
+    canonicalize_loops(children);
+    children.sort_by(|a, b| {
+        (a.via_geometry, a.label, a.ord, a.digest()).cmp(&(b.via_geometry, b.label, b.ord, b.digest()))
+    });
+    children.dedup_by(|b, a| {
+        a.per_content
+            && b.per_content
+            && (a.via_geometry, a.label, a.digest()) == (b.via_geometry, b.label, b.digest())
+    });
+    let mut hasher = Sha256::new();
+    hasher.update([domain]);
+    hasher.update(class.as_bytes());
+    for part in parts {
+        hasher.update([0x1f]);
+        hasher.update(part.as_bytes());
+    }
+    for child in children.iter() {
+        hasher.update([0x1f]);
+        hasher.update(if child.via_geometry { &b"via="[..] } else { &b"edge="[..] });
+        hasher.update(child.label.as_bytes());
+        if child.ord != canon::UNORDERED {
+            hasher.update(format!("#{}", child.ord).as_bytes());
+        }
+        hasher.update(b":");
+        hasher.update(child.digest());
+    }
+    hasher.finalize().into()
+}
+
+/// Starting colour of an entity inside an include cycle. It names the class,
+/// never the STEP id, so hashes do not depend on file numbering.
+fn cycle_seed(domain: &str, class: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("cycle:{domain}:{class}").as_bytes());
+    hasher.finalize().into()
+}
+
+/// Strongly connected components of the include graph restricted to the
+/// edges `keep` accepts, children before parents (Tarjan, iterative).
+/// Component `c` is `order[bounds[c]..bounds[c + 1]]`.
+struct Components {
+    order: Vec<u32>,
+    bounds: Vec<u32>,
+}
+
+fn components(graph: &edges::Graph, n: usize, keep: impl Fn(&edges::Include) -> bool) -> Components {
+    const UNSEEN: u32 = u32::MAX;
+    let mut index = vec![UNSEEN; n];
+    let mut low = vec![0u32; n];
+    let mut on_stack = vec![false; n];
+    let mut stack: Vec<u32> = Vec::new();
+    let mut calls: Vec<(u32, u32)> = Vec::new();
+    let mut next = 0u32;
+    let mut order: Vec<u32> = Vec::with_capacity(n);
+    let mut bounds: Vec<u32> = vec![0];
+
+    for start in 0..n as u32 {
+        if index[start as usize] != UNSEEN {
             continue;
         }
-        if let Some(neighbors) = adj.get(&node) {
-            for &next in neighbors {
-                // `insert` returns false if already present — one lookup instead
-                // of contains + insert.
-                if seen.insert(next) {
-                    queue.push_back((next, d + 1));
+        index[start as usize] = next;
+        low[start as usize] = next;
+        next += 1;
+        stack.push(start);
+        on_stack[start as usize] = true;
+        calls.push((start, graph.offsets[start as usize]));
+        while let Some(&mut (v, ref mut position)) = calls.last_mut() {
+            let end = graph.offsets[v as usize + 1];
+            let mut descend = None;
+            while *position < end {
+                let edge = &graph.includes[*position as usize];
+                *position += 1;
+                if !keep(edge) {
+                    continue;
+                }
+                let w = edge.target;
+                if index[w as usize] == UNSEEN {
+                    descend = Some(w);
+                    break;
+                }
+                if on_stack[w as usize] {
+                    low[v as usize] = low[v as usize].min(index[w as usize]);
+                }
+            }
+            if let Some(w) = descend {
+                index[w as usize] = next;
+                low[w as usize] = next;
+                next += 1;
+                stack.push(w);
+                on_stack[w as usize] = true;
+                calls.push((w, graph.offsets[w as usize]));
+                continue;
+            }
+            calls.pop();
+            if let Some(&(parent, _)) = calls.last() {
+                low[parent as usize] = low[parent as usize].min(low[v as usize]);
+            }
+            if low[v as usize] == index[v as usize] {
+                loop {
+                    let w = stack.pop().expect("component member on the stack");
+                    on_stack[w as usize] = false;
+                    order.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                bounds.push(order.len() as u32);
+            }
+        }
+    }
+    Components { order, bounds }
+}
+
+fn geometry_edge(edge: &edges::Include) -> bool {
+    edge.domain == edges::Domain::Geometry
+}
+
+/// Per-entity geometry and data digests over the include graph.
+///
+/// The geometry digest of an entity covers its geometry parts and its
+/// geometry-edge children. The data digest covers its data parts, the full
+/// content of its data-edge children (for a shape child: geometry and data
+/// digests), and the data digests of its geometry-edge shape children, so text
+/// attributes and data attachments inside a shape tree reach `vh_data` of the
+/// owner. A shape entity with no data content anywhere below it has no data
+/// digest and contributes nothing to its parent's.
+///
+/// Entities on an include cycle are hashed as one strongly connected
+/// component: every member starts from its class seed and is refined together
+/// with the others for twice the component size, so each digest covers the
+/// whole component and does not depend on which member a traversal meets
+/// first.
+struct Merkle<'a> {
+    entities: &'a [canon::Entity],
+    graph: &'a edges::Graph,
+    geometry: Vec<[u8; 32]>,
+    data: Vec<[u8; 32]>,
+    /// No shape content: a non-shape, non-root entity without geometry parts
+    /// or geometry children.
+    shapeless: Vec<bool>,
+    /// No data content: a shape entity without data parts or data children.
+    dataless: Vec<bool>,
+    cyclic_components: i64,
+}
+
+impl<'a> Merkle<'a> {
+    fn new(entities: &'a [canon::Entity], graph: &'a edges::Graph) -> Self {
+        let n = entities.len();
+        let mut merkle = Self {
+            entities,
+            graph,
+            geometry: vec![[0; 32]; n],
+            data: vec![[0; 32]; n],
+            shapeless: vec![false; n],
+            dataless: vec![false; n],
+            cyclic_components: 0,
+        };
+        merkle.hash_domain(b'G');
+        merkle.hash_domain(b'D');
+        merkle
+    }
+
+    fn data_edge(&self, edge: &edges::Include) -> bool {
+        match edge.domain {
+            edges::Domain::Data => true,
+            edges::Domain::Geometry => self.entities[edge.target as usize].is_geometric,
+            _ => false,
+        }
+    }
+
+    fn hash_domain(&mut self, domain: u8) {
+        let graph = self.graph;
+        let n = self.entities.len();
+        let parts = if domain == b'G' {
+            components(graph, n, geometry_edge)
+        } else {
+            components(graph, n, |edge| self.data_edge(edge))
+        };
+        for window in parts.bounds.windows(2) {
+            let members = &parts.order[window[0] as usize..window[1] as usize];
+            let first = members[0];
+            let self_loop = members.len() == 1
+                && graph.children(first).iter().any(|edge| {
+                    edge.target == first
+                        && if domain == b'G' { geometry_edge(edge) } else { self.data_edge(edge) }
+                });
+            if members.len() == 1 && !self_loop {
+                let (digest, empty) = self.digest(domain, first, false);
+                self.store(domain, first, digest, empty);
+                continue;
+            }
+
+            self.cyclic_components += 1;
+            let seed_domain = if domain == b'G' { "geometry" } else { "data" };
+            for &m in members {
+                let seed = cycle_seed(seed_domain, &self.entities[m as usize].canonical_class);
+                self.store(domain, m, seed, false);
+            }
+            let mut colours: Vec<[u8; 32]> = Vec::with_capacity(members.len());
+            for _ in 0..2 * members.len() {
+                colours.clear();
+                for &m in members {
+                    colours.push(self.digest(domain, m, true).0);
+                }
+                for (&m, colour) in members.iter().zip(&colours) {
+                    self.store(domain, m, *colour, false);
                 }
             }
         }
     }
+
+    fn store(&mut self, domain: u8, entity: u32, digest: [u8; 32], empty: bool) {
+        let idx = entity as usize;
+        if domain == b'G' {
+            self.geometry[idx] = digest;
+            self.shapeless[idx] = empty;
+        } else {
+            self.data[idx] = digest;
+            self.dataless[idx] = empty;
+        }
+    }
+
+    /// Digest of one entity in `domain` from the stored digests of its
+    /// children, and whether the entity has no content in that domain. A
+    /// member of a cycle always has content.
+    fn digest(&self, domain: u8, entity: u32, in_cycle: bool) -> ([u8; 32], bool) {
+        let ent = &self.entities[entity as usize];
+        let graph = self.graph;
+        let mut children: Vec<Child<'a>> = Vec::new();
+        for edge in graph.children(entity) {
+            let t = edge.target as usize;
+            let (via_geometry, hash, len) = if domain == b'G' {
+                if edge.domain != edges::Domain::Geometry || self.shapeless[t] {
+                    continue;
+                }
+                let mut hash = [0u8; 64];
+                hash[..32].copy_from_slice(&self.geometry[t]);
+                (false, hash, 32)
+            } else {
+                match self.data_child(edge) {
+                    Some(child) => child,
+                    None => continue,
+                }
+            };
+            children.push(Child {
+                label: &edge.label,
+                ord: edge.ord,
+                cyclic: edge.cyclic,
+                per_content: edge.membership == edges::Membership::PerContent,
+                via_geometry,
+                hash,
+                len,
+            });
+        }
+        let (parts, empty) = if domain == b'G' {
+            let empty = !in_cycle
+                && !ent.is_geometric
+                && !ent.is_root()
+                && ent.geom_parts.is_empty()
+                && children.is_empty();
+            (&ent.geom_parts, empty)
+        } else {
+            let empty = !in_cycle && ent.is_geometric && ent.data_parts.is_empty() && children.is_empty();
+            (&ent.data_parts, empty)
+        };
+        (entity_digest(domain, &ent.canonical_class, parts, &mut children), empty)
+    }
+
+    /// What the target of `edge` contributes to the data digest of its
+    /// source: whether it is reached through a geometry edge, and its digest
+    /// bytes with their length.
+    fn data_child(&self, edge: &edges::Include) -> Option<(bool, [u8; 64], usize)> {
+        let t = edge.target as usize;
+        let geometric = self.entities[t].is_geometric;
+        let mut hash = [0u8; 64];
+        match edge.domain {
+            edges::Domain::Data if geometric => {
+                hash[..32].copy_from_slice(&self.geometry[t]);
+                if !self.dataless[t] {
+                    hash[32..].copy_from_slice(&self.data[t]);
+                }
+                Some((false, hash, 64))
+            }
+            edges::Domain::Data => {
+                hash[..32].copy_from_slice(&self.data[t]);
+                Some((false, hash, 32))
+            }
+            edges::Domain::Geometry if geometric && !self.dataless[t] => {
+                hash[..32].copy_from_slice(&self.data[t]);
+                Some((true, hash, 32))
+            }
+            _ => None,
+        }
+    }
+
+    /// Per include edge: a SET member whose data contribution equals that of
+    /// an earlier member of the same attribute.
+    fn repeated_set_members(&self) -> Vec<bool> {
+        let graph = self.graph;
+        let mut repeated = vec![false; graph.includes.len()];
+        let mut seen: HashSet<(bool, &str, [u8; 64])> = HashSet::new();
+        for entity in 0..self.entities.len() as u32 {
+            seen.clear();
+            for i in graph.child_range(entity) {
+                let edge = &graph.includes[i];
+                if edge.membership != edges::Membership::PerContent {
+                    continue;
+                }
+                if let Some((via_geometry, hash, _)) = self.data_child(edge) {
+                    repeated[i] = !seen.insert((via_geometry, &edge.label, hash));
+                }
+            }
+        }
+        repeated
+    }
+
+    fn geometry(&self, entity: u32) -> [u8; 32] {
+        self.geometry[entity as usize]
+    }
+
+    fn data(&self, entity: u32) -> Option<[u8; 32]> {
+        (!self.dataless[entity as usize]).then(|| self.data[entity as usize])
+    }
+
+    /// Geometry and data digests of one entity together.
+    fn content(&self, entity: u32) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(self.geometry(entity));
+        hasher.update(self.data(entity).unwrap_or([0; 32]));
+        hasher.finalize().into()
+    }
 }
 
-fn topology_compute(
-    seeds: &HashMap<i64, String>,
-    context_adj: &HashMap<i64, Vec<i64>>,
-    spatial_adj: &HashMap<i64, Vec<i64>>,
-    context_k: i64,
-    spatial_k: i64,
-) -> HashMap<i64, String> {
-    let mut sorted_ids: Vec<i64> = seeds.keys().copied().collect();
-    sorted_ids.sort_unstable();
+// ---------------------------------------------------------------------------
+// Coverage accounting
+// ---------------------------------------------------------------------------
 
-    // Scratch buffers reused across every node (cleared per use), so the BFS
-    // does not allocate per call. `tokens` is also reused; its `&str`s borrow
-    // `seeds`, which outlives the loop.
-    let mut seen: HashSet<i64> = HashSet::new();
-    let mut queue: VecDeque<(i64, i64)> = VecDeque::new();
-    let mut tokens: Vec<(&str, &str)> = Vec::new();
+/// What the signatures of one file did not examine.
+struct Coverage {
+    /// Relationship instances whose class has no policy entry, by class.
+    unknown_relationships: BTreeMap<String, i64>,
+    /// Entities no signature root reaches, by class: instance count and an
+    /// order-independent digest of their content. A relationship counts when
+    /// it projects nothing.
+    unreached: BTreeMap<String, (i64, String)>,
+    /// Entities excluded on purpose, by class: provenance reached only through
+    /// `OwnerHistory`, and relationships the policy table ignores.
+    ignored_by_design: BTreeMap<String, i64>,
+}
 
-    let mut out: HashMap<i64, String> = HashMap::with_capacity(seeds.len());
-    for &step_id in &sorted_ids {
-        tokens.clear();
+fn coverage(
+    entities: &[canon::Entity],
+    index: &HashMap<i64, u32>,
+    graph: &edges::Graph,
+    merkle: &Merkle,
+) -> Coverage {
+    let n = entities.len();
 
-        // Tokens are (prefix, seed) tuples rather than `format!("context:{seed}")`
-        // strings. Sorting tuples by (prefix, seed) is byte-identical to sorting
-        // the concatenated strings (the fixed prefixes "context:" < "spatial:"
-        // decide cross-prefix order; equal prefixes fall through to the seed) —
-        // but with no per-neighbour String allocation. Context tokens are read
-        // out of `seen` before it is reused for the spatial BFS.
-        neighbors_within_k_into(context_adj, step_id, context_k, &mut seen, &mut queue);
-        for neigh in seen.iter() {
-            if *neigh == step_id {
-                continue;
+    let mut reached = vec![false; n];
+    let mut stack: Vec<u32> = (0..n as u32).filter(|&i| entities[i as usize].is_root()).collect();
+    for &root in &stack {
+        reached[root as usize] = true;
+    }
+    while let Some(current) = stack.pop() {
+        for edge in graph.children(current) {
+            if !reached[edge.target as usize] {
+                reached[edge.target as usize] = true;
+                stack.push(edge.target);
             }
-            let seed = seeds.get(neigh).map(String::as_str).unwrap_or("");
-            tokens.push(("context:", seed));
         }
-        neighbors_within_k_into(spatial_adj, step_id, spatial_k, &mut seen, &mut queue);
-        for neigh in seen.iter() {
-            if *neigh == step_id {
-                continue;
-            }
-            let seed = seeds.get(neigh).map(String::as_str).unwrap_or("");
-            tokens.push(("spatial:", seed));
-        }
-        tokens.sort();
+    }
 
-        let self_seed = seeds.get(&step_id).map(String::as_str).unwrap_or("");
-        // Stream "self:<seed>" + sorted tokens (U+001F separated) into the
-        // hasher; byte-identical to the join, without the payload_parts/join.
-        let mut hasher = Sha256::new();
-        hasher.update(b"self:");
-        hasher.update(self_seed.as_bytes());
-        for (prefix, seed) in &tokens {
-            hasher.update([0x1f]);
-            hasher.update(prefix.as_bytes());
-            hasher.update(seed.as_bytes());
+    let mut provenance = vec![false; n];
+    for ent in entities {
+        for r in &ent.refs {
+            if &*r.attr_name == "OwnerHistory" {
+                if let Some(&target) = index.get(&r.target) {
+                    if !provenance[target as usize] {
+                        provenance[target as usize] = true;
+                        stack.push(target);
+                    }
+                }
+            }
         }
-        out.insert(step_id, hex::encode(hasher.finalize()));
+    }
+    while let Some(current) = stack.pop() {
+        for r in &entities[current as usize].refs {
+            if let Some(&target) = index.get(&r.target) {
+                if !provenance[target as usize] {
+                    provenance[target as usize] = true;
+                    stack.push(target);
+                }
+            }
+        }
+    }
+
+    let known_relationships: HashSet<&str> =
+        edges::RELATIONSHIPS.iter().map(|(kw, _)| *kw).collect();
+    let mut ignored_by_design = graph.ignored_relationships.clone();
+    let mut digests: BTreeMap<&str, Vec<[u8; 32]>> = BTreeMap::new();
+    for (i, ent) in entities.iter().enumerate() {
+        if reached[i] {
+            continue;
+        }
+        // A relationship that projected is examined through its edges.
+        if ent.is_relationship
+            && known_relationships.contains(&*ent.keyword)
+            && !graph.unprojected_relationships.contains(&(i as u32))
+        {
+            continue;
+        }
+        if provenance[i] {
+            *ignored_by_design.entry(ent.canonical_class.to_string()).or_insert(0) += 1;
+            continue;
+        }
+        digests.entry(&ent.canonical_class).or_default().push(merkle.content(i as u32));
+    }
+    let unreached = digests
+        .into_iter()
+        .map(|(class, mut instances)| {
+            instances.sort_unstable();
+            let mut hasher = Sha256::new();
+            for digest in &instances {
+                hasher.update(digest);
+            }
+            (class.to_string(), (instances.len() as i64, hex::encode(hasher.finalize())))
+        })
+        .collect();
+
+    Coverage {
+        unknown_relationships: graph.unknown_relationships.clone(),
+        unreached,
+        ignored_by_design,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WL topology
+// ---------------------------------------------------------------------------
+
+fn neighbour_lists(pairs: &HashSet<(u32, u32)>) -> HashMap<u32, Vec<u32>> {
+    let mut out: HashMap<u32, Vec<u32>> = HashMap::new();
+    for &(a, b) in pairs {
+        out.entry(a).or_default().push(b);
+        out.entry(b).or_default().push(a);
     }
     out
 }
 
-/// Compute `vh_topology` per entity from context + spatial neighbor gossip.
-///
-/// `seeds[step] = sha256(canonical_class)` is precomputed by the caller;
-/// Rust does the BFS expansion and token assembly. `*_adj` are undirected
-/// neighbor lists.
-#[pyfunction]
-#[pyo3(signature = (seeds, context_adj, spatial_adj, context_k=1, spatial_k=1))]
-fn compute_topology_hashes(
-    py: Python<'_>,
-    seeds: HashMap<i64, String>,
-    context_adj: HashMap<i64, Vec<i64>>,
-    spatial_adj: HashMap<i64, Vec<i64>>,
-    context_k: i64,
-    spatial_k: i64,
-) -> PyResult<HashMap<i64, String>> {
-    let result = py.allow_threads(|| {
-        topology_compute(&seeds, &context_adj, &spatial_adj, context_k, spatial_k)
-    });
-    Ok(result)
+/// `vh_topology` of every signature root: its class seed plus the class seeds
+/// of its direct context and spatial neighbours (one WL round).
+fn topology_hashes(entities: &[canon::Entity], graph: &edges::Graph) -> HashMap<u32, String> {
+    let mut class_seeds: HashMap<&str, String> = HashMap::new();
+    for e in entities {
+        class_seeds
+            .entry(&e.canonical_class)
+            .or_insert_with(|| sha256_hex(e.canonical_class.as_bytes()));
+    }
+    let seed = |entity: u32| class_seeds[&*entities[entity as usize].canonical_class].as_str();
+    let context = neighbour_lists(&graph.context);
+    let spatial = neighbour_lists(&graph.spatial);
+
+    let mut out: HashMap<u32, String> = HashMap::new();
+    let mut tokens: Vec<(&str, &str)> = Vec::new();
+    for (i, e) in entities.iter().enumerate() {
+        if !e.is_root() {
+            continue;
+        }
+        let entity = i as u32;
+        tokens.clear();
+        for (prefix, adjacency) in [("context:", &context), ("spatial:", &spatial)] {
+            if let Some(neighbours) = adjacency.get(&entity) {
+                tokens.extend(neighbours.iter().map(|&n| (prefix, seed(n))));
+            }
+        }
+        tokens.sort();
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"self:");
+        hasher.update(seed(entity).as_bytes());
+        for (prefix, neighbour_seed) in &tokens {
+            hasher.update([0x1f]);
+            hasher.update(prefix.as_bytes());
+            hasher.update(neighbour_seed.as_bytes());
+        }
+        out.insert(entity, hex::encode(hasher.finalize()));
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
-// Stage B: full native signature bundle
+// Signature bundle
 // ---------------------------------------------------------------------------
 
-/// One product/spatial signature, flattened for the FFI boundary:
+/// `vh_geometry` of a root that has feature elements also covers, per feature,
+/// the feature's shape together with its position relative to the root.
+///
+/// One root signature, flattened for the FFI boundary:
 /// (step_id, guid, name, entity_type, canonical_class, vh_geometry, vh_data,
-///  vh_topology, placement, centroid, aabb, data_facts).
+///  vh_topology, (placement, placement_unresolved), centroid, aabb, data_facts).
 type SigTuple = (
     i64,
     Option<String>,
@@ -531,7 +788,7 @@ type SigTuple = (
     String,
     String,
     String,
-    Option<Vec<i64>>,
+    (Option<Vec<i64>>, Option<String>),
     Option<Vec<f64>>,
     Option<Vec<f64>>,
     Vec<(String, String)>,
@@ -543,6 +800,7 @@ struct NativeBundle {
     dangling_refs: i64,
     cycle_breaks: i64,
     warnings: Vec<String>,
+    coverage: Coverage,
 }
 
 fn build_bundle(
@@ -555,168 +813,125 @@ fn build_bundle(
     let bytes = std::fs::read(path).map_err(|e| format!("read {path}: {e}"))?;
     prof.mark("read_bytes");
     let records = step::Parser::new(&bytes).parse()?;
-    // STEP tokens are owned (Record holds Strings), so the raw file bytes are
-    // dead the moment tokenization finishes; free them before the heavier stages.
     drop(bytes);
     prof.mark("tokenize");
     let schema = descriptor::parse_schema(schema_json)?;
     let mut parsed = canon::canonicalize(&records, &schema, unit_factors);
-    // canonicalize() copied everything it needs into `parsed`; the token records
-    // (the second-largest intermediate) are dead through the rest of the pipeline.
     drop(records);
     prof.mark("canonicalize");
-    let edge_list = edges::build_edges(&parsed.entities, &parsed.id_to_keyword);
+    let graph = edges::build_edges(&parsed.entities, &parsed.index);
     prof.mark("build_edges");
 
-    // ---- Merkle inputs -----------------------------------------------------
-    let mut classes: HashMap<i64, String> = HashMap::with_capacity(parsed.entities.len());
-    let mut geom_parts: HashMap<i64, Vec<String>> = HashMap::new();
-    let mut data_parts: HashMap<i64, Vec<String>> = HashMap::new();
-    // `geom_parts`/`data_parts` are not read off the entities again after this,
-    // so move them into the merkle maps instead of cloning (avoids duplicating
-    // the per-entity attribute strings — the bulk of the old +900 MB here).
-    // `canonical_class` is still needed downstream (WL seeds, assemble), so it
-    // stays a (small) clone.
-    for e in &mut parsed.entities {
-        classes.insert(e.step_id, e.canonical_class.clone());
-        if !e.geom_parts.is_empty() {
-            geom_parts.insert(e.step_id, std::mem::take(&mut e.geom_parts));
-        }
-        if !e.data_parts.is_empty() {
-            data_parts.insert(e.step_id, std::mem::take(&mut e.data_parts));
+    let merkle = Merkle::new(&parsed.entities, &graph);
+    let mut root_hashes: HashMap<u32, ([u8; 32], String)> = HashMap::new();
+    for (i, e) in parsed.entities.iter().enumerate() {
+        if e.is_root() {
+            let entity = i as u32;
+            let geometry = merkle.geometry(entity);
+            let data = merkle.data(entity).unwrap_or([0; 32]);
+            root_hashes.insert(entity, (geometry, hex::encode(data)));
         }
     }
-    let mut geom_adj: HashMap<i64, Vec<(String, i64)>> = HashMap::new();
-    let mut data_adj: HashMap<i64, Vec<(String, i64)>> = HashMap::new();
-    let mut geometry_adj: HashMap<i64, Vec<i64>> = HashMap::new();
-    let mut data_children: HashMap<i64, Vec<i64>> = HashMap::new();
-    let mut context_adj: HashMap<i64, HashSet<i64>> = HashMap::new();
-    let mut spatial_adj: HashMap<i64, HashSet<i64>> = HashMap::new();
-    let mut edge_stats: HashMap<String, i64> = HashMap::new();
-    for edge in &edge_list {
-        *edge_stats
-            .entry(format!("{}:{}", edge.classification, edge.domain))
-            .or_insert(0) += 1;
-        if edge.classification == edges::INCLUDE {
-            match edge.domain {
-                edges::GEOMETRY => {
-                    geom_adj
-                        .entry(edge.source)
-                        .or_default()
-                        .push((edge.label.clone(), edge.target));
-                    geometry_adj.entry(edge.source).or_default().push(edge.target);
-                }
-                edges::DATA => {
-                    data_adj
-                        .entry(edge.source)
-                        .or_default()
-                        .push((edge.label.clone(), edge.target));
-                    data_children.entry(edge.source).or_default().push(edge.target);
-                }
-                edges::SPATIAL => {
-                    spatial_adj.entry(edge.source).or_default().insert(edge.target);
-                    spatial_adj.entry(edge.target).or_default().insert(edge.source);
-                }
-                _ => {}
-            }
-        } else if edge.classification == edges::CONTEXT && edge.domain == edges::TOPOLOGY {
-            context_adj.entry(edge.source).or_default().insert(edge.target);
-            context_adj.entry(edge.target).or_default().insert(edge.source);
-        }
-    }
-    // The flat edge list has been fully projected into the adjacency maps above;
-    // it is dead for the rest of the pipeline.
-    drop(edge_list);
-    for v in geom_adj.values_mut() {
-        v.sort();
-    }
-    for v in data_adj.values_mut() {
-        v.sort();
-    }
-    for v in geometry_adj.values_mut() {
-        v.sort();
-    }
-
-    prof.mark("merkle_inputs");
-    let (merkle_out, cycles) = merkle_compute(&classes, &geom_parts, &data_parts, &geom_adj, &data_adj);
-    // Merkle consumed these; only `geometry_adj`, `data_children`, `context_adj`,
-    // and `spatial_adj` are still needed (WL + spatial). Free the rest — the
-    // moved attribute-part strings (`geom_parts`/`data_parts`) and the
-    // domain-labelled adjacency are the bulk of it.
-    drop(classes);
-    drop(geom_parts);
-    drop(data_parts);
-    drop(geom_adj);
-    drop(data_adj);
+    let placement_content: HashMap<u32, [u8; 32]> = graph
+        .includes
+        .iter()
+        .filter(|edge| {
+            edge.domain == edges::Domain::Placement
+                && matches!(&*edge.label, "ObjectPlacement" | "PlacementRelTo")
+                && &*parsed.entities[edge.target as usize].keyword != "IFCLOCALPLACEMENT"
+        })
+        .map(|edge| edge.target)
+        .collect::<HashSet<u32>>()
+        .into_iter()
+        .map(|target| (target, merkle.content(target)))
+        .collect();
     prof.mark("merkle");
+    let coverage = coverage(&parsed.entities, &parsed.index, &graph, &merkle);
+    let cycle_breaks = merkle.cyclic_components;
+    let shape_facts = shape_facts_of_data_reached_entities(&parsed.entities, &graph, &merkle);
+    let repeated = merkle.repeated_set_members();
+    let dataless = merkle.dataless;
+    for e in &mut parsed.entities {
+        e.geom_parts = Vec::new();
+        e.data_parts = Vec::new();
+    }
+    for (entity, facts) in shape_facts {
+        parsed.entities[entity as usize].geom_facts.extend(facts);
+    }
+    prof.mark("coverage");
 
-    // ---- WL topology -------------------------------------------------------
-    let mut class_seeds: HashMap<&str, String> = HashMap::new();
-    for e in &parsed.entities {
-        class_seeds
-            .entry(e.canonical_class.as_str())
-            .or_insert_with(|| {
-                let mut hasher = Sha256::new();
-                hasher.update(e.canonical_class.as_bytes());
-                hex::encode(hasher.finalize())
-            });
-    }
-    let mut seeds: HashMap<i64, String> = HashMap::with_capacity(parsed.entities.len());
-    for e in &parsed.entities {
-        seeds.insert(e.step_id, class_seeds[e.canonical_class.as_str()].clone());
-    }
-    let context_vec: HashMap<i64, Vec<i64>> = sorted_adj(context_adj);
-    let spatial_vec: HashMap<i64, Vec<i64>> = sorted_adj(spatial_adj);
-    let topo = topology_compute(&seeds, &context_vec, &spatial_vec, 1, 1);
+    let topology = topology_hashes(&parsed.entities, &graph);
     prof.mark("wl_topology");
 
-    // ---- Spatial -----------------------------------------------------------
-    let by_id: HashMap<i64, &canon::Entity> =
-        parsed.entities.iter().map(|e| (e.step_id, e)).collect();
-    // Data-closure children are ordered by (target class, target), matching
-    // signatures.build_data_facts.
-    for v in data_children.values_mut() {
-        v.sort_by(|&a, &b| {
-            let ca = by_id.get(&a).map(|e| e.canonical_class.as_str()).unwrap_or("");
-            let cb = by_id.get(&b).map(|e| e.canonical_class.as_str()).unwrap_or("");
-            ca.cmp(cb).then(a.cmp(&b))
-        });
-    }
     let ctx = spatial::SpatialCtx {
-        by_id: &by_id,
-        geometry_adj: &geometry_adj,
+        entities: &parsed.entities,
+        index: &parsed.index,
+        graph: &graph,
         point_coords: &parsed.point_coords,
-        dir_ratios: &parsed.dir_ratios,
+        placement_axes: &parsed.placement_axes,
+        placement_content: &placement_content,
     };
-    let spatial_feats = spatial::build_spatial_features(&parsed.entities, &ctx);
+    let spatial_feats = spatial::build_spatial_features(&ctx)?;
     prof.mark("spatial");
 
-    // ---- Assemble signatures ----------------------------------------------
+    let mut facts = FactCollector::new(&parsed.entities, &graph, &dataless, &repeated);
     let mut signatures: Vec<SigTuple> = Vec::new();
-    for e in &parsed.entities {
-        if !(e.is_product || e.is_spatial) {
+    for (i, e) in parsed.entities.iter().enumerate() {
+        if !e.is_root() {
             continue;
         }
-        let (vh_geometry, vh_data) = merkle_out
-            .get(&e.step_id)
+        let entity = i as u32;
+        let (geometry, vh_data) = root_hashes
+            .get(&entity)
             .cloned()
-            .unwrap_or_default();
-        let vh_topology = topo.get(&e.step_id).cloned().unwrap_or_default();
-        let feat = spatial_feats.get(&e.step_id);
-        let placement = feat.and_then(|f| f.placement.clone());
-        let centroid = feat.and_then(|f| f.centroid.map(|c| c.to_vec()));
-        let aabb = feat.and_then(|f| f.aabb.map(|a| a.to_vec()));
-        let data_facts = data_facts_for_root(e.step_id, &data_children, &by_id);
+            .unwrap_or_else(|| panic!("no content hashes for the root #{}", e.step_id));
+        let vh_topology = topology
+            .get(&entity)
+            .cloned()
+            .unwrap_or_else(|| panic!("no topology hash for the root #{}", e.step_id));
+        let feat = spatial_feats
+            .get(&entity)
+            .unwrap_or_else(|| panic!("no spatial features for the root #{}", e.step_id));
+        let vh_geometry = hex::encode(match feat.feature_positions.as_slice() {
+            [] => geometry,
+            positions => {
+                let mut placed: Vec<[u8; 32]> = positions
+                    .iter()
+                    .map(|(feature, position)| {
+                        let mut hasher = Sha256::new();
+                        let (shape, _) = root_hashes.get(feature).unwrap_or_else(|| {
+                            panic!("no content hashes for the feature #{}", parsed.entities[*feature as usize].step_id)
+                        });
+                        hasher.update(shape);
+                        hasher.update(position);
+                        hasher.finalize().into()
+                    })
+                    .collect();
+                placed.sort_unstable();
+                let mut hasher = Sha256::new();
+                hasher.update(b"features");
+                hasher.update(geometry);
+                for feature in &placed {
+                    hasher.update(feature);
+                }
+                hasher.finalize().into()
+            }
+        });
+        let placement = feat.placement.clone();
+        let placement_unresolved = feat.placement_unresolved.clone();
+        let centroid = feat.centroid.map(|c| c.to_vec());
+        let aabb = feat.aabb.map(|a| a.to_vec());
+        let data_facts = facts.collect(entity);
         signatures.push((
             e.step_id,
             e.guid.clone(),
             e.name.clone(),
-            e.keyword.clone(),
-            e.canonical_class.clone(),
+            e.keyword.to_string(),
+            e.canonical_class.to_string(),
             vh_geometry,
             vh_data,
             vh_topology,
-            placement,
+            (placement, placement_unresolved),
             centroid,
             aabb,
             data_facts,
@@ -725,11 +940,10 @@ fn build_bundle(
     signatures.sort_by_key(|s| s.0);
     prof.mark("assemble_signatures");
 
-    // ---- Diagnostics -------------------------------------------------------
     let mut dangling_refs: i64 = 0;
     for e in &parsed.entities {
         for r in &e.refs {
-            if !parsed.id_to_keyword.contains_key(&r.target) {
+            if !parsed.index.contains_key(&r.target) && !parsed.skipped_ids.contains(&r.target) {
                 dangling_refs += 1;
             }
         }
@@ -745,75 +959,174 @@ fn build_bundle(
 
     Ok(NativeBundle {
         signatures,
-        edge_stats,
+        edge_stats: graph.stats(),
         dangling_refs,
-        cycle_breaks: cycles.len() as i64,
+        cycle_breaks,
         warnings,
+        coverage,
     })
 }
 
-/// Assemble the deduped data facts for one signature root by walking its data
-/// include-closure. Mirrors `signatures.build_data_facts` per root.
-fn data_facts_for_root(
-    root: i64,
-    data_children: &HashMap<i64, Vec<i64>>,
-    by_id: &HashMap<i64, &canon::Entity>,
-) -> Vec<(String, String)> {
-    // Pre-order DFS over the data closure (preserves child order).
-    fn visit(
-        step: i64,
-        data_children: &HashMap<i64, Vec<i64>>,
-        seen: &mut HashSet<i64>,
-        ordered: &mut Vec<i64>,
-    ) {
-        if !seen.insert(step) {
-            return;
-        }
-        ordered.push(step);
-        if let Some(children) = data_children.get(&step) {
-            for &c in children {
-                visit(c, data_children, seen, ordered);
+/// How much of an entity `vh_data` of the root covers.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Scope {
+    /// Data and geometry content: the entity is reached over a data edge.
+    Full,
+    /// Data content only: a shape entity reached over geometry edges.
+    DataOnly,
+}
+
+/// Facts for the geometry content of every shape entity some data edge
+/// points at, so a data change caused by shape content (a context's
+/// `TrueNorth`, a material profile's profile) can be named: the aggregate
+/// attributes and frame in their canonical encoding (a digest when long), a
+/// triangle count and digest, and one `(shape)` digest standing for the
+/// geometry below the entity.
+fn shape_facts_of_data_reached_entities(
+    entities: &[canon::Entity],
+    graph: &edges::Graph,
+    merkle: &Merkle,
+) -> Vec<(u32, Vec<(std::rc::Rc<str>, String)>)> {
+    let targets: HashSet<u32> = graph
+        .includes
+        .iter()
+        .filter(|edge| edge.domain == edges::Domain::Data && entities[edge.target as usize].is_geometric)
+        .map(|edge| edge.target)
+        .collect();
+    let mut out = Vec::with_capacity(targets.len());
+    for entity in targets {
+        let ent = &entities[entity as usize];
+        let mut facts: Vec<(std::rc::Rc<str>, String)> = Vec::new();
+        let mut triangles = Sha256::new();
+        let mut triangle_count = 0usize;
+        for part in &ent.geom_parts {
+            if part.starts_with("tri:") {
+                triangles.update(part.as_bytes());
+                triangle_count += 1;
+                continue;
+            }
+            let (name, value) = match part.strip_prefix("attr=").and_then(|rest| rest.split_once(':')) {
+                Some(pair) => pair,
+                None => part.split_once('=').unwrap_or(("(part)", part)),
+            };
+            if !ent.geom_facts.iter().any(|(scalar, _)| &**scalar == name) {
+                facts.push((name.into(), canon::bounded_fact(value)));
             }
         }
+        if triangle_count > 0 {
+            let digest = hex::encode(triangles.finalize());
+            facts.push(("CoordIndex".into(), format!("{triangle_count} triangles, sha256:{}", &digest[..12])));
+        }
+        if graph.children(entity).iter().any(geometry_edge) {
+            facts.push(("(shape)".into(), hex::encode(&merkle.geometry(entity)[..6])));
+        }
+        out.push((entity, facts));
     }
-    let mut ordered: Vec<i64> = Vec::new();
-    let mut seen: HashSet<i64> = HashSet::new();
-    visit(root, data_children, &mut seen, &mut ordered);
+    out
+}
 
-    let mut facts: Vec<(String, String)> = Vec::new();
-    for step in ordered {
-        if let Some(ent) = by_id.get(&step) {
-            let label = fact_label(ent);
+/// Readable facts of everything `vh_data` of a root covers, so a data change
+/// can name what differs. A path is the positions of the ordered lists passed
+/// over data edges on the way, then the class and attribute of the entity
+/// holding the value; repeated paths are numbered.
+struct FactCollector<'a> {
+    entities: &'a [canon::Entity],
+    graph: &'a edges::Graph,
+    dataless: &'a [bool],
+    /// Per include edge: a SET member equal to an earlier one, listed once.
+    repeated: &'a [bool],
+    prefixes: Vec<String>,
+    seen: HashSet<(u32, Scope, u32)>,
+    on_path: HashSet<u32>,
+}
+
+impl<'a> FactCollector<'a> {
+    fn new(
+        entities: &'a [canon::Entity],
+        graph: &'a edges::Graph,
+        dataless: &'a [bool],
+        repeated: &'a [bool],
+    ) -> Self {
+        Self {
+            entities,
+            graph,
+            dataless,
+            repeated,
+            prefixes: vec![String::new()],
+            seen: HashSet::new(),
+            on_path: HashSet::new(),
+        }
+    }
+
+    fn collect(&mut self, root: u32) -> Vec<(String, String)> {
+        self.prefixes.truncate(1);
+        self.seen.clear();
+        self.on_path.clear();
+        let mut facts: Vec<(String, String)> = Vec::new();
+        // (entity, scope, prefix, leaving)
+        let mut stack: Vec<(u32, Scope, u32, bool)> = vec![(root, Scope::Full, 0, false)];
+        while let Some((current, scope, prefix, leaving)) = stack.pop() {
+            if leaving {
+                self.on_path.remove(&current);
+                continue;
+            }
+            if self.on_path.contains(&current) || !self.seen.insert((current, scope, prefix)) {
+                continue;
+            }
+            self.on_path.insert(current);
+            stack.push((current, scope, prefix, true));
+
+            let ent = &self.entities[current as usize];
+            let label = match &ent.guid {
+                Some(g) => format!("{}{}[GlobalId={}]", self.prefixes[prefix as usize], ent.canonical_class, g),
+                None => format!("{}{}", self.prefixes[prefix as usize], ent.canonical_class),
+            };
             for (attr, value) in &ent.data_facts {
                 facts.push((format!("{label}.{attr}"), value.clone()));
             }
+            if scope == Scope::Full {
+                for (attr, value) in &ent.geom_facts {
+                    facts.push((format!("{label}.{attr}"), value.clone()));
+                }
+            }
+            let graph = self.graph;
+            for i in graph.child_range(current) {
+                if self.repeated[i] {
+                    continue;
+                }
+                let edge = &graph.includes[i];
+                let target = &self.entities[edge.target as usize];
+                let child_scope = match edge.domain {
+                    edges::Domain::Data => Scope::Full,
+                    edges::Domain::Geometry if target.is_geometric && !self.dataless[edge.target as usize] => {
+                        Scope::DataOnly
+                    }
+                    _ => continue,
+                };
+                let positioned = child_scope == Scope::Full && edge.ord != canon::UNORDERED && !edge.cyclic;
+                let child_prefix = if !positioned {
+                    prefix
+                } else {
+                    let text = format!("{}{}[{}]/", self.prefixes[prefix as usize], edge.label, edge.ord + 1);
+                    self.prefixes.push(text);
+                    self.prefixes.len() as u32 - 1
+                };
+                stack.push((edge.target, child_scope, child_prefix, false));
+            }
         }
-    }
-    dedupe_fact_paths(facts)
-}
-
-fn fact_label(ent: &canon::Entity) -> String {
-    match &ent.guid {
-        Some(g) => format!("{}[GlobalId={}]", ent.canonical_class, g),
-        None => ent.canonical_class.clone(),
+        number_repeated_paths(facts)
     }
 }
 
-/// Sort + disambiguate repeated paths with `[n]` suffixes, matching
-/// `signatures._dedupe_fact_paths`. Once sorted, equal paths are adjacent, so a
-/// single pass over runs reproduces the per-path numbering without the `counts`
-/// / `seen` maps — and moves each `(path, value)` through instead of cloning it
-/// (the old version cloned every fact a second time into `out`).
-fn dedupe_fact_paths(mut facts: Vec<(String, String)>) -> Vec<(String, String)> {
+/// Sort facts and suffix repeated paths with `[1]`, `[2]`, ... in value order.
+fn number_repeated_paths(mut facts: Vec<(String, String)>) -> Vec<(String, String)> {
     facts.sort();
     let mut out: Vec<(String, String)> = Vec::with_capacity(facts.len());
     let mut iter = facts.into_iter().peekable();
     while let Some((path, value)) = iter.next() {
         if iter.peek().map_or(true, |(next, _)| *next != path) {
-            // Unique path: move through untouched.
             out.push((path, value));
         } else {
-            // Run of duplicates: emit "path[1]", "path[2]", ... in order.
             let mut n = 1;
             out.push((format!("{path}[{n}]"), value));
             while iter.peek().map_or(false, |(next, _)| *next == path) {
@@ -826,89 +1139,248 @@ fn dedupe_fact_paths(mut facts: Vec<(String, String)>) -> Vec<(String, String)> 
     out
 }
 
-fn sorted_adj(adj: HashMap<i64, HashSet<i64>>) -> HashMap<i64, Vec<i64>> {
-    adj.into_iter()
-        .map(|(k, set)| {
-            let mut v: Vec<i64> = set.into_iter().collect();
-            v.sort_unstable();
-            (k, v)
-        })
-        .collect()
-}
+type CoverageTuple = (HashMap<String, i64>, HashMap<String, (i64, String)>, HashMap<String, i64>);
 
 /// Full native parse + signature build for one IFC file.
 ///
-/// `schema_json` is the per-class descriptor map (built once by Python from
-/// ifcopenshell); `unit_factors` maps unit types to scale factors. Returns
-/// `(signatures, edge_stats, (dangling_refs, cycle_breaks, warnings))`.
+/// `schema_json` is the per-class descriptor map; `unit_factors` maps unit
+/// types to scale factors. Returns `(signatures, edge_stats, (dangling_refs,
+/// cycle_breaks, warnings), (unknown_relationships, unreached,
+/// ignored_by_design))`.
 #[pyfunction]
 fn build_signature_bundle(
     py: Python<'_>,
     path: String,
     schema_json: String,
     unit_factors: HashMap<String, f64>,
-) -> PyResult<(Vec<SigTuple>, HashMap<String, i64>, (i64, i64, Vec<String>))> {
+) -> PyResult<(Vec<SigTuple>, HashMap<String, i64>, (i64, i64, Vec<String>), CoverageTuple)> {
     let bundle = py
         .allow_threads(|| build_bundle(&path, &schema_json, &unit_factors))
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let coverage = bundle.coverage;
     Ok((
         bundle.signatures,
         bundle.edge_stats,
         (bundle.dangling_refs, bundle.cycle_breaks, bundle.warnings),
+        (
+            coverage.unknown_relationships.into_iter().collect(),
+            coverage.unreached.into_iter().collect(),
+            coverage.ignored_by_design.into_iter().collect(),
+        ),
     ))
+}
+
+type PolicyRows = Vec<(String, String, String)>;
+
+/// The relationship policy table: per STEP keyword, either its links as
+/// `(source_attr, target_attr, kind)` or the reason it is ignored.
+#[pyfunction]
+fn relationship_policy() -> Vec<(String, PolicyRows, Option<String>)> {
+    edges::RELATIONSHIPS
+        .iter()
+        .map(|(keyword, policy)| match policy {
+            edges::Policy::Project(links) => (
+                keyword.to_string(),
+                links
+                    .iter()
+                    .map(|l| {
+                        (l.source_attr.to_string(), l.target_attr.to_string(), l.kind.name().to_string())
+                    })
+                    .collect(),
+                None,
+            ),
+            edges::Policy::Ignored(reason) => (keyword.to_string(), Vec::new(), Some(reason.to_string())),
+        })
+        .collect()
+}
+
+/// The explicit exclusion and attachment tables, each as
+/// `(STEP keyword or "*", attribute, reason)` rows keyed by table name.
+#[pyfunction]
+fn reference_policy() -> HashMap<String, PolicyRows> {
+    let rows = |table: &[(&str, &str, &str)]| -> PolicyRows {
+        table.iter().map(|(k, a, r)| (k.to_string(), a.to_string(), r.to_string())).collect()
+    };
+    HashMap::from([
+        ("unhashed_attributes".to_string(), rows(canon::UNHASHED_ATTRIBUTES)),
+        ("denied_references".to_string(), rows(edges::DENIED_REFERENCES)),
+        ("unordered_lists".to_string(), rows(edges::UNORDERED_LISTS)),
+        (
+            "reverse_attachments".to_string(),
+            edges::REVERSE_ATTACHMENTS
+                .iter()
+                .map(|(k, a)| (k.to_string(), a.to_string(), String::new()))
+                .collect(),
+        ),
+        (
+            "cyclic_lists".to_string(),
+            edges::CYCLIC_LISTS.iter().map(|(k, a)| (k.to_string(), a.to_string(), String::new())).collect(),
+        ),
+    ])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::edges::tests::{ent, graph, Flags};
 
-    fn classes() -> HashMap<i64, String> {
-        let mut c = HashMap::new();
-        c.insert(1i64, "IfcWall".to_string());
-        c.insert(2i64, "IfcPropertySet".to_string());
-        c
+    fn shape() -> Flags {
+        Flags { geometric: true, ..Flags::default() }
+    }
+
+    fn ordered(entity: &mut canon::Entity) {
+        for (position, r) in entity.refs.iter_mut().enumerate() {
+            r.ord = position as u32;
+        }
+    }
+
+    fn point(step_id: i64, x: &str) -> canon::Entity {
+        let mut p = ent(step_id, "IFCCARTESIANPOINT", shape(), &[]);
+        p.geom_parts.push(format!("attr=Coordinates:[{x}]"));
+        p
+    }
+
+    fn loop_digest(order: &[i64]) -> [u8; 32] {
+        let refs: Vec<(&str, i64)> = order.iter().map(|&t| ("Polygon", t)).collect();
+        let mut polyloop = ent(10, "IFCPOLYLOOP", shape(), &refs);
+        ordered(&mut polyloop);
+        let entities = vec![point(1, "a"), point(2, "b"), point(3, "c"), polyloop];
+        let g = graph(&entities);
+        Merkle::new(&entities, &g).geometry(3)
     }
 
     #[test]
-    fn merkle_is_deterministic_and_content_sensitive() {
-        let classes = classes();
-        let geom_parts: HashMap<i64, Vec<String>> = HashMap::new();
-        let geom_adj: HashMap<i64, Vec<(String, i64)>> = HashMap::new();
-        let mut data_parts: HashMap<i64, Vec<String>> = HashMap::new();
-        data_parts.insert(2, vec!["attr=Name:s'Pset".to_string()]);
-        let mut data_adj: HashMap<i64, Vec<(String, i64)>> = HashMap::new();
-        data_adj.insert(1, vec![("IFCRELDEFINESBYPROPERTIES".to_string(), 2)]);
+    fn closed_loop_ignores_start_vertex_but_not_direction() {
+        assert_eq!(loop_digest(&[1, 2, 3]), loop_digest(&[2, 3, 1]));
+        assert_ne!(loop_digest(&[1, 2, 3]), loop_digest(&[3, 2, 1]));
+    }
 
-        let (a, _) = merkle_compute(&classes, &geom_parts, &data_parts, &geom_adj, &data_adj);
-        let (b, _) = merkle_compute(&classes, &geom_parts, &data_parts, &geom_adj, &data_adj);
-        assert_eq!(a, b, "merkle must be deterministic");
-
-        // Editing a child's data part must change the parent's vh_data.
-        let mut data_parts2 = data_parts.clone();
-        data_parts2.insert(2, vec!["attr=Name:s'Changed".to_string()]);
-        let (c, _) = merkle_compute(&classes, &geom_parts, &data_parts2, &geom_adj, &data_adj);
-        assert_ne!(a.get(&1).unwrap().1, c.get(&1).unwrap().1);
+    fn polyline_digest(points: Vec<canon::Entity>, order: &[i64]) -> [u8; 32] {
+        let refs: Vec<(&str, i64)> = order.iter().map(|&t| ("Points", t)).collect();
+        let mut polyline = ent(10, "IFCPOLYLINE", shape(), &refs);
+        ordered(&mut polyline);
+        let mut entities = points;
+        entities.push(polyline);
+        let g = graph(&entities);
+        Merkle::new(&entities, &g).geometry(entities.len() as u32 - 1)
     }
 
     #[test]
-    fn topology_is_deterministic_and_neighbor_order_independent() {
-        let mut seeds: HashMap<i64, String> = HashMap::new();
-        seeds.insert(1, "s1".to_string());
-        seeds.insert(2, "s2".to_string());
-        seeds.insert(3, "s3".to_string());
-        let spatial: HashMap<i64, Vec<i64>> = HashMap::new();
+    fn ordered_children_keep_position_and_ignore_sharing() {
+        let three = || vec![point(1, "a"), point(2, "b"), point(3, "c")];
+        let base = polyline_digest(three(), &[1, 2, 3, 1]);
+        assert_ne!(base, polyline_digest(three(), &[1, 3, 2, 1]));
+        let mut unshared = three();
+        unshared.push(point(4, "a"));
+        assert_eq!(base, polyline_digest(unshared, &[1, 2, 3, 4]));
+    }
 
-        let mut ctx_a: HashMap<i64, Vec<i64>> = HashMap::new();
-        ctx_a.insert(1, vec![2, 3]);
-        let mut ctx_b: HashMap<i64, Vec<i64>> = HashMap::new();
-        ctx_b.insert(1, vec![3, 2]); // reversed neighbor order
+    fn set_digest(keyword: &str, members: &[i64], in_set: bool) -> Option<[u8; 32]> {
+        let refs: Vec<(&str, i64)> = members.iter().map(|&t| ("Members", t)).collect();
+        let mut owner = ent(10, keyword, Flags::default(), &refs);
+        for r in &mut owner.refs {
+            r.in_set = in_set;
+        }
+        let entities = vec![approval(1, "a", 99), approval(2, "a", 99), approval(3, "b", 99), owner];
+        let g = graph(&entities);
+        Merkle::new(&entities, &g).data(3)
+    }
 
-        let h_a = topology_compute(&seeds, &ctx_a, &spatial, 1, 2);
-        let h_b = topology_compute(&seeds, &ctx_b, &spatial, 1, 2);
-        let h_a2 = topology_compute(&seeds, &ctx_a, &spatial, 1, 2);
+    #[test]
+    fn set_members_of_equal_content_are_one_member() {
+        let single = set_digest("IFCOWNER", &[1, 3], true);
+        assert_eq!(single, set_digest("IFCOWNER", &[1, 2, 3], true));
+        assert_eq!(single, set_digest("IFCOWNER", &[1, 1, 3], true));
+        assert_ne!(single, set_digest("IFCOWNER", &[1], true));
+    }
 
-        assert_eq!(h_a, h_a2, "topology must be deterministic");
-        assert_eq!(h_a.get(&1), h_b.get(&1), "neighbor token order must not matter");
+    #[test]
+    fn members_outside_a_set_all_count() {
+        let single = set_digest("IFCOWNER", &[1, 3], false);
+        assert_ne!(single, set_digest("IFCOWNER", &[1, 2, 3], false));
+        assert_ne!(single, set_digest("IFCOWNER", &[1, 1, 3], false));
+    }
+
+    #[test]
+    fn data_digest_carries_shape_content_across_a_data_edge() {
+        let digest = |dim: &str| {
+            let mut profile = ent(2, "IFCRECTANGLEPROFILEDEF", shape(), &[]);
+            profile.geom_parts.push(format!("attr=XDim:{dim}"));
+            let entities = vec![ent(1, "IFCMATERIALPROFILE", Flags::default(), &[("Profile", 2)]), profile];
+            let g = graph(&entities);
+            Merkle::new(&entities, &g).data(0)
+        };
+        assert_ne!(digest("r1"), digest("r2"));
+    }
+
+    #[test]
+    fn text_inside_a_shape_tree_reaches_the_owner_data_digest_only() {
+        let digests = |identifier: &str| {
+            let mut representation = ent(2, "IFCSHAPEREPRESENTATION", shape(), &[]);
+            representation.data_parts.push(format!("attr=RepresentationIdentifier:{identifier}"));
+            let entities = vec![
+                ent(1, "IFCWALL", Flags { product: true, ..Flags::default() }, &[("Representation", 2)]),
+                representation,
+            ];
+            let g = graph(&entities);
+            let merkle = Merkle::new(&entities, &g);
+            (merkle.geometry(0), merkle.data(0))
+        };
+        let (body_geometry, body_data) = digests("s'Body");
+        let (axis_geometry, axis_data) = digests("s'Axis");
+        assert_eq!(body_geometry, axis_geometry);
+        assert_ne!(body_data, axis_data);
+    }
+
+    fn approval(step_id: i64, name: &str, next: i64) -> canon::Entity {
+        let mut approval = ent(step_id, "IFCAPPROVAL", Flags::default(), &[("Next", next)]);
+        approval.data_parts.push(format!("attr=Name:s'{name}"));
+        approval
+    }
+
+    #[test]
+    fn cycle_digests_do_not_depend_on_step_ids_or_record_order() {
+        let forward = vec![approval(1, "a", 2), approval(2, "b", 3), approval(3, "c", 1)];
+        let shuffled = vec![approval(40, "c", 90), approval(7, "b", 40), approval(90, "a", 7)];
+        let g = graph(&forward);
+        let first = Merkle::new(&forward, &g);
+        assert_eq!(first.cyclic_components, 1);
+        let g = graph(&shuffled);
+        let second = Merkle::new(&shuffled, &g);
+        assert_eq!(first.data(0), second.data(2));
+        assert_eq!(first.data(1), second.data(1));
+        assert_eq!(first.data(2), second.data(0));
+        assert_ne!(first.data(0), first.data(1));
+    }
+
+    #[test]
+    fn every_member_of_a_cycle_sees_a_change_anywhere_in_it() {
+        let digest = |far: &str| {
+            let entities = vec![approval(1, "a", 2), approval(2, "b", 3), approval(3, far, 1)];
+            let g = graph(&entities);
+            let merkle = Merkle::new(&entities, &g);
+            (merkle.data(0), merkle.data(1))
+        };
+        assert_ne!(digest("c").0, digest("d").0);
+        assert_ne!(digest("c").1, digest("d").1);
+    }
+
+    #[test]
+    fn topology_ignores_neighbour_order() {
+        let build = |first: i64, second: i64| {
+            let product = || Flags { product: true, ..Flags::default() };
+            let relationship = || Flags { relationship: true, ..Flags::default() };
+            let entities = vec![
+                ent(1, "IFCWALL", product(), &[]),
+                ent(2, "IFCDOOR", product(), &[]),
+                ent(3, "IFCSLAB", product(), &[]),
+                ent(4, "IFCRELCONNECTSELEMENTS", relationship(), &[("RelatingElement", 1), ("RelatedElement", first)]),
+                ent(5, "IFCRELCONNECTSELEMENTS", relationship(), &[("RelatingElement", 1), ("RelatedElement", second)]),
+            ];
+            let g = graph(&entities);
+            topology_hashes(&entities, &g)[&0].clone()
+        };
+        assert_eq!(build(2, 3), build(3, 2));
     }
 }
 
@@ -916,8 +1388,8 @@ mod tests {
 fn athar_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(rekey_step_file, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_merkle_hashes, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_topology_hashes, m)?)?;
     m.add_function(wrap_pyfunction!(build_signature_bundle, m)?)?;
+    m.add_function(wrap_pyfunction!(relationship_policy, m)?)?;
+    m.add_function(wrap_pyfunction!(reference_policy, m)?)?;
     Ok(())
 }

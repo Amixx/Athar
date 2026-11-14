@@ -1,13 +1,14 @@
 //! Per-instance canonicalization: STEP tokens + schema descriptors -> the
-//! domain-filtered Merkle "parts", collected refs, and the numeric point/
-//! direction coordinates the spatial stage needs.
+//! Merkle "parts" of each entity, its outgoing references, and the numeric
+//! point/direction coordinates the spatial stage needs.
 //!
-//! Produces a self-consistent, deterministic, discriminating canonical string
-//! per attribute value. Reals are quantized (length/area/volume/angle/direction
-//! scales, banker's rounding via `round`) so geometry comparison is robust to
-//! float noise.
+//! Every attribute is hashed unless `UNHASHED_ATTRIBUTES` lists it. Shape-model
+//! classes put their non-text attributes in the geometry parts and their text
+//! attributes in the data parts; every other class has data parts only. Reals
+//! are quantized (length/area/volume/angle/direction scales, round half to
+//! even) so comparison is robust to float noise.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::rc::Rc;
 
@@ -16,96 +17,100 @@ use unicode_normalization::UnicodeNormalization;
 use crate::descriptor::{AttrDesc, ClassDesc, Measure, SchemaDesc, Shape};
 use crate::step::{Record, Token};
 
-/// A canonicalized entity, holding only what the downstream native stages need.
+/// `RefOut::ord` of a reference whose position in its attribute is not content.
+pub const UNORDERED: u32 = u32::MAX;
+
+/// Attributes that never enter a hash: `(STEP keyword or "*", attribute, reason)`.
+pub const UNHASHED_ATTRIBUTES: &[(&str, &str, &str)] = &[
+    ("*", "GlobalId", "identity, compared by the matcher"),
+    ("*", "OwnerHistory", "provenance: who wrote the entity and when"),
+    (
+        "IFCGEOMETRICREPRESENTATIONCONTEXT",
+        "Precision",
+        "exporter tolerance setting, not model content",
+    ),
+    (
+        "IFCGEOMETRICREPRESENTATIONSUBCONTEXT",
+        "Precision",
+        "exporter tolerance setting, not model content",
+    ),
+];
+
+fn is_unhashed(keyword: &str, attr: &str) -> bool {
+    UNHASHED_ATTRIBUTES
+        .iter()
+        .any(|(kw, name, _)| *name == attr && (*kw == "*" || *kw == keyword))
+}
+
 pub struct Entity {
     pub step_id: i64,
-    pub keyword: String, // STEP uppercase keyword; serves as entity_type / target_type
-    pub canonical_class: String,
+    /// STEP uppercase keyword.
+    pub keyword: Rc<str>,
+    pub canonical_class: Rc<str>,
     pub is_product: bool,
     pub is_spatial: bool,
+    pub is_project: bool,
+    pub is_relationship: bool,
+    pub is_geometric: bool,
     pub guid: Option<String>,
     pub name: Option<String>,
     pub geom_parts: Vec<String>,
     pub data_parts: Vec<String>,
     pub refs: Vec<RefOut>,
-    /// (attr_name, human-readable value) for data-domain scalar attributes —
-    /// the report-facing `data_facts` side channel (see signatures.py). Keyed
-    /// without STEP ids so reports can say which value changed.
-    pub data_facts: Vec<(String, String)>,
+    /// (attr_name, human-readable value) of the attributes hashed into the
+    /// data parts, for the report's `data_delta`.
+    pub data_facts: Vec<(Rc<str>, String)>,
+    /// The same for the scalar attributes hashed into the geometry parts.
+    pub geom_facts: Vec<(Rc<str>, String)>,
+}
+
+impl Entity {
+    /// Signature roots: the entities that get a signature vector.
+    pub fn is_root(&self) -> bool {
+        self.is_product || self.is_spatial || self.is_project
+    }
 }
 
 pub struct RefOut {
-    /// Interned attribute name. There are only a few hundred distinct attribute
-    /// names in a schema but tens of millions of references, so this is a shared
-    /// `Rc<str>` (a refcount bump per ref) rather than a fresh `String` each time.
     pub attr_name: Rc<str>,
     pub target: i64,
+    /// Ordinal among the attribute's references when the innermost aggregate
+    /// holding the reference is a LIST or ARRAY, else `UNORDERED`.
+    pub ord: u32,
+    /// The innermost aggregate holding the reference is a SET.
+    pub in_set: bool,
+    /// The target's content is expanded into this entity's parts.
+    pub inlined: bool,
 }
 
 pub struct ParsedNative {
     pub entities: Vec<Entity>,
-    pub id_to_keyword: HashMap<i64, String>,
-    /// IfcCartesianPoint id -> (x, y, z) in unit-scaled space (Python parity:
-    /// quantized length ints divided by 1e6).
+    /// STEP id -> index into `entities`.
+    pub index: HashMap<i64, u32>,
+    /// STEP ids of records whose keyword has no schema descriptor.
+    pub skipped_ids: HashSet<i64>,
+    /// IfcCartesianPoint id -> (x, y, z), unit-scaled and quantized.
     pub point_coords: HashMap<i64, [f64; 3]>,
-    /// IfcDirection id -> direction ratios (same quantize/1e6 round-trip).
-    pub dir_ratios: HashMap<i64, [f64; 3]>,
-    /// Unhandled keywords (no schema descriptor) encountered, for diagnostics.
+    /// IfcAxis2Placement2D/3D id -> its unit X and Z axes, for every such
+    /// placement whose frame is defined (see `placement_axes`).
+    pub placement_axes: HashMap<i64, ([f64; 3], [f64; 3])>,
     pub unknown_keywords: Vec<String>,
-}
-
-const GEOM_HINTS: &[&str] = &[
-    "Representation",
-    "Representations",
-    "RepresentationMaps",
-    "Items",
-    "Points",
-    "Coordinates",
-    "OuterCurve",
-    "SweptArea",
-    "BasisCurve",
-    "Position",
-    "MappedRepresentation",
-    "MappingSource",
-];
-const PLACEMENT_ATTRS: &[&str] = &[
-    "ObjectPlacement",
-    "PlacementRelTo",
-    "RelativePlacement",
-    "Location",
-    "Axis",
-    "RefDirection",
-];
-
-fn is_geom_hint(name: &str) -> bool {
-    GEOM_HINTS.contains(&name)
-}
-fn is_placement_attr(name: &str) -> bool {
-    PLACEMENT_ATTRS.contains(&name)
-}
-
-fn matches_geometry(name: &str) -> bool {
-    if is_placement_attr(name) {
-        return false;
-    }
-    is_geom_hint(name)
-        || name.contains("Coord")
-        || name.contains("Direction")
-        || name.contains("Point")
-}
-
-fn matches_data(name: &str) -> bool {
-    if is_placement_attr(name) {
-        return false;
-    }
-    if is_geom_hint(name) {
-        return false;
-    }
-    name != "placement"
 }
 
 fn nfc_strip(s: &str) -> String {
     s.trim().nfc().collect()
+}
+
+/// A single reference or a flat aggregate of references: fully described by
+/// the entity's outgoing edges, so it needs no part.
+fn is_plain_refs(token: &Token) -> bool {
+    match token {
+        Token::Ref(_) => true,
+        Token::List(items) => {
+            !items.is_empty() && items.iter().all(|it| matches!(it, Token::Ref(_)))
+        }
+        _ => false,
+    }
 }
 
 pub fn canonicalize(
@@ -113,46 +118,54 @@ pub fn canonicalize(
     schema: &SchemaDesc,
     unit_factors: &HashMap<String, f64>,
 ) -> ParsedNative {
-    let mut id_to_keyword: HashMap<i64, String> = HashMap::with_capacity(records.len());
-    for rec in records {
-        id_to_keyword.insert(rec.step_id, rec.keyword.clone());
-    }
-
     let tri_pointlists = collect_triangulated_pointlists(records, schema, unit_factors);
+    let dir_ratios: HashMap<i64, [f64; 3]> = records
+        .iter()
+        .filter(|rec| rec.keyword == "IFCDIRECTION")
+        .filter_map(|rec| unit_direction(rec).map(|(ratios, _)| (rec.step_id, ratios)))
+        .collect();
 
     let mut entities: Vec<Entity> = Vec::with_capacity(records.len());
+    let mut index: HashMap<i64, u32> = HashMap::with_capacity(records.len());
+    let mut skipped_ids: HashSet<i64> = HashSet::new();
     let mut point_coords: HashMap<i64, [f64; 3]> = HashMap::new();
-    let mut dir_ratios: HashMap<i64, [f64; 3]> = HashMap::new();
-    let mut unknown: HashMap<String, ()> = HashMap::new();
-    // Intern attribute names once (keys borrow the schema, which outlives this
-    // function): every reference then shares one `Rc<str>` instead of cloning
-    // the name. Schemas have a few hundred names; files have tens of millions
-    // of refs.
+    let mut placement_axes_by_id: HashMap<i64, ([f64; 3], [f64; 3])> = HashMap::new();
+    let mut unknown: HashSet<String> = HashSet::new();
     let mut attr_intern: HashMap<&str, Rc<str>> = HashMap::new();
+    let mut class_intern: HashMap<&str, (Rc<str>, Rc<str>)> = HashMap::new();
 
     for rec in records {
-        let desc = match schema.get(&rec.keyword) {
-            Some(d) => d,
+        let (keyword_key, desc) = match schema.get_key_value(&rec.keyword) {
+            Some((k, d)) => (k.as_str(), d),
             None => {
-                unknown.entry(rec.keyword.clone()).or_insert(());
+                unknown.insert(rec.keyword.clone());
+                skipped_ids.insert(rec.step_id);
                 continue;
             }
         };
 
-        // Capture spatial coordinates straight from the tokens.
         if rec.keyword == "IFCCARTESIANPOINT" {
             if let Some(c) = coords_from_first_list(rec, &Measure::Length, unit_factors) {
                 point_coords.insert(rec.step_id, c);
             }
-        } else if rec.keyword == "IFCDIRECTION" {
-            if let Some(c) = coords_from_first_list(rec, &Measure::Direction, unit_factors) {
-                dir_ratios.insert(rec.step_id, c);
-            }
         }
+        // A direction has no magnitude: its ratios are hashed at unit length.
+        let unit_ratios: Option<Token> = if rec.keyword == "IFCDIRECTION" {
+            unit_direction(rec)
+                .map(|(ratios, dim)| Token::List(ratios[..dim].iter().map(|v| Token::Real(*v)).collect()))
+        } else {
+            None
+        };
+        let axes = placement_axes(rec, desc, &dir_ratios);
+        if let Some(axes) = axes {
+            placement_axes_by_id.insert(rec.step_id, axes);
+        }
+        let frame = canonical_frame(rec, desc, &dir_ratios, axes);
 
         let mut geom_parts: Vec<String> = Vec::new();
         let mut data_parts: Vec<String> = Vec::new();
-        let mut data_facts: Vec<(String, String)> = Vec::new();
+        let mut data_facts: Vec<(Rc<str>, String)> = Vec::new();
+        let mut geom_facts: Vec<(Rc<str>, String)> = Vec::new();
         let mut refs: Vec<RefOut> = Vec::new();
 
         let tri_canon = if rec.keyword == "IFCTRIANGULATEDFACESET" {
@@ -163,66 +176,53 @@ pub fn canonicalize(
         if let Some(parts) = tri_canon.as_ref() {
             geom_parts.extend(parts.iter().cloned());
         }
+        if let Some(part) = frame.as_ref() {
+            geom_parts.push(part.clone());
+        }
 
         // Attributes are zipped positionally with the schema descriptor.
         let n = rec.attrs.len().min(desc.attrs.len());
         for i in 0..n {
             let attr = &desc.attrs[i];
-            let token = attr_token(&rec.attrs[i], attr);
-            if tri_canon.is_some()
-                && matches!(attr.name.as_str(), "Coordinates" | "CoordIndex" | "PnIndex")
-            {
-                continue;
-            }
+            let token = match (&unit_ratios, i) {
+                (Some(ratios), 0) => ratios,
+                _ => attr_token(&rec.attrs[i], attr),
+            };
             let attr_rc = attr_intern
                 .entry(attr.name.as_str())
                 .or_insert_with(|| Rc::from(attr.name.as_str()))
                 .clone();
-            if attr.name == "GlobalId" || attr.name == "OwnerHistory" {
-                // Still collect refs (OwnerHistory etc.), but never hash these.
-                collect_refs(token, &attr_rc, &mut refs);
+            let inlined = (tri_canon.is_some()
+                && matches!(attr.name.as_str(), "Coordinates" | "CoordIndex" | "PnIndex"))
+                || (frame.is_some() && FRAME_ATTRIBUTES.contains(&attr.name.as_str()));
+            let mut ord = 0u32;
+            collect_refs(token, &attr.shape, None, &mut ord, inlined, &attr_rc, &mut refs);
+            if inlined || is_unhashed(&rec.keyword, &attr.name) {
                 continue;
             }
-            collect_refs(token, &attr_rc, &mut refs);
-
-            let data = matches_data(&attr.name);
-            let geom = matches_geometry(&attr.name) || (desc.geometric && data && !attr.text);
-            if !geom && !data {
+            let unset = matches!(token, Token::Null)
+                || (attr.derived && matches!(token, Token::Derived));
+            if unset || is_plain_refs(token) {
                 continue;
             }
-            // A plain top-level entity ref contributes a Merkle edge, not a part
-            // (mirrors `encode_attr` returning None). Skip before allocating.
-            let ref_skip =
-                matches!(token, Token::Ref(_)) && !matches!(attr.shape, Shape::Select);
-            if !ref_skip {
-                // Build the "attr=<name>:<enc>" part directly in one buffer,
-                // encoding the value in place — no intermediate `enc` String, no
-                // nested `format!`/`join` allocations.
-                let mut part = String::new();
-                part.push_str("attr=");
-                part.push_str(&attr.name);
-                part.push(':');
-                encode_inner_into(&mut part, token, &attr.shape, attr.direction, unit_factors);
-                if geom && data {
-                    geom_parts.push(part.clone());
-                    data_parts.push(part);
-                } else if geom {
-                    geom_parts.push(part);
-                } else {
-                    data_parts.push(part);
-                }
-                if data {
-                    data_facts.push((
-                        attr.name.clone(),
-                        human_value(token, &attr.shape, attr.direction, unit_factors),
-                    ));
-                }
+            let mut part = String::new();
+            part.push_str("attr=");
+            part.push_str(&attr.name);
+            part.push(':');
+            encode_inner_into(&mut part, token, &attr.shape, attr.direction, unit_factors);
+            let geom = desc.geometric && !attr.text;
+            if !geom {
+                data_facts.push((attr_rc, fact_value(token, &attr.shape, attr.direction, unit_factors)));
+            } else if !matches!(attr.shape, Shape::Agg { .. }) {
+                geom_facts.push((attr_rc, fact_value(token, &attr.shape, attr.direction, unit_factors)));
+            }
+            if geom {
+                geom_parts.push(part);
+            } else {
+                data_parts.push(part);
             }
         }
 
-        // Python sorts attribute names before emitting parts; sort the encoded
-        // parts so the per-entity payload order is deterministic regardless of
-        // schema attribute order.
         geom_parts.sort();
         data_parts.sort();
 
@@ -248,28 +248,217 @@ pub fn canonicalize(
                 _ => None,
             });
 
+        let (keyword, canonical_class) = class_intern
+            .entry(keyword_key)
+            .or_insert_with(|| (Rc::from(keyword_key), Rc::from(desc.class.as_str())))
+            .clone();
+        index.insert(rec.step_id, entities.len() as u32);
         entities.push(Entity {
             step_id: rec.step_id,
-            keyword: rec.keyword.clone(),
-            canonical_class: desc.class.clone(),
+            keyword,
+            canonical_class,
             is_product: desc.product,
             is_spatial: desc.spatial,
+            is_project: desc.project,
+            is_relationship: desc.relationship,
+            is_geometric: desc.geometric,
             guid,
             name,
             geom_parts,
             data_parts,
             refs,
             data_facts,
+            geom_facts,
         });
     }
 
     ParsedNative {
         entities,
-        id_to_keyword,
+        index,
+        skipped_ids,
         point_coords,
-        dir_ratios,
-        unknown_keywords: unknown.into_keys().collect(),
+        placement_axes: placement_axes_by_id,
+        unknown_keywords: unknown.into_iter().collect(),
     }
+}
+
+/// Ratios of an `IfcDirection` at unit length, padded to three components,
+/// with the dimension count. `None` for a zero or malformed direction.
+fn unit_direction(rec: &Record) -> Option<([f64; 3], usize)> {
+    let Some(Token::List(items)) = rec.attrs.first() else { return None };
+    if items.is_empty() || items.len() > 3 {
+        return None;
+    }
+    let mut ratios = [0.0f64; 3];
+    for (i, item) in items.iter().enumerate() {
+        ratios[i] = match item {
+            Token::Real(r) => *r,
+            Token::Int(n) => *n as f64,
+            _ => return None,
+        };
+    }
+    unit(ratios).map(|u| (u, items.len()))
+}
+
+fn unit(v: [f64; 3]) -> Option<[f64; 3]> {
+    let norm = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if !norm.is_finite() || norm <= 1e-12 {
+        return None;
+    }
+    Some([v[0] / norm, v[1] / norm, v[2] / norm])
+}
+
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// `v` minus its component along the unit vector `axis`, at unit length.
+fn reject(v: [f64; 3], axis: [f64; 3]) -> Option<[f64; 3]> {
+    let d = dot(v, axis);
+    unit([v[0] - d * axis[0], v[1] - d * axis[1], v[2] - d * axis[2]])
+}
+
+/// EXPRESS `IfcBuildAxes`: the unit X and Z axes of an `IfcAxis2Placement3D`
+/// from its optional `RefDirection` and `Axis`.
+fn build_axes(axis: Option<[f64; 3]>, ref_direction: Option<[f64; 3]>) -> Option<([f64; 3], [f64; 3])> {
+    let z = axis.unwrap_or([0.0, 0.0, 1.0]);
+    first_proj_axis(z, ref_direction).map(|x| (x, z))
+}
+
+/// EXPRESS `IfcFirstProjAxis`: the X axis for a given unit Z axis.
+fn first_proj_axis(z: [f64; 3], arg: Option<[f64; 3]>) -> Option<[f64; 3]> {
+    let v = match arg {
+        Some(v) => v,
+        None if z[0].abs() > 1.0 - 1e-9 => [0.0, 1.0, 0.0],
+        None => [1.0, 0.0, 0.0],
+    };
+    reject(v, z)
+}
+
+/// Attributes replaced by the frame part of `canonical_frame`.
+const FRAME_ATTRIBUTES: &[&str] =
+    &["Axis", "RefDirection", "Axis1", "Axis2", "Axis3", "Scale", "Scale2", "Scale3"];
+
+fn attribute<'a>(rec: &'a Record, desc: &ClassDesc, name: &str) -> Option<&'a Token> {
+    desc.attrs.iter().position(|a| a.name == name).and_then(|i| rec.attrs.get(i))
+}
+
+/// The direction an axis attribute names. Outer `None`: the attribute is set
+/// but not to a usable direction (not a reference, a dangling one, a zero or
+/// malformed `IfcDirection`). Inner `None`: the attribute is omitted.
+fn axis_attribute(
+    rec: &Record,
+    desc: &ClassDesc,
+    directions: &HashMap<i64, [f64; 3]>,
+    name: &str,
+) -> Option<Option<[f64; 3]>> {
+    match attribute(rec, desc, name) {
+        None | Some(Token::Null) | Some(Token::Derived) => Some(None),
+        Some(Token::Ref(id)) => directions.get(id).map(|d| Some(*d)),
+        Some(_) => None,
+    }
+}
+
+/// Unit X and Z axes of an `IfcAxis2Placement2D` or `IfcAxis2Placement3D`.
+/// `None` for other classes and for a frame the schema rules leave undefined:
+/// an axis attribute that names no usable direction, or parallel axes. The
+/// frame part of the hash and the placement matrices both come from here.
+fn placement_axes(
+    rec: &Record,
+    desc: &ClassDesc,
+    directions: &HashMap<i64, [f64; 3]>,
+) -> Option<([f64; 3], [f64; 3])> {
+    let axis = |name: &str| axis_attribute(rec, desc, directions, name);
+    match rec.keyword.as_str() {
+        "IFCAXIS2PLACEMENT2D" => Some((axis("RefDirection")?.unwrap_or([1.0, 0.0, 0.0]), [0.0, 0.0, 1.0])),
+        "IFCAXIS2PLACEMENT3D" => build_axes(axis("Axis")?, axis("RefDirection")?),
+        _ => None,
+    }
+}
+
+/// The coordinate frame of a placement or transformation operator, resolved
+/// by the schema's derivation rules (`IfcBuildAxes`, `IfcBuild2Axes`,
+/// `IfcBaseAxis`, the `Scl` attributes), so an omitted axis and its default
+/// written out are one frame. `None` for other classes and for frames the
+/// rules leave undefined (a referenced axis that is not a direction, parallel
+/// axes); those keep their attribute-wise encoding. `placement` is the
+/// `placement_axes` result for `rec`.
+fn canonical_frame(
+    rec: &Record,
+    desc: &ClassDesc,
+    directions: &HashMap<i64, [f64; 3]>,
+    placement: Option<([f64; 3], [f64; 3])>,
+) -> Option<String> {
+    let token = |name: &str| attribute(rec, desc, name);
+    let axis = |name: &str| axis_attribute(rec, desc, directions, name);
+    let scale = |name: &str, default: f64| -> Option<f64> {
+        match token(name) {
+            None | Some(Token::Null) | Some(Token::Derived) => Some(default),
+            Some(Token::Real(r)) => Some(*r),
+            Some(Token::Int(n)) => Some(*n as f64),
+            Some(_) => None,
+        }
+    };
+    let (axes, scales): (Vec<[f64; 3]>, Vec<f64>) = match rec.keyword.as_str() {
+        "IFCAXIS1PLACEMENT" => (vec![axis("Axis")?.unwrap_or([0.0, 0.0, 1.0])], vec![]),
+        "IFCAXIS2PLACEMENT2D" => (vec![placement?.0], vec![]),
+        "IFCAXIS2PLACEMENT3D" => {
+            let (x, z) = placement?;
+            (vec![x, z], vec![])
+        }
+        "IFCCARTESIANTRANSFORMATIONOPERATOR2D" | "IFCCARTESIANTRANSFORMATIONOPERATOR2DNONUNIFORM" => {
+            let orthogonal = |d: [f64; 3]| [-d[1], d[0], 0.0];
+            let (u1, u2) = match (axis("Axis1")?, axis("Axis2")?) {
+                (Some(a1), a2) => {
+                    let u2 = orthogonal(a1);
+                    match a2 {
+                        Some(a2) if dot(a2, u2) < 0.0 => (a1, [-u2[0], -u2[1], 0.0]),
+                        _ => (a1, u2),
+                    }
+                }
+                (None, Some(a2)) => {
+                    let u1 = orthogonal(a2);
+                    ([-u1[0], -u1[1], 0.0], a2)
+                }
+                (None, None) => ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+            };
+            let s1 = scale("Scale", 1.0)?;
+            let mut scales = vec![s1];
+            if rec.keyword.ends_with("NONUNIFORM") {
+                scales.push(scale("Scale2", s1)?);
+            }
+            (vec![u1, u2], scales)
+        }
+        "IFCCARTESIANTRANSFORMATIONOPERATOR3D" | "IFCCARTESIANTRANSFORMATIONOPERATOR3DNONUNIFORM" => {
+            let z = axis("Axis3")?.unwrap_or([0.0, 0.0, 1.0]);
+            let x = first_proj_axis(z, axis("Axis1")?)?;
+            let y = reject(reject(axis("Axis2")?.unwrap_or([0.0, 1.0, 0.0]), z)?, x)?;
+            let s1 = scale("Scale", 1.0)?;
+            let mut scales = vec![s1];
+            if rec.keyword.ends_with("NONUNIFORM") {
+                scales.push(scale("Scale2", s1)?);
+                scales.push(scale("Scale3", s1)?);
+            }
+            (vec![x, y, z], scales)
+        }
+        _ => return None,
+    };
+    let none = HashMap::new();
+    let mut part = String::from("frame=");
+    for a in &axes {
+        part.push('[');
+        for (k, v) in a.iter().enumerate() {
+            if k > 0 {
+                part.push(',');
+            }
+            let _ = write!(part, "{}", quantize_real(*v, Measure::Direction, false, &none));
+        }
+        part.push(']');
+    }
+    for s in &scales {
+        let _ = write!(part, "*{}", quantize_real(*s, Measure::Default, false, &none));
+    }
+    Some(part)
 }
 
 /// Quantized vertex tables for the point lists referenced by triangulated
@@ -430,7 +619,7 @@ fn canonical_triangle_parts(
 }
 
 /// Read the first attribute as a list of reals, quantize each with `measure`,
-/// and return the first three as `value/1e6` (matching `spatial._scalar_float`).
+/// and return the first three as `value/1e6`.
 fn coords_from_first_list(
     rec: &Record,
     measure: &Measure,
@@ -457,20 +646,47 @@ fn coords_from_first_list(
     Some(out)
 }
 
-fn collect_refs(token: &Token, attr_name: &Rc<str>, refs: &mut Vec<RefOut>) {
+/// `sorted` is the kind of the innermost aggregate around `token`: `None`
+/// outside any aggregate, `Some(true)` in a SET, `Some(false)` in a LIST or
+/// ARRAY.
+fn collect_refs(
+    token: &Token,
+    shape: &Shape,
+    sorted: Option<bool>,
+    next_ord: &mut u32,
+    inlined: bool,
+    attr_name: &Rc<str>,
+    refs: &mut Vec<RefOut>,
+) {
     match token {
-        Token::Ref(target) => refs.push(RefOut {
-            attr_name: Rc::clone(attr_name),
-            target: *target,
-        }),
+        Token::Ref(target) => {
+            let ord = if sorted == Some(false) {
+                let ord = *next_ord;
+                *next_ord += 1;
+                ord
+            } else {
+                UNORDERED
+            };
+            refs.push(RefOut {
+                attr_name: Rc::clone(attr_name),
+                target: *target,
+                ord,
+                in_set: sorted == Some(true),
+                inlined,
+            });
+        }
         Token::List(items) => {
+            let (elem, elem_sorted) = match shape {
+                Shape::Agg { sorted, elem } => (elem.as_ref(), Some(*sorted)),
+                other => (other, sorted),
+            };
             for it in items {
-                collect_refs(it, attr_name, refs);
+                collect_refs(it, elem, elem_sorted, next_ord, inlined, attr_name, refs);
             }
         }
         Token::Typed(_, inner) => {
             for it in inner {
-                collect_refs(it, attr_name, refs);
+                collect_refs(it, shape, sorted, next_ord, inlined, attr_name, refs);
             }
         }
         _ => {}
@@ -500,7 +716,7 @@ fn quantize_real(
     round_half_even(scaled)
 }
 
-/// Banker's rounding (round half to even), matching Python's `round()`.
+/// Round half to even.
 fn round_half_even(x: f64) -> i64 {
     let floor = x.floor();
     let diff = x - floor;
@@ -521,11 +737,8 @@ fn round_half_even(x: f64) -> i64 {
 
 // ----- canonical-string encoding ------------------------------------------
 
-// The encoders append into a caller-provided buffer (`*_into`) so a whole
-// attribute value — including nested aggregates and typed wrappers — is built
-// with a single allocation (the buffer) instead of a String per node plus
-// per-aggregate `Vec<String>` + `join`. Output is byte-identical to the former
-// returning versions. Thin `String`-returning wrappers are kept for unit tests.
+// The encoders append into a caller-provided buffer, so a whole attribute
+// value, nested aggregates and typed wrappers included, is one allocation.
 
 /// Exporters write `$` where the entity redeclares an attribute as DERIVE.
 fn attr_token<'a>(token: &'a Token, attr: &AttrDesc) -> &'a Token {
@@ -550,8 +763,6 @@ fn encode_inner_into(
             Token::List(items) => {
                 out.push('[');
                 if *sorted {
-                    // Sorted set/bag: still need the elements as separate strings
-                    // to sort, but only this aggregate's direct children.
                     let mut encs: Vec<String> = items
                         .iter()
                         .map(|it| {
@@ -621,8 +832,6 @@ fn encode_scalar_into(
 
 fn encode_string_into(out: &mut String, s: &str) {
     let n = nfc_strip(s);
-    // ASCII-case-insensitive compare to the STEP logical literals — equivalent
-    // to the old `to_uppercase()` for these ASCII patterns, but allocation-free.
     if n.eq_ignore_ascii_case(".TRUE.") || n.eq_ignore_ascii_case(".T.") {
         out.push_str("b1");
     } else if n.eq_ignore_ascii_case(".FALSE.") || n.eq_ignore_ascii_case(".F.") {
@@ -706,10 +915,49 @@ fn encode_string(s: &str) -> String {
 
 // ----- human-readable rendering (report data facts) -----------------------
 
-/// Render a data attribute value for the report-facing `data_facts` channel.
-/// Mirrors the intent of `signatures._human_value` (readable, not hashed); it
-/// is a side channel, so exact formatting of rare numeric data is unimportant.
-pub fn human_value(
+const FACT_VALUE_LIMIT: usize = 96;
+
+/// A fact value as reported: verbatim up to `FACT_VALUE_LIMIT` bytes, its
+/// length and a digest beyond.
+pub fn bounded_fact(value: &str) -> String {
+    if value.len() <= FACT_VALUE_LIMIT {
+        value.to_string()
+    } else {
+        format!("{} bytes, sha256:{}", value.len(), &crate::sha256_hex(value.as_bytes())[..12])
+    }
+}
+
+/// A single string, bare or under a type tag other than `IFCBINARY`.
+fn is_text(token: &Token) -> bool {
+    match token {
+        Token::Str(_) => true,
+        Token::Typed(kw, inner) if inner.len() == 1 && kw != "IFCBINARY" => is_text(&inner[0]),
+        _ => false,
+    }
+}
+
+/// An attribute value for the report-facing `data_facts` channel (readable,
+/// never hashed). A text longer than `FACT_VALUE_LIMIT` bytes keeps the
+/// leading characters that fit, followed by its byte length and a digest of
+/// the whole text.
+fn fact_value(token: &Token, shape: &Shape, attr_dir: bool, units: &HashMap<String, f64>) -> String {
+    let value = human_value(token, shape, attr_dir, units);
+    if value.len() <= FACT_VALUE_LIMIT || !is_text(token) {
+        return bounded_fact(&value);
+    }
+    let mut cut = FACT_VALUE_LIMIT;
+    while !value.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!(
+        "{}… ({} bytes, sha256:{})",
+        &value[..cut],
+        value.len(),
+        &crate::sha256_hex(value.as_bytes())[..12]
+    )
+}
+
+fn human_value(
     token: &Token,
     shape: &Shape,
     attr_dir: bool,
@@ -825,6 +1073,40 @@ mod tests {
     }
 
     #[test]
+    fn fact_values_are_bounded() {
+        let none = units(&[]);
+        let shape = Shape::Agg { sorted: false, elem: Box::new(Shape::Leaf { m: Measure::Default }) };
+        let short = fact_value(&Token::List(vec![Token::Int(1), Token::Int(2)]), &shape, false, &none);
+        assert_eq!(short, "[1, 2]");
+        let long = |last: i64| {
+            let mut items = vec![Token::Int(7); 200];
+            items.push(Token::Int(last));
+            fact_value(&Token::List(items), &shape, false, &none)
+        };
+        assert!(long(1).len() <= FACT_VALUE_LIMIT);
+        assert!(long(1).starts_with("603 bytes, sha256:"));
+        assert_ne!(long(1), long(2));
+    }
+
+    #[test]
+    fn long_text_facts_keep_a_readable_start() {
+        let none = units(&[]);
+        let leaf = Shape::Leaf { m: Measure::Default };
+        let text = |tail: &str| format!("{}{tail}", "é".repeat(60));
+        let fact = |tail: &str| fact_value(&Token::Str(text(tail)), &leaf, false, &none);
+        assert_eq!(fact("x"), format!("{}… (121 bytes, sha256:{})", "é".repeat(48), &crate::sha256_hex(text("x").as_bytes())[..12]));
+        assert_ne!(fact("x"), fact("y"));
+        let odd = fact_value(&Token::Str(format!("a{}", "é".repeat(60))), &leaf, false, &none);
+        assert!(odd.starts_with(&format!("a{}… (121 bytes", "é".repeat(47))));
+
+        let tagged = Token::Typed("IFCTEXT".to_string(), vec![Token::Str("t".repeat(200))]);
+        assert!(fact_value(&tagged, &Shape::Select, false, &none).starts_with("IFCTEXT: tttt"));
+        let list = Shape::Agg { sorted: false, elem: Box::new(Shape::Leaf { m: Measure::Default }) };
+        let strings = Token::List(vec![Token::Str("t".repeat(200))]);
+        assert!(fact_value(&strings, &list, false, &none).starts_with("202 bytes, sha256:"));
+    }
+
+    #[test]
     fn length_quantization_is_unit_normalized() {
         // 3000 mm (LENGTHUNIT=0.001) and 3 m (LENGTHUNIT=1.0) must agree.
         let mm = units(&[("LENGTHUNIT", 0.001)]);
@@ -842,8 +1124,7 @@ mod tests {
     }
 
     #[test]
-    fn round_half_even_matches_python_round() {
-        // Ties go to the even neighbor, like Python's round().
+    fn round_half_even_sends_ties_to_the_even_neighbor() {
         assert_eq!(round_half_even(0.5), 0);
         assert_eq!(round_half_even(1.5), 2);
         assert_eq!(round_half_even(2.5), 2);

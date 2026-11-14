@@ -196,7 +196,7 @@ def _build_bundle_phased(path: str, rec: Recorder):
     from athar.bottom.parser import _assert_supported_schema, _extract_unit_context
     from athar.bottom.properties import extract_properties
     from athar.bottom.signatures import native
-    from athar.bottom.types import ParseDiagnostics, SignatureBundle, SignatureVector
+    from athar.bottom.types import Coverage, ParseDiagnostics, SignatureBundle, SignatureVector
 
     native_mod = native()
     if native_mod is None:
@@ -226,14 +226,16 @@ def _build_bundle_phased(path: str, rec: Recorder):
     def _native() -> Any:
         return native_mod.build_signature_bundle(path, schema_json, holder["unit_factors"])
 
-    sigs, edge_stats_map, diag = rec.run("native_build", _native)
+    sigs, edge_stats_map, diag, coverage = rec.run("native_build", _native)
     dangling, cycle_breaks, warnings = diag
+    unknown_relationships, unreached, ignored_by_design = coverage
 
     def _materialize() -> dict[int, Any]:
         signatures: dict[int, SignatureVector] = {}
         for (
             step_id, guid, name, entity_type, canonical_class,
-            vh_geometry, vh_data, vh_topology, placement, centroid, aabb, data_facts,
+            vh_geometry, vh_data, vh_topology, (placement, placement_unresolved), centroid, aabb,
+            data_facts,
         ) in sigs:
             signatures[step_id] = SignatureVector(
                 step_id=step_id, guid=guid, name=name, entity_type=entity_type,
@@ -244,6 +246,7 @@ def _build_bundle_phased(path: str, rec: Recorder):
                 aabb=tuple(aabb) if aabb is not None else None,
                 canon_version=CANON_VERSION,
                 data_facts=tuple((p, v) for p, v in data_facts),
+                placement_unresolved=placement_unresolved,
             )
         return signatures
 
@@ -264,6 +267,11 @@ def _build_bundle_phased(path: str, rec: Recorder):
             dangling_refs=dangling, cycle_breaks=cycle_breaks, warnings=list(warnings)
         ),
         edge_stats=edge_stats_map,
+        coverage=Coverage(
+            unknown_relationships=dict(unknown_relationships),
+            unreached={name: (count, digest) for name, (count, digest) in unreached.items()},
+            ignored_by_design=dict(ignored_by_design),
+        ),
     )
 
 

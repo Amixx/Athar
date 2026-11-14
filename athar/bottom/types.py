@@ -43,8 +43,30 @@ class ParseDiagnostics:
 
 
 @dataclass
+class Coverage:
+    """What the signatures of one file did not examine.
+
+    ``unknown_relationships`` counts relationship instances whose class has no
+    policy entry. ``unreached`` maps each class with instances no signature
+    root reaches to ``(instance count, order-independent content digest)``.
+    ``ignored_by_design`` counts instances excluded on purpose (provenance,
+    ignored relationship classes).
+    """
+
+    unknown_relationships: dict[str, int] = field(default_factory=dict)
+    unreached: dict[str, tuple[int, str]] = field(default_factory=dict)
+    ignored_by_design: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
 class SignatureVector:
-    """Product-level signature vector."""
+    """Signature vector of one root: a product, spatial element or the project.
+
+    ``placement`` is the quantized world matrix. A chain through a placement
+    the engine does not evaluate (``IfcGridPlacement``) has no matrix;
+    ``placement_unresolved`` then holds a digest of the chain's content and
+    ``centroid`` and ``aabb`` are ``None``.
+    """
 
     step_id: int
     guid: str | None
@@ -59,6 +81,7 @@ class SignatureVector:
     canon_version: str
     name: str | None = None
     data_facts: tuple[tuple[str, str], ...] = ()
+    placement_unresolved: HashHex | None = None
 
 
 @dataclass
@@ -71,5 +94,6 @@ class SignatureBundle:
     signatures: dict[int, SignatureVector]
     diagnostics: ParseDiagnostics
     edge_stats: dict[str, int]
+    coverage: Coverage
     property_index: dict[int, list[PropertyEntry]] | None = None
     orphan_property_sets: tuple[OrphanPropertySet, ...] = ()

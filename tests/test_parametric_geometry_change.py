@@ -116,13 +116,23 @@ def _profile_name(f, solid, operator):
     solid.SweptArea.ProfileName = "RECT 40x2000"
 
 
-@pytest.mark.parametrize("edit", [_representation_identifier, _representation_type, _profile_name])
-def test_shape_naming_metadata_is_not_a_change(tmp_path, edit):
+@pytest.mark.parametrize(
+    ("edit", "owners"),
+    [
+        (_representation_identifier, ["Extruded", "Mapped"]),
+        (_representation_type, ["Extruded", "Mapped"]),
+        (_profile_name, ["Extruded"]),
+    ],
+)
+def test_shape_naming_metadata_is_a_data_change_not_a_geometry_change(tmp_path, edit, owners):
     old, new = str(tmp_path / "old.ifc"), str(tmp_path / "new.ifc")
     _build(old)
     _build(new, edit)
     report = diff_files(old, new)
-    assert report["stats"]["modified"] == 0
+    assert sorted(item["new"]["name"] for item in report["modified"]) == owners
+    for item in report["modified"]:
+        assert item["aspects"]["data"] == "changed"
+        assert item["aspects"]["geometry"] == "unchanged"
 
 
 def test_object_placement_move_is_not_a_geometry_change(tmp_path):

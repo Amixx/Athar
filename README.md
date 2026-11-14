@@ -6,12 +6,14 @@ Semantic diff for IFC files. Compares BIM models at the entity/property level �
 
 ## How it works
 
-For each IFC file, Athar builds a **signature vector** per product/spatial entity:
+For each IFC file, Athar builds a **signature vector** per product, spatial element and the project:
 
-- `vh_geometry` — sha256 Merkle hash over the entity's geometry-domain subgraph, **excluding placement**, so identical components share it across locations.
-- `vh_data` — Merkle hash over the data-domain subgraph (properties, materials, typing). GlobalId and OwnerHistory never enter any hash.
+- `vh_geometry` — sha256 Merkle hash over the entity's geometry-domain subgraph, **excluding placement**, so identical components share it across locations. A host element also covers its openings and projections and where each sits relative to it.
+- `vh_data` — Merkle hash over everything else the entity owns or uses: attributes, properties, materials, classifications, groups, typing, styles; for the project also units, contexts and georeferencing. GlobalId and OwnerHistory never enter any hash.
 - `vh_topology` — WL-style gossip hash over context and spatial neighborhoods.
-- World-space placement matrix (quantized), centroid, and AABB from the resolved `ObjectPlacement` chain.
+- World-space placement matrix (quantized), centroid, and AABB from the resolved `ObjectPlacement` chain; a digest of the chain's content where it cannot be resolved (grid placements, placement cycles).
+
+Coverage is the default: every attribute and reference is examined unless an explicit table excludes it with a reason. What no signature reaches is counted and digested per class, and the report's `stats.coverage.unexamined_changes` names the classes that differ there.
 
 Old/new entities are then matched by **tiered pool reduction**: each tier only
 looks at still-unmatched entities and emits disjoint 1:1 pairs, so there is no
@@ -35,7 +37,19 @@ The delta report classifies every entity as `added`, `deleted`, `modified`, or
 `unchanged`, with per-aspect detail (`geometry/data/topology/placement`,
 `placement_delta_mm`), `change_scope` (`intrinsic` = the entity itself changed,
 `transitive` = only its neighborhood changed, `mixed`), and matcher
-diagnostics (per-tier match counts, duplicate-GUID counts). Reports also carry
+diagnostics (per-tier match counts, duplicate-GUID counts). Every data change
+lists what differs in `data_delta`. The `data` aspect is unchanged if and only if
+`data_hash.old == data_hash.new`. Geometry and data hashes depend on content,
+not instance sharing: a shape reached through data contributes its full content.
+Editing a type map reports both `geometry` and `data` on an occurrence that maps
+it, including the map's `(shape)` fact in `data_delta`; an occurrence that does
+not map it reports `data` only. Editing a swept profile shared with a material
+profile reports both aspects; an untouched equal copy in the material profile
+leaves `data` unchanged. Merging or splitting equal copies changes neither hash.
+An element placed through an
+`IfcGridPlacement` is marked `placement_unresolved`: grid geometry is not
+evaluated, so it has no coordinates and its placement aspect compares the grid
+placement's content. Reports also carry
 an `audit` block with producer/canon metadata plus old/new input provenance:
 path, schema, byte size, and sha256. That makes the raw JSON suitable for
 archiving as milestone evidence even before a visual viewer or PDF/HTML export

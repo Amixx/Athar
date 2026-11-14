@@ -88,6 +88,9 @@ Current tiers, strongest first:
 2. `geometry_hash`: same-class full signature-vector equality, zipped in stable
    STEP order for interchangeable entities. Score `0.8`.
 
+The full vector is the three hashes plus the placement matrix or, for an
+unresolved chain, its placement digest.
+
 Each tier only examines still-unmatched pools and emits disjoint 1:1 pairs.
 Never match across canonical classes. Do not reintroduce topology-only,
 spatial-nearest, candidate fan-out, or tuning-knob matching without fresh
@@ -99,7 +102,29 @@ corpus evidence and tests.
 - Matched items include `match{score,reason}` plus per-aspect
   `geometry`, `data`, `topology`, and `placement` states.
 - Modified items include `placement_delta_mm`, `data_hash{old,new}`, and
-  `change_scope` (`intrinsic`, `transitive`, `mixed`, `none`).
+  `change_scope` (`intrinsic`, `transitive`, `mixed`, `none`). `data` is unchanged if and only if `data_hash.old == data_hash.new`; each hash-backed aspect is changed exactly when its hash differs.
+- Editing a type representation map reports `geometry` and `data` on an occurrence that maps it, with the map's `(shape)` fact in `data_delta`; an occurrence that does not map it reports `data` only. Editing a swept profile shared with a material profile reports `geometry` and `data`; an untouched equal copy in the material profile leaves `data` unchanged.
+- A data change always carries a non-empty `data_delta` of
+  `{path, old, new}` entries. A path is the positions of the ordered lists
+  passed on the way from the entity (`MaterialLayers[2]/`), then the class
+  (with `[GlobalId=...]` when rooted) and attribute holding the value;
+  repeated paths are numbered in value order. A value longer than 96 bytes
+  is bounded: a text keeps its first 96 bytes followed by
+  `… (N bytes, sha256:<digest>)`, any other value (a colour list, a table)
+  is given as its byte length and a digest. Shape content that counts as
+  data (a context's `TrueNorth`, a material profile's profile) is listed in
+  its canonical encoding, with one `(shape)` digest for the geometry below
+  it. When every fact
+  is equal and only the attachment differs (an unordered member moved between
+  two owners of one class), the single entry is `<entity>.(structure)` with
+  the two data hash prefixes.
+- A placement chain that passes through an `IfcGridPlacement`, or that ends
+  in a `PlacementRelTo` cycle, is not evaluated. The entity summary then
+  carries `placement_unresolved: true`, no matrix exists,
+  `placement_delta_mm` is `null`, and the `placement` aspect compares a
+  digest: for a grid placement its content (intersections, axes, offsets),
+  the placements of the grids owning those axes, and the local chain below
+  it; for a cycle the relative placements around it.
 - Stats include section counts, signature counts, parse diagnostics, edge
   stats, modified change-scope counts, placement cohorts, dropped matches,
   GUID collisions, and matcher diagnostics.
@@ -116,6 +141,21 @@ corpus evidence and tests.
   and singletons never join a cohort.
 - Because `geometry_hash` requires equal full vectors, every modified item is
   a GUID match by construction.
+- `IfcProject` is reported like any other entity. Units, representation
+  contexts (`WorldCoordinateSystem`, `TrueNorth`) and georeferencing are its
+  data, so a unit, north or map-conversion change modifies the project and no
+  element.
+- `stats.coverage` says what no signature examined, so a difference outside
+  the examined graph is named instead of reported as `unchanged`:
+  - `old` / `new`: per file, `unknown_relationships` (`{class: count}` of
+    relationship instances whose class has no policy entry), `unreached`
+    (`{class: {count, digest}}` for entities no signature root reaches,
+    relationships with empty or dangling role attributes included;
+    `digest` is order-independent over the instances' content) and
+    `ignored_by_design` (`{class: count}`: provenance reached only through
+    `OwnerHistory`, and relationship classes the policy ignores).
+  - `unexamined_changes`: sorted class names whose `unreached` count or digest
+    differs between the two files.
 - `orphan_property_sets{added,removed}` lists property set definitions that no
   `IfcRelDefinesByProperties` or `IfcTypeObject.HasPropertySets` references.
   They have no signature, so they are compared as a multiset of content keys

@@ -152,7 +152,9 @@ def test_representation_swap_preserves_identity(tmp_path):
     assert report["stats"]["added"] == 0
     assert report["stats"]["deleted"] == 0
     # Exactly the one proxy, matched by its shared GlobalId.
-    matched = report["modified"] + report["unchanged"]
+    matched = [
+        item for item in report["modified"] + report["unchanged"] if item["new"]["class"] != "IfcProject"
+    ]
     assert len(matched) == 1
     assert matched[0]["match"]["reason"] == "guid"
     assert matched[0]["new"]["guid"] == _SHARED_GUID

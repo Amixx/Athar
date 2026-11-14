@@ -1,19 +1,14 @@
-//! Per-class schema descriptors handed from Python (built once, file-
-//! independently, from ifcopenshell's EXPRESS schema) and the small static
-//! tables the canonicalizer needs.
-//!
-//! Python owns *schema* knowledge (attribute names, types, product/spatial
-//! membership) and serializes it to JSON; Rust owns *per-instance application*
-//! over the millions of STEP records. This keeps the expensive, file-scale
-//! work in Rust while reusing ifcopenshell's schema correctness.
+//! Per-class schema descriptors handed from Python (built once per schema from
+//! ifcopenshell's EXPRESS schema) and the measure tables the canonicalizer
+//! needs. Python owns schema knowledge (attribute names, types, class
+//! membership) and serializes it to JSON; Rust applies it to the STEP records.
 
 use std::collections::HashMap;
 
 use serde::Deserialize;
 
-/// Quantization family for a real-valued leaf. Mirrors `parser._quantize_real`:
-/// the measure type (or the `"DIRECTION" in attr_name` heuristic) selects the
-/// unit lookup and the fixed-point scale.
+/// Quantization family for a real-valued leaf: selects the unit lookup and the
+/// fixed-point scale.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Measure {
@@ -65,7 +60,8 @@ pub enum Shape {
     /// Scalar leaf; `m` gives the measure for bare reals at this position.
     #[serde(rename = "leaf")]
     Leaf { m: Measure },
-    /// Aggregate; `sorted` is true for set/bag (items canonical-sorted).
+    /// Aggregate; `sorted` is true for SET/BAG (order is not content), false
+    /// for LIST/ARRAY (position is content).
     #[serde(rename = "agg")]
     Agg { sorted: bool, elem: Box<Shape> },
     /// Select — the value self-describes via its STEP type tag.
@@ -90,12 +86,16 @@ pub struct AttrDesc {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClassDesc {
-    /// Canonical class name (already mapped by Python via `canonical_class_name`).
+    /// Canonical class name (`*StandardCase` / `*ElementedCase` collapsed).
     pub class: String,
     pub product: bool,
     pub spatial: bool,
+    /// `IfcProject`: a signature root that is neither product nor spatial.
+    pub project: bool,
+    /// Subtype of `IfcRelationship`.
+    pub relationship: bool,
     /// Shape-model class (representation, representation item, profile): its
-    /// non-text attributes (Depth, XDim, Scale, Operator, ...) enter `vh_geometry`.
+    /// non-text attributes enter `vh_geometry`, its text attributes `vh_data`.
     pub geometric: bool,
     /// Attribute index of GlobalId / Name, if the class declares them.
     pub guid: Option<usize>,
