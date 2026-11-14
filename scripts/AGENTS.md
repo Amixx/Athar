@@ -47,7 +47,11 @@ Scripts are for inspection and repeatable investigation.
       F1 = 0 where GUID truth exists. A failure on any repeat is the tool's
       outcome for the pair. The JSON's `aggregates[set][tool]` holds the
       per-tool figures the dashboard shows, including coverage (pairs
-      completed out of pairs attempted).
+      completed out of pairs attempted), changeset precision/recall/F1 both
+      macro (mean of per-pair values) and micro (from TP/FP/FN summed over
+      pairs), and time/peak-RSS/GB-seconds as the geometric mean of per-pair
+      ratios to Athar. Status, counts and reported GUID sets must agree
+      across repeats; a disagreement sets `nondeterministic` on the run.
     - Each `Pair` carries a `set_name` (JSON key `"set"`); the default set is
       `"synthetic"`. The `"revit"` set is 9 same-schema pairs built from the
       real Revit round-trip corpus at `corpus/roundtrip-revit-2026-07-06/`

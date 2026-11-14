@@ -170,3 +170,41 @@ def test_dashboard_shows_coverage_and_failed_pairs():
     assert "1 / 2" in page
     assert "0.50 / 0.50 / 0.50 (2p)" in page
     assert "Timeout" in page
+    assert "Changeset P / R / F1 (macro)" in page
+    assert "Changeset P / R / F1 (micro)" in page
+
+
+def test_micro_average_weighs_changes_macro_weighs_pairs():
+    small = bench.Expected(changed_guids={"modified": ["M"]})
+    large = bench.Expected(changed_guids={"modified": [f"L{index}" for index in range(9)]})
+    rows = [
+        _scored_pair("small", {"athar": _ok_run(modified=["M"])}, small),
+        _scored_pair("large", {"athar": _ok_run()}, large),
+    ]
+    changeset = bench.aggregate_tools(rows)["synthetic"]["athar"]["changeset"]
+    assert changeset["macro"]["recall"] == 0.5
+    assert changeset["micro"]["recall"] == 0.1
+    assert (changeset["tp"], changeset["fp"], changeset["fn"]) == (1, 0, 9)
+
+
+def test_time_summary_is_geometric_mean_of_ratios_to_athar():
+    def timed(seconds):
+        return {**_ok_run(), "seconds_median": seconds}
+
+    expected = bench.Expected(changed_guids={})
+    rows = [
+        _scored_pair("tiny", {"athar": timed(1.0), "other": timed(2.0)}, expected),
+        _scored_pair("huge", {"athar": timed(100.0), "other": timed(50.0)}, expected),
+    ]
+    ratio = bench.aggregate_tools(rows)["synthetic"]["other"]["vs_reference"]["seconds_median"]
+    assert ratio == {"geomean_ratio": 1.0, "pairs": 2}
+
+
+def test_repeats_that_disagree_are_flagged_nondeterministic():
+    agreeing = bench.combine_repeats([_ok_run(modified=["A", "B"]), _ok_run(modified=["B", "A"])])
+    assert "nondeterministic" not in agreeing
+    wobbling = bench.combine_repeats([_ok_run(modified=["A"]), _ok_run(modified=["A", "B"]), _ok_run(modified=["A"])])
+    assert len(wobbling["nondeterministic"]) == 2
+    expected = bench.Expected(changed_guids={"modified": ["A"]})
+    row = _scored_pair("wobble", {"athar": wobbling}, expected)
+    assert bench.aggregate_tools([row])["synthetic"]["athar"]["nondeterministic"] == 1

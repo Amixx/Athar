@@ -40,12 +40,14 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import athar.engine as athar_engine  # noqa: E402
 from athar_dev import ifc_mutations as mutations  # noqa: E402
-from athar_dev.changeset_scoring import CATEGORIES, score_changeset  # noqa: E402
+from athar_dev.changeset_scoring import CATEGORIES, prf, score_changeset  # noqa: E402
 from tests.corpus import CORPUS, acceptance_path, assert_report_invariants, corpus_path  # noqa: E402
 
 _SCRAMBLE_NAMESPACE = uuid.UUID("f43a7c2b-8fd4-4d2d-9898-8891d75432b2")
 COMPLETED_STATUSES = frozenset({"ok", "refused"})
 FAILED_STATUSES = frozenset({"error", "timeout"})
+TIMING_REFERENCE = "athar"
+RATIO_METRICS = ("seconds_median", "peak_rss_mb_max", "gb_seconds_median")
 _TIME_MAX_RSS_RE = re.compile(r"(?P<rss>\d+)\s+maximum resident set size")
 
 Counts = dict[str, int]
@@ -586,34 +588,49 @@ def main() -> int:
 
 
 def _repeat(fn: Callable[[], dict], repeats: int) -> dict:
-    runs = [fn() for _ in range(repeats)]
-    best_counts = _first_counts(runs)
-    ok_seconds = [
-        run["seconds"]
-        for run in runs
-        if run.get("status") in ("ok", "refused") and isinstance(run.get("seconds"), (int, float))
-    ]
-    peak_rss_values = [
-        run["peak_rss_mb"] for run in runs if run.get("peak_rss_mb") is not None and isinstance(run.get("peak_rss_mb"), (int, float))
-    ]
-    gb_seconds_values = [
-        run["gb_seconds"] for run in runs if run.get("gb_seconds") is not None and isinstance(run.get("gb_seconds"), (int, float))
-    ]
+    return combine_repeats([fn() for _ in range(repeats)])
+
+
+def combine_repeats(runs: list[dict]) -> dict:
+    """Fold repeats of one tool on one pair into a single result.
+
+    Timings are medians over completed repeats. Status, counts and reported
+    GUID sets must agree across repeats; when they do not, the result carries
+    ``nondeterministic`` with the distinct outcomes seen.
+    """
+    completed = [run for run in runs if run.get("status") in COMPLETED_STATUSES]
+
+    def numbers(key: str) -> list[float]:
+        return [run[key] for run in completed if isinstance(run.get(key), (int, float))]
+
     failed = next((run for run in runs if run.get("status") in FAILED_STATUSES), None)
-    result = dict(failed or runs[-1])
+    result = dict(failed or runs[0])
     result["runs"] = runs
-    result["repeat_count"] = repeats
-    if ok_seconds:
-        result["seconds_median"] = round(statistics.median(ok_seconds), 3)
-        result["seconds_min"] = round(min(ok_seconds), 3)
-        result["seconds_max"] = round(max(ok_seconds), 3)
+    result["repeat_count"] = len(runs)
+    seconds = numbers("seconds")
+    if seconds:
+        result["seconds_median"] = round(statistics.median(seconds), 3)
+        result["seconds_min"] = round(min(seconds), 3)
+        result["seconds_max"] = round(max(seconds), 3)
+    peak_rss_values = numbers("peak_rss_mb")
     if peak_rss_values:
         result["peak_rss_mb_max"] = round(max(peak_rss_values), 1)
+    gb_seconds_values = numbers("gb_seconds")
     if gb_seconds_values:
         result["gb_seconds_median"] = round(statistics.median(gb_seconds_values), 3)
-    if best_counts is not None:
-        result["counts"] = best_counts
+    outcomes = {json.dumps(_repeat_outcome(run), sort_keys=True) for run in runs}
+    if len(outcomes) > 1:
+        result["nondeterministic"] = [json.loads(outcome) for outcome in sorted(outcomes)]
     return result
+
+
+def _repeat_outcome(run: dict) -> dict:
+    reported = run.get("reported_guids")
+    return {
+        "status": run.get("status"),
+        "counts": _run_counts(run),
+        "reported_guids": None if reported is None else {key: sorted(value) for key, value in reported.items()},
+    }
 
 
 def _run_athar(old_path: str, new_path: str, timeout_s: int) -> dict:
@@ -987,6 +1004,7 @@ def _summary_row(entry: dict) -> dict:
             "seconds_median": run.get("seconds_median", run.get("seconds")),
             "peak_rss_mb_max": run.get("peak_rss_mb_max", run.get("peak_rss_mb")),
             "gb_seconds_median": run.get("gb_seconds_median", run.get("gb_seconds")),
+            "nondeterministic": "nondeterministic" in run,
         }
         score = scores.get(name)
         if score is not None:
@@ -1001,6 +1019,9 @@ def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
 
     A pair counts as attempted for a tool unless the tool is not installed; an error or
     timeout stays in every denominator (correctness, coverage, changeset average).
+    Changeset scores are averaged both macro (mean of per-pair values) and micro (from
+    TP/FP/FN summed over pairs). Time and memory are the geometric mean of per-pair
+    ratios to ``TIMING_REFERENCE``, over pairs both completed.
     """
     out: dict[str, dict[str, dict]] = {}
     for row in rows:
@@ -1015,9 +1036,26 @@ def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
                 continue
             stats = out.setdefault(dataset, {}).setdefault(
                 tool,
-                {"attempted": 0, "completed": 0, "failed": 0, "judged": 0, "expected": 0, "unexpected": 0, "_scores": []},
+                {
+                    "attempted": 0,
+                    "completed": 0,
+                    "failed": 0,
+                    "judged": 0,
+                    "expected": 0,
+                    "unexpected": 0,
+                    "nondeterministic": 0,
+                    "_scores": [],
+                    "_ratios": {metric: [] for metric in RATIO_METRICS},
+                },
             )
             stats["attempted"] += 1
+            stats["nondeterministic"] += bool(result.get("nondeterministic"))
+            reference = row.get(TIMING_REFERENCE)
+            if status in COMPLETED_STATUSES and isinstance(reference, dict) and reference.get("status") in COMPLETED_STATUSES:
+                for metric, values in stats["_ratios"].items():
+                    mine, theirs = result.get(metric), reference.get(metric)
+                    if isinstance(mine, (int, float)) and isinstance(theirs, (int, float)) and mine > 0 and theirs > 0:
+                        values.append(mine / theirs)
             stats["completed"] += status in COMPLETED_STATUSES
             stats["failed"] += status in FAILED_STATUSES
             assessment = row.get("assessment", {}).get(tool)
@@ -1030,6 +1068,12 @@ def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
     for tools in out.values():
         for stats in tools.values():
             scores = stats.pop("_scores")
+            stats["vs_reference"] = {
+                metric: {"geomean_ratio": round(statistics.geometric_mean(values), 4), "pairs": len(values)}
+                if values
+                else None
+                for metric, values in stats.pop("_ratios").items()
+            }
             stats["coverage"] = round(stats["completed"] / stats["attempted"], 4)
             stats["correctness"] = round(stats["expected"] / stats["judged"], 4) if stats["judged"] else None
             stats["changeset"] = _changeset_averages(scores)
@@ -1039,23 +1083,20 @@ def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
 def _changeset_averages(scores: list[dict]) -> dict | None:
     if not scores:
         return None
+    tp, fp, fn = (sum(score[key] for score in scores) for key in ("tp", "fp", "fn"))
+    precision, recall, f1 = prf(tp, fp, fn)
     return {
         "pairs": len(scores),
-        "fp": sum(score["fp"] for score in scores),
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
         "macro": {key: round(statistics.fmean(score[key] for score in scores), 4) for key in ("precision", "recall", "f1")},
+        "micro": {"precision": precision, "recall": recall, "f1": f1},
     }
 
 
 def _run_counts(run: dict) -> dict | None:
     return run.get("counts") or run.get("sections")
-
-
-def _first_counts(runs: list[dict]) -> dict | None:
-    for run in runs:
-        counts = _run_counts(run)
-        if counts is not None:
-            return counts
-    return None
 
 
 def _tool_inventory(*, include_ifcfast: bool, include_speckle: bool = True, include_ifcgit: bool = True) -> dict:

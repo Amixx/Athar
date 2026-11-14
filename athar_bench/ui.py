@@ -246,7 +246,7 @@ def _tab_pane(data: dict[str, Any], dataset: str, *, active: bool) -> str:
     classes = "tab-pane fade" + (" show active" if active else "")
     return f"""
     <div class="{classes}" id="tab-{dataset}" role="tabpanel" aria-labelledby="tab-{dataset}-btn">
-      {_tool_averages(rows, data["aggregates"].get(dataset, {}))}
+      {_tool_averages(data["aggregates"].get(dataset, {}))}
       {_controls(rows, dataset=dataset)}
       {_table(rows, target_id=f"pair-table-{dataset}")}
     </div>
@@ -335,6 +335,7 @@ def _tool_cell(row: dict[str, Any], tool: str) -> str:
     return f"""
     <td class="tool-cell">
       <span class="badge {_badge_class(assessment)}" title="{_e(title)}">{_label(assessment)}</span>
+      {'<span class="badge text-bg-warning" title="Counts or reported GUIDs differed between repeats">Nondeterministic</span>' if result.get("nondeterministic") else ""}
       {counts_line}
       {_changeset_line(result.get("changeset"))}
       <div class="text-secondary small d-flex flex-wrap column-gap-2"><span>{_metric(time_s, "s")}</span><span>{_metric(rss, "MB")}</span><span>{_metric(gb_s, "GB-seconds")}</span></div>
@@ -360,23 +361,36 @@ def _score_fmt(value: Any) -> str:
     return f"{value:.2f}"
 
 
-def _tool_averages(rows: list[dict[str, Any]], aggregates: dict[str, Any]) -> str:
-    stats = [_tool_average_stats(rows, tool, aggregates[tool]) for tool in TOOLS if tool in aggregates]
-    ranges = {
-        "coverage": [stat["coverage_value"] for stat in stats],
-        "correctness": [stat["correctness_value"] for stat in stats if stat["correctness_value"] is not None],
-        "unexpected": [stat["unexpected"] for stat in stats],
-        "avg_time": [stat["avg_time_value"] for stat in stats if stat["avg_time_value"] is not None],
-        "avg_rss": [stat["avg_rss_value"] for stat in stats if stat["avg_rss_value"] is not None],
-        "avg_gbs": [stat["avg_gbs_value"] for stat in stats if stat["avg_gbs_value"] is not None],
-        "avg_f1": [stat["avg_f1_value"] for stat in stats if stat["avg_f1_value"] is not None],
-    }
+RATIO_COLUMNS = (
+    ("seconds_median", "Time"),
+    ("peak_rss_mb_max", "Peak RSS"),
+    ("gb_seconds_median", "GB-seconds"),
+)
+
+
+def _tool_averages(aggregates: dict[str, Any]) -> str:
+    stats = [_tool_average_stats(tool, aggregates[tool]) for tool in TOOLS if tool in aggregates]
+
+    def present(key: str) -> list[float]:
+        return [stat[key] for stat in stats if stat[key] is not None]
+
+    ranges = {key: present(key) for key in ("coverage_value", "correctness_value", "macro_f1", "micro_f1")}
+    ranges["unexpected"] = [stat["unexpected"] for stat in stats]
+    ranges.update({metric: present(metric) for metric, _ in RATIO_COLUMNS})
     body = "".join(_tool_average_row(stat, ranges) for stat in stats)
+    ratio_headers = "".join(
+        f'<th title="Geometric mean over pairs both tools completed of this tool\'s {label.lower()} divided by Athar\'s; '
+        f'below 1 is less than Athar">{_e(label)} vs Athar</th>'
+        for _, label in RATIO_COLUMNS
+    )
     return f"""
     <section class="mb-4" aria-label="Tool averages">
       <h2 class="h5">Tool averages</h2>
       <p class="small text-secondary mb-2">An error or timeout counts as a miss on its pair: it stays in every
-      denominator, and scores precision, recall and F1 of 0. Tools that are not installed are left out.</p>
+      denominator, and scores precision, recall and F1 of 0. Tools that are not installed are left out.
+      Macro is the mean of per-pair scores, so every pair weighs the same; micro sums true and false
+      positives and negatives over all pairs first, so pairs with many changes weigh more. Time and
+      memory are geometric means of per-pair ratios to Athar, each tool run as a subprocess the same way.</p>
       <div class="table-responsive">
         <table class="table table-sm align-middle mb-0">
           <thead class="table-light">
@@ -386,11 +400,11 @@ def _tool_averages(rows: list[dict[str, Any]], aggregates: dict[str, Any]) -> st
               <th>Correctness</th>
               <th>Judged pairs</th>
               <th title="Pairs judged unexpected, errored or timed out">Unexpected or failed</th>
-              <th title="Mean precision / recall / F1 against GUID-level ground truth, one value per scored pair">Changeset P / R / F1</th>
+              <th title="Mean of per-pair precision / recall / F1 against GUID-level ground truth">Changeset P / R / F1 (macro)</th>
+              <th title="Precision / recall / F1 from TP, FP and FN summed over scored pairs">Changeset P / R / F1 (micro)</th>
               <th title="False positives summed over scored pairs">False positives</th>
-              <th>Avg median time</th>
-              <th>Avg peak RSS</th>
-              <th>Avg GB-seconds</th>
+              <th title="Pairs whose counts or reported GUIDs differed between repeats">Nondeterministic</th>
+              {ratio_headers}
             </tr>
           </thead>
           <tbody>{body}</tbody>
@@ -400,73 +414,54 @@ def _tool_averages(rows: list[dict[str, Any]], aggregates: dict[str, Any]) -> st
     """
 
 
-def _tool_average_stats(rows: list[dict[str, Any]], tool: str, aggregate: dict[str, Any]) -> dict[str, Any]:
-    times: list[float] = []
-    rss_values: list[float] = []
-    gbs_values: list[float] = []
-    for row in rows:
-        result = row.get(tool)
-        if not isinstance(result, dict):
-            continue
-        time_s = result.get("seconds_median")
-        if isinstance(time_s, (int, float)) and not (isinstance(time_s, float) and math.isnan(time_s)):
-            times.append(float(time_s))
-        rss = result.get("peak_rss_mb_max")
-        if isinstance(rss, (int, float)) and not (isinstance(rss, float) and math.isnan(rss)):
-            rss_values.append(float(rss))
-        gb_s = result.get("gb_seconds_median")
-        if isinstance(gb_s, (int, float)) and not (isinstance(gb_s, float) and math.isnan(gb_s)):
-            gbs_values.append(float(gb_s))
-
+def _tool_average_stats(tool: str, aggregate: dict[str, Any]) -> dict[str, Any]:
     changeset_stats = aggregate["changeset"]
-    changeset = "—"
-    avg_f1_value = None
-    fp_total = "—"
-    if changeset_stats:
-        macro = changeset_stats["macro"]
-        avg_f1_value = macro["f1"]
-        changeset = (
-            f"{_score_fmt(macro['precision'])} / {_score_fmt(macro['recall'])} / {_score_fmt(macro['f1'])}"
-            f" ({changeset_stats['pairs']}p)"
-        )
-        fp_total = str(changeset_stats["fp"])
-    correctness_value = aggregate["correctness"]
-    avg_time_value = None if not times else sum(times) / len(times)
-    avg_rss_value = None if not rss_values else sum(rss_values) / len(rss_values)
-    avg_gbs_value = None if not gbs_values else sum(gbs_values) / len(gbs_values)
-    return {
+    stat: dict[str, Any] = {
         "tool": tool,
         "coverage_value": aggregate["coverage"],
         "coverage": f"{aggregate['completed']} / {aggregate['attempted']}",
-        "avg_f1_value": avg_f1_value,
-        "changeset": changeset,
-        "fp_total": fp_total,
         "judged": aggregate["judged"],
         "unexpected": aggregate["unexpected"],
-        "correctness_value": correctness_value,
-        "correctness": "—" if correctness_value is None else f"{correctness_value:.0%}",
-        "avg_time_value": avg_time_value,
-        "avg_time": "—" if avg_time_value is None else f"{_fmt_num(avg_time_value)} s",
-        "avg_gbs_value": avg_gbs_value,
-        "avg_gbs": "—" if avg_gbs_value is None else f"{_fmt_num(avg_gbs_value)} GB-seconds",
-        "avg_rss_value": avg_rss_value,
-        "avg_rss": "—" if avg_rss_value is None else _metric(avg_rss_value, "MB"),
+        "nondeterministic": aggregate["nondeterministic"],
+        "correctness_value": aggregate["correctness"],
+        "correctness": "—" if aggregate["correctness"] is None else f"{aggregate['correctness']:.0%}",
+        "macro_f1": None,
+        "micro_f1": None,
+        "macro": "—",
+        "micro": "—",
+        "fp_total": "—",
     }
+    if changeset_stats:
+        for kind in ("macro", "micro"):
+            scores = changeset_stats[kind]
+            stat[f"{kind}_f1"] = scores["f1"]
+            stat[kind] = f"{_score_fmt(scores['precision'])} / {_score_fmt(scores['recall'])} / {_score_fmt(scores['f1'])}"
+        stat["macro"] += f" ({changeset_stats['pairs']}p)"
+        stat["fp_total"] = str(changeset_stats["fp"])
+    for metric, _ in RATIO_COLUMNS:
+        ratio = aggregate["vs_reference"][metric]
+        stat[metric] = None if ratio is None else ratio["geomean_ratio"]
+        stat[f"{metric}_text"] = "—" if ratio is None else f"{ratio['geomean_ratio']:.2f}× ({ratio['pairs']}p)"
+    return stat
 
 
 def _tool_average_row(stat: dict[str, Any], ranges: dict[str, list[float | int]]) -> str:
+    ratio_cells = "".join(
+        f'<td class="font-monospace {_range_class(stat[metric], ranges[metric], higher_is_better=False)}">{_e(stat[f"{metric}_text"])}</td>'
+        for metric, _ in RATIO_COLUMNS
+    )
     return f"""
     <tr>
       <td>{_label(stat["tool"])}</td>
-      <td class="font-monospace {_range_class(stat["coverage_value"], ranges["coverage"], higher_is_better=True)}">{_e(stat["coverage"])}</td>
-      <td class="{_range_class(stat["correctness_value"], ranges["correctness"], higher_is_better=True)}">{_e(stat["correctness"])}</td>
+      <td class="font-monospace {_range_class(stat["coverage_value"], ranges["coverage_value"], higher_is_better=True)}">{_e(stat["coverage"])}</td>
+      <td class="{_range_class(stat["correctness_value"], ranges["correctness_value"], higher_is_better=True)}">{_e(stat["correctness"])}</td>
       <td>{stat["judged"]}</td>
       <td class="{_range_class(stat["unexpected"], ranges["unexpected"], higher_is_better=False)}">{stat["unexpected"]}</td>
-      <td class="font-monospace {_range_class(stat["avg_f1_value"], ranges["avg_f1"], higher_is_better=True)}">{_e(stat["changeset"])}</td>
+      <td class="font-monospace {_range_class(stat["macro_f1"], ranges["macro_f1"], higher_is_better=True)}">{_e(stat["macro"])}</td>
+      <td class="font-monospace {_range_class(stat["micro_f1"], ranges["micro_f1"], higher_is_better=True)}">{_e(stat["micro"])}</td>
       <td class="font-monospace">{_e(stat["fp_total"])}</td>
-      <td class="font-monospace {_range_class(stat["avg_time_value"], ranges["avg_time"], higher_is_better=False)}">{_e(stat["avg_time"])}</td>
-      <td class="font-monospace {_range_class(stat["avg_rss_value"], ranges["avg_rss"], higher_is_better=False)}">{_e(stat["avg_rss"])}</td>
-      <td class="font-monospace {_range_class(stat["avg_gbs_value"], ranges["avg_gbs"], higher_is_better=False)}">{_e(stat["avg_gbs"])}</td>
+      <td class="font-monospace">{stat["nondeterministic"]}</td>
+      {ratio_cells}
     </tr>
     """
 
