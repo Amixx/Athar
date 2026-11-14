@@ -40,10 +40,12 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import athar.engine as athar_engine  # noqa: E402
 from athar_dev import ifc_mutations as mutations  # noqa: E402
-from athar_dev.changeset_scoring import score_changeset  # noqa: E402
+from athar_dev.changeset_scoring import CATEGORIES, score_changeset  # noqa: E402
 from tests.corpus import CORPUS, acceptance_path, assert_report_invariants, corpus_path  # noqa: E402
 
 _SCRAMBLE_NAMESPACE = uuid.UUID("f43a7c2b-8fd4-4d2d-9898-8891d75432b2")
+COMPLETED_STATUSES = frozenset({"ok", "refused"})
+FAILED_STATUSES = frozenset({"error", "timeout"})
 _TIME_MAX_RSS_RE = re.compile(r"(?P<rss>\d+)\s+maximum resident set size")
 
 Counts = dict[str, int]
@@ -507,6 +509,7 @@ def main() -> int:
         "tools": tools,
         "pairs": [],
         "summary": [],
+        "aggregates": {},
     }
 
     for pair in ALL_PAIRS:
@@ -532,6 +535,7 @@ def main() -> int:
             }
             results["pairs"].append(entry)
             results["summary"].append(_summary_row(entry))
+            results["aggregates"] = aggregate_tools(results["summary"])
             _write_json(Path(args.out), results)
             continue
 
@@ -571,10 +575,9 @@ def main() -> int:
             entry["runs"]["ifcgit_port"] = _repeat(
                 lambda: _run_json_runner(_IFCGIT_RUNNER, old_path, new_path, args.timeout_s), args.repeats
             )
-        entry["assessment"] = _assess_pair(entry, pair.expected)
-        entry["changeset_scores"] = _score_pair(entry, pair.expected)
         results["pairs"].append(entry)
-        results["summary"].append(_summary_row(entry))
+        results["summary"].append(finish_pair(entry, pair.expected))
+        results["aggregates"] = aggregate_tools(results["summary"])
         _write_json(Path(args.out), results)
 
     _write_json(Path(args.out), results)
@@ -596,7 +599,8 @@ def _repeat(fn: Callable[[], dict], repeats: int) -> dict:
     gb_seconds_values = [
         run["gb_seconds"] for run in runs if run.get("gb_seconds") is not None and isinstance(run.get("gb_seconds"), (int, float))
     ]
-    result = dict(runs[-1])
+    failed = next((run for run in runs if run.get("status") in FAILED_STATUSES), None)
+    result = dict(failed or runs[-1])
     result["runs"] = runs
     result["repeat_count"] = repeats
     if ok_seconds:
@@ -687,7 +691,7 @@ def _run_ifcdiff(
     relationships: str | None = None,
 ) -> dict:
     if importlib.util.find_spec("ifcdiff") is None:
-        return {"status": "error", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
+        return {"status": "not_installed", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
 
     output_path = workdir / "ifcdiff.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -767,7 +771,7 @@ _IFCFAST_RUNNER = (
 
 def _run_ifcfast(old_path: str, new_path: str, timeout_s: int) -> dict:
     if importlib.util.find_spec("ifcfast") is None:
-        return {"status": "error", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
+        return {"status": "not_installed", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
     # Subprocess, sampled identically to the other tools (was in-process before).
     argv = [sys.executable, "-c", _IFCFAST_RUNNER, old_path, new_path]
     start = time.perf_counter()
@@ -882,25 +886,30 @@ def _ifcfast_reported_guids(payload: object) -> dict[str, list[str]] | None:
     }
 
 
-def _assess_pair(entry: dict, expected: Expected | None) -> dict[str, str]:
+def finish_pair(entry: dict, expected: Expected | None) -> dict:
+    """Assess and score a pair's runs in place; return its summary row."""
+    entry["assessment"] = {name: assess_run(name, run, expected) for name, run in entry["runs"].items()}
+    entry["changeset_scores"] = score_pair(entry, expected)
+    return _summary_row(entry)
+
+
+def assess_run(name: str, run: dict, expected: Expected | None) -> str:
+    status = run.get("status")
+    if status == "not_installed":
+        return "not_installed"
+    if status in FAILED_STATUSES:
+        return status
     if expected is None:
-        return {name: "observed" for name in entry.get("runs", {})}
-    return {name: _assess_run(name, run, expected) for name, run in entry.get("runs", {}).items()}
-
-
-def _assess_run(name: str, run: dict, expected: Expected) -> str:
+        return "observed"
     expected_refusal = (expected.athar or {}).get("refused") if name == "athar" and expected.athar else None
     if expected_refusal:
-        if run.get("status") == "refused":
+        if status == "refused":
             return "expected" if run.get("reason") == expected_refusal else "unexpected"
-        if run.get("status") == "ok":
-            return "unexpected"
-        return "not_run"
-    if run.get("status") == "refused":
-        # Athar refused a pair no expectation said it should; other tools never refuse today.
-        return "unexpected" if name == "athar" else "not_run"
-    if run.get("status") != "ok":
-        return "not_run"
+        return "unexpected"
+    if status == "refused":
+        return "unexpected"
+    if status != "ok":
+        raise ValueError(f"{name}: unknown run status {status!r}")
     counts = _run_counts(run)
     assessed = False
     if expected.counts and counts:
@@ -936,15 +945,26 @@ def _assess_run(name: str, run: dict, expected: Expected) -> str:
     return "expected" if assessed else "observed"
 
 
-def _score_pair(entry: dict, expected: Expected | None) -> dict[str, dict]:
+def score_pair(entry: dict, expected: Expected | None) -> dict[str, dict]:
+    """Changeset score per tool; a tool that ran but gave no answer scores as a total miss."""
     if expected is None or expected.changed_guids is None:
         return {}
     scores = {}
     for name, run in entry.get("runs", {}).items():
+        status = run.get("status")
+        if status == "not_installed":
+            continue
         reported = run.get("reported_guids")
-        if run.get("status") == "ok" and reported is not None:
+        if status == "ok" and reported is not None:
             scores[name] = score_changeset(reported, expected.changed_guids)
+        else:
+            scores[name] = _missed_changeset(expected.changed_guids, status or "error")
     return scores
+
+
+def _missed_changeset(truth: dict[str, list[str]], status: str) -> dict:
+    fn = sum(len({guid for guid in truth.get(category, ()) if guid}) for category in CATEGORIES)
+    return {"tp": 0, "fp": 0, "fn": fn, "precision": 0.0, "recall": 0.0, "f1": 0.0, "failed": status}
 
 
 def _summary_row(entry: dict) -> dict:
@@ -953,6 +973,7 @@ def _summary_row(entry: dict) -> dict:
         "kind": entry.get("kind"),
         "set": entry.get("set"),
         "expectation": entry.get("expectation"),
+        "has_expectation": entry.get("expected") is not None,
         "assessment": entry.get("assessment", {}),
     }
     if entry.get("error"):
@@ -969,8 +990,60 @@ def _summary_row(entry: dict) -> dict:
         }
         score = scores.get(name)
         if score is not None:
-            row[name]["changeset"] = {key: score[key] for key in ("precision", "recall", "f1", "tp", "fp", "fn")}
+            row[name]["changeset"] = {
+                key: score[key] for key in ("precision", "recall", "f1", "tp", "fp", "fn", "failed") if key in score
+            }
     return row
+
+
+def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
+    """Per dataset and tool: coverage, correctness and changeset averages over the summary rows.
+
+    A pair counts as attempted for a tool unless the tool is not installed; an error or
+    timeout stays in every denominator (correctness, coverage, changeset average).
+    """
+    out: dict[str, dict[str, dict]] = {}
+    for row in rows:
+        if row.get("error"):
+            continue
+        dataset = row.get("set") or "synthetic"
+        for tool, result in row.items():
+            if not isinstance(result, dict) or "status" not in result:
+                continue
+            status = result["status"]
+            if status == "not_installed":
+                continue
+            stats = out.setdefault(dataset, {}).setdefault(
+                tool,
+                {"attempted": 0, "completed": 0, "failed": 0, "judged": 0, "expected": 0, "unexpected": 0, "_scores": []},
+            )
+            stats["attempted"] += 1
+            stats["completed"] += status in COMPLETED_STATUSES
+            stats["failed"] += status in FAILED_STATUSES
+            assessment = row.get("assessment", {}).get(tool)
+            if assessment in {"expected", "unexpected"} or (row.get("has_expectation") and status in FAILED_STATUSES):
+                stats["judged"] += 1
+                stats["expected"] += assessment == "expected"
+                stats["unexpected"] += assessment != "expected"
+            if isinstance(result.get("changeset"), dict):
+                stats["_scores"].append(result["changeset"])
+    for tools in out.values():
+        for stats in tools.values():
+            scores = stats.pop("_scores")
+            stats["coverage"] = round(stats["completed"] / stats["attempted"], 4)
+            stats["correctness"] = round(stats["expected"] / stats["judged"], 4) if stats["judged"] else None
+            stats["changeset"] = _changeset_averages(scores)
+    return out
+
+
+def _changeset_averages(scores: list[dict]) -> dict | None:
+    if not scores:
+        return None
+    return {
+        "pairs": len(scores),
+        "fp": sum(score["fp"] for score in scores),
+        "macro": {key: round(statistics.fmean(score[key] for score in scores), 4) for key in ("precision", "recall", "f1")},
+    }
 
 
 def _run_counts(run: dict) -> dict | None:

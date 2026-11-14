@@ -40,6 +40,14 @@ Scripts are for inspection and repeatable investigation.
       is not a false negative. `counts.modified` bounds derive from the truth
       sets (`|required|`..`|required|+|optional|`), so a tool that inflates
       `modified` fails assessment even where GUID scoring is absent.
+    - Run statuses: `ok`, `refused` (Athar's schema refusal), `error`,
+      `timeout`, `not_installed`. `not_installed` is shown and left out of
+      every average. `error` and `timeout` are a miss on that pair: assessed
+      as such, counted in the judged pairs, and scored precision = recall =
+      F1 = 0 where GUID truth exists. A failure on any repeat is the tool's
+      outcome for the pair. The JSON's `aggregates[set][tool]` holds the
+      per-tool figures the dashboard shows, including coverage (pairs
+      completed out of pairs attempted).
     - Each `Pair` carries a `set_name` (JSON key `"set"`); the default set is
       `"synthetic"`. The `"revit"` set is 9 same-schema pairs built from the
       real Revit round-trip corpus at `corpus/roundtrip-revit-2026-07-06/`

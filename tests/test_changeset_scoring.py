@@ -113,12 +113,60 @@ def test_optional_does_not_shield_unrelated_extras():
 
 
 def _ok_run(**reported):
-    return {"status": "ok", "reported_guids": {"added": [], "deleted": [], "modified": [], **reported}}
+    guids = {"added": [], "deleted": [], "modified": [], **reported}
+    return {"status": "ok", "reported_guids": guids, "counts": {key: len(value) for key, value in guids.items()}}
 
 
 def test_benchmark_scores_pairs_whose_truth_is_empty():
     reserialize = next(pair for pair in bench.BENCHMARK_PAIRS if pair.name == "reserialize_gni_190")
     entry = {"runs": {"quiet": _ok_run(), "noisy": _ok_run(modified=["A", "B"])}}
-    scores = bench._score_pair(entry, reserialize.expected)
+    scores = bench.score_pair(entry, reserialize.expected)
     assert scores["quiet"]["f1"] == 1.0
     assert (scores["noisy"]["f1"], scores["noisy"]["fp"]) == (0.0, 2)
+
+
+def _scored_pair(name, runs, expected, *, dataset="synthetic"):
+    entry = {"name": name, "kind": "test", "set": dataset, "expected": bench._expected_json(expected), "runs": runs}
+    return bench.finish_pair(entry, expected)
+
+
+def test_failed_runs_count_as_misses_and_lower_coverage():
+    expected = bench.Expected(counts={"added": 0, "deleted": 0, "modified": 1}, changed_guids={"modified": ["M"]})
+    rows = [
+        _scored_pair("easy", {"steady": _ok_run(modified=["M"]), "crashy": _ok_run(modified=["M"])}, expected),
+        _scored_pair(
+            "hard",
+            {"steady": _ok_run(modified=["M"]), "crashy": {"status": "error", "error": "Traceback"}},
+            expected,
+        ),
+        _scored_pair(
+            "slow",
+            {"steady": _ok_run(modified=["M"]), "crashy": {"status": "timeout"}, "absent": {"status": "not_installed"}},
+            expected,
+        ),
+    ]
+    assert rows[1]["assessment"]["crashy"] == "error"
+    assert rows[2]["assessment"]["crashy"] == "timeout"
+    aggregates = bench.aggregate_tools(rows)["synthetic"]
+    crashy = aggregates["crashy"]
+    assert (crashy["completed"], crashy["attempted"]) == (1, 3)
+    assert (crashy["judged"], crashy["expected"], crashy["unexpected"]) == (3, 1, 2)
+    assert crashy["changeset"]["pairs"] == 3
+    assert crashy["changeset"]["macro"]["recall"] == round(1 / 3, 4)
+    assert aggregates["steady"]["changeset"]["macro"]["f1"] == 1.0
+    assert "absent" not in aggregates
+
+
+def test_dashboard_shows_coverage_and_failed_pairs():
+    from athar_bench import ui
+
+    expected = bench.Expected(counts={"added": 0, "deleted": 0, "modified": 1}, changed_guids={"modified": ["M"]})
+    rows = [
+        _scored_pair("easy", {"athar": _ok_run(modified=["M"])}, expected),
+        _scored_pair("hard", {"athar": {"status": "timeout"}}, expected),
+    ]
+    data = {"summary": rows, "aggregates": bench.aggregate_tools(rows), "tools": {}, "settings": {}}
+    page = ui._page(data, Path("bench.json"), ui._dashboard_tabs(data))
+    assert "1 / 2" in page
+    assert "0.50 / 0.50 / 0.50 (2p)" in page
+    assert "Timeout" in page

@@ -42,6 +42,7 @@ TOOL_LABELS = {
     "ifcgit_port": "IfcGit (port)",
 }
 DATASETS = ("synthetic", "revit")
+ASSESSMENTS = ("expected", "unexpected", "observed", "error", "timeout", "not_installed")
 DATASET_LABELS = {"synthetic": "Synthetic", "revit": "Revit round-trip"}
 
 
@@ -245,7 +246,7 @@ def _tab_pane(data: dict[str, Any], dataset: str, *, active: bool) -> str:
     classes = "tab-pane fade" + (" show active" if active else "")
     return f"""
     <div class="{classes}" id="tab-{dataset}" role="tabpanel" aria-labelledby="tab-{dataset}-btn">
-      {_insights(rows)}
+      {_tool_averages(rows, data["aggregates"].get(dataset, {}))}
       {_controls(rows, dataset=dataset)}
       {_table(rows, target_id=f"pair-table-{dataset}")}
     </div>
@@ -265,7 +266,7 @@ def _controls(rows: list[dict[str, Any]], *, dataset: str) -> str:
       </div>
       <div class="col-12 col-md-4">
         <label class="form-label" for="assessment-{dataset}">Assessment</label>
-        {_select("assessment", ["all", "expected", "unexpected", "observed", "not_run"], dom_id=f"assessment-{dataset}")}
+        {_select("assessment", ["all", *ASSESSMENTS], dom_id=f"assessment-{dataset}")}
       </div>
       <div class="col-12 col-md-4">
         <label class="form-label" for="tool-{dataset}">Tool</label>
@@ -359,13 +360,10 @@ def _score_fmt(value: Any) -> str:
     return f"{value:.2f}"
 
 
-def _insights(rows: list[dict[str, Any]]) -> str:
-    return _tool_averages(rows)
-
-
-def _tool_averages(rows: list[dict[str, Any]]) -> str:
-    stats = [_tool_average_stats(rows, tool) for tool in TOOLS]
+def _tool_averages(rows: list[dict[str, Any]], aggregates: dict[str, Any]) -> str:
+    stats = [_tool_average_stats(rows, tool, aggregates[tool]) for tool in TOOLS if tool in aggregates]
     ranges = {
+        "coverage": [stat["coverage_value"] for stat in stats],
         "correctness": [stat["correctness_value"] for stat in stats if stat["correctness_value"] is not None],
         "unexpected": [stat["unexpected"] for stat in stats],
         "avg_time": [stat["avg_time_value"] for stat in stats if stat["avg_time_value"] is not None],
@@ -377,15 +375,19 @@ def _tool_averages(rows: list[dict[str, Any]]) -> str:
     return f"""
     <section class="mb-4" aria-label="Tool averages">
       <h2 class="h5">Tool averages</h2>
+      <p class="small text-secondary mb-2">An error or timeout counts as a miss on its pair: it stays in every
+      denominator, and scores precision, recall and F1 of 0. Tools that are not installed are left out.</p>
       <div class="table-responsive">
         <table class="table table-sm align-middle mb-0">
           <thead class="table-light">
             <tr>
               <th>Tool</th>
+              <th title="Pairs that ran to an answer, out of pairs attempted">Coverage</th>
               <th>Correctness</th>
               <th>Judged pairs</th>
-              <th>Unexpected</th>
-              <th title="Mean precision / recall / F1 against GUID-level ground truth, over pairs where this tool was scored">Changeset P / R / F1</th>
+              <th title="Pairs judged unexpected, errored or timed out">Unexpected or failed</th>
+              <th title="Mean precision / recall / F1 against GUID-level ground truth, one value per scored pair">Changeset P / R / F1</th>
+              <th title="False positives summed over scored pairs">False positives</th>
               <th>Avg median time</th>
               <th>Avg peak RSS</th>
               <th>Avg GB-seconds</th>
@@ -398,10 +400,7 @@ def _tool_averages(rows: list[dict[str, Any]]) -> str:
     """
 
 
-def _tool_average_stats(rows: list[dict[str, Any]], tool: str) -> dict[str, Any]:
-    judged = 0
-    expected = 0
-    unexpected = 0
+def _tool_average_stats(rows: list[dict[str, Any]], tool: str, aggregate: dict[str, Any]) -> dict[str, Any]:
     times: list[float] = []
     rss_values: list[float] = []
     gbs_values: list[float] = []
@@ -409,11 +408,6 @@ def _tool_average_stats(rows: list[dict[str, Any]], tool: str) -> dict[str, Any]
         result = row.get(tool)
         if not isinstance(result, dict):
             continue
-        assessment = row.get("assessment", {}).get(tool)
-        if assessment in {"expected", "unexpected"}:
-            judged += 1
-            expected += assessment == "expected"
-            unexpected += assessment == "unexpected"
         time_s = result.get("seconds_median")
         if isinstance(time_s, (int, float)) and not (isinstance(time_s, float) and math.isnan(time_s)):
             times.append(float(time_s))
@@ -424,39 +418,31 @@ def _tool_average_stats(rows: list[dict[str, Any]], tool: str) -> dict[str, Any]
         if isinstance(gb_s, (int, float)) and not (isinstance(gb_s, float) and math.isnan(gb_s)):
             gbs_values.append(float(gb_s))
 
-    precisions: list[float] = []
-    recalls: list[float] = []
-    f1s: list[float] = []
-    scored = 0
-    for row in rows:
-        score = row.get(tool, {}).get("changeset") if isinstance(row.get(tool), dict) else None
-        if not isinstance(score, dict):
-            continue
-        scored += 1
-        for key, values in (("precision", precisions), ("recall", recalls), ("f1", f1s)):
-            value = score.get(key)
-            if isinstance(value, (int, float)) and not (isinstance(value, float) and math.isnan(value)):
-                values.append(float(value))
-
-    correctness_value = None if judged == 0 else expected / judged
+    changeset_stats = aggregate["changeset"]
+    changeset = "—"
+    avg_f1_value = None
+    fp_total = "—"
+    if changeset_stats:
+        macro = changeset_stats["macro"]
+        avg_f1_value = macro["f1"]
+        changeset = (
+            f"{_score_fmt(macro['precision'])} / {_score_fmt(macro['recall'])} / {_score_fmt(macro['f1'])}"
+            f" ({changeset_stats['pairs']}p)"
+        )
+        fp_total = str(changeset_stats["fp"])
+    correctness_value = aggregate["correctness"]
     avg_time_value = None if not times else sum(times) / len(times)
     avg_rss_value = None if not rss_values else sum(rss_values) / len(rss_values)
     avg_gbs_value = None if not gbs_values else sum(gbs_values) / len(gbs_values)
-    avg_precision = None if not precisions else sum(precisions) / len(precisions)
-    avg_recall = None if not recalls else sum(recalls) / len(recalls)
-    avg_f1_value = None if not f1s else sum(f1s) / len(f1s)
-    changeset = "—"
-    if scored:
-        changeset = (
-            f"{_score_fmt(avg_precision)} / {_score_fmt(avg_recall)} / {_score_fmt(avg_f1_value)}"
-            f" ({scored}p)"
-        )
     return {
+        "tool": tool,
+        "coverage_value": aggregate["coverage"],
+        "coverage": f"{aggregate['completed']} / {aggregate['attempted']}",
         "avg_f1_value": avg_f1_value,
         "changeset": changeset,
-        "tool": tool,
-        "judged": judged,
-        "unexpected": unexpected,
+        "fp_total": fp_total,
+        "judged": aggregate["judged"],
+        "unexpected": aggregate["unexpected"],
         "correctness_value": correctness_value,
         "correctness": "—" if correctness_value is None else f"{correctness_value:.0%}",
         "avg_time_value": avg_time_value,
@@ -472,10 +458,12 @@ def _tool_average_row(stat: dict[str, Any], ranges: dict[str, list[float | int]]
     return f"""
     <tr>
       <td>{_label(stat["tool"])}</td>
+      <td class="font-monospace {_range_class(stat["coverage_value"], ranges["coverage"], higher_is_better=True)}">{_e(stat["coverage"])}</td>
       <td class="{_range_class(stat["correctness_value"], ranges["correctness"], higher_is_better=True)}">{_e(stat["correctness"])}</td>
       <td>{stat["judged"]}</td>
       <td class="{_range_class(stat["unexpected"], ranges["unexpected"], higher_is_better=False)}">{stat["unexpected"]}</td>
       <td class="font-monospace {_range_class(stat["avg_f1_value"], ranges["avg_f1"], higher_is_better=True)}">{_e(stat["changeset"])}</td>
+      <td class="font-monospace">{_e(stat["fp_total"])}</td>
       <td class="font-monospace {_range_class(stat["avg_time_value"], ranges["avg_time"], higher_is_better=False)}">{_e(stat["avg_time"])}</td>
       <td class="font-monospace {_range_class(stat["avg_rss_value"], ranges["avg_rss"], higher_is_better=False)}">{_e(stat["avg_rss"])}</td>
       <td class="font-monospace {_range_class(stat["avg_gbs_value"], ranges["avg_gbs"], higher_is_better=False)}">{_e(stat["avg_gbs"])}</td>
@@ -634,8 +622,6 @@ def _fmt_num(value: float) -> str:
 def _label(value: Any) -> str:
     if value == "observed":
         return "Not Judged"
-    if value == "not_run":
-        return "Not Run"
     return str(value).replace("_", " ").title()
 
 
@@ -644,7 +630,9 @@ def _badge_class(assessment: str) -> str:
         "expected": "text-bg-success",
         "unexpected": "text-bg-danger",
         "observed": "text-bg-secondary",
-        "not_run": "text-bg-secondary",
+        "error": "text-bg-danger",
+        "timeout": "text-bg-danger",
+        "not_installed": "text-bg-light border",
         "refused": "text-bg-warning",
     }.get(assessment, "text-bg-secondary")
 
@@ -654,7 +642,9 @@ def _assessment_title(assessment: str) -> str:
         "expected": "Matches the encoded expected outcome for this benchmark pair.",
         "unexpected": "Does not match the encoded expected outcome for this benchmark pair.",
         "observed": "No pass/fail expectation is encoded for this pair/tool; result is shown for reference only and excluded from correctness.",
-        "not_run": "This tool was not run for this benchmark pair.",
+        "error": "The tool crashed or produced unparsable output; scored as a miss on this pair.",
+        "timeout": "The tool hit the timeout; scored as a miss on this pair.",
+        "not_installed": "The tool is not installed; left out of every average.",
     }.get(assessment, "Benchmark assessment")
 
 
