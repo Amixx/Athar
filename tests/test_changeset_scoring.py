@@ -237,6 +237,21 @@ def test_peak_rss_covers_descendant_processes():
     assert completed["peak_rss_mb"] >= 200
 
 
+def test_gb_seconds_cover_descendant_processes():
+    def run(child_body: str) -> float:
+        spawn = (
+            "import subprocess, sys\n"
+            f"subprocess.run([sys.executable, '-c', {child_body!r}], check=True)\n"
+        )
+        completed = bench._run_subprocess([sys.executable, "-c", spawn], timeout_s=60)
+        assert completed["returncode"] == 0
+        return completed["gb_seconds"]
+
+    idle = run("import time; time.sleep(1.5)")
+    allocating = run("import time; b = b'x' * (400 * 2**20); time.sleep(1.5)")
+    assert allocating > idle + 0.2
+
+
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)

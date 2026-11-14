@@ -907,8 +907,9 @@ def _run_subprocess(argv: list[str], timeout_s: int) -> dict:
     """Run one tool process; every tool is measured through this function.
 
     Peak RSS is the kernel's ``ru_maxrss`` from ``wait4``, which covers the
-    process and the descendants it waited for. GB-seconds integrate the RSS
-    of the process itself, sampled with ``ps``.
+    process and the descendants it waited for. GB-seconds integrate the summed
+    RSS of every live process in the tool's process group (the tool and the
+    descendants that stay in the group it starts), sampled with ``ps``.
     """
     with tempfile.TemporaryFile("w+") as stdout, tempfile.TemporaryFile("w+") as stderr:
         try:
@@ -1295,29 +1296,30 @@ def _expected_json(expected: Expected | None) -> dict | None:
     }
 
 
-def _read_rss_mb(pid: int) -> float | None:
-    """Current RSS of `pid` in MiB via `ps` (KiB on macOS and Linux)."""
+def _read_group_rss_mb(pgid: int) -> float | None:
+    """Summed RSS in MiB of the processes in group `pgid` via `ps` (KiB on macOS and Linux)."""
     try:
         out = subprocess.run(
-            ["ps", "-o", "rss=", "-p", str(pid)],
+            ["ps", "-A", "-o", "pgid=,rss="],
             capture_output=True,
             text=True,
             check=True,
-        ).stdout.strip()
+        ).stdout
     except (subprocess.CalledProcessError, OSError):
         return None
-    return int(out) / 1024.0 if out else None
+    rss_kib = [int(rss) for group, rss in (line.split() for line in out.splitlines() if line.strip()) if int(group) == pgid]
+    return sum(rss_kib) / 1024.0 if rss_kib else None
 
 
 class _RssTimeSampler:
-    """Background thread that records (t, rss_mb) for a pid, to integrate GB-seconds.
+    """Background thread that records (t, rss_mb) for a process group, to integrate GB-seconds.
 
     GB-seconds (the area under the RSS curve) fuses "how much memory" and "for how
     long" into the unit cloud platforms bill.
     """
 
-    def __init__(self, pid: int, interval: float = 0.03) -> None:
-        self.pid = pid
+    def __init__(self, pgid: int, interval: float = 0.03) -> None:
+        self.pgid = pgid
         self.interval = interval
         self.samples: list[tuple[float, float]] = []
         self._stop = threading.Event()
@@ -1325,7 +1327,7 @@ class _RssTimeSampler:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            mb = _read_rss_mb(self.pid)
+            mb = _read_group_rss_mb(self.pgid)
             if mb is not None:
                 self.samples.append((time.perf_counter(), mb))
             self._stop.wait(self.interval)
