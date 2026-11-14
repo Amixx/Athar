@@ -8,6 +8,8 @@ produce them.
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 
 import ifcopenshell
 import pytest
@@ -103,3 +105,9 @@ def test_truncated_file_error_names_offset_and_record(tmp_path, template):
     with pytest.raises(ValueError) as error:
         diff_files(truncated, write(tmp_path, "full.ifc", template))
     assert str(error.value) == f"unterminated string at byte {quote} in record #{match.group(1).decode()}"
+    result = subprocess.run(
+        [sys.executable, "-m", "athar", truncated, str(tmp_path / "full.ifc")],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 1
+    assert result.stderr == f"Error: {error.value}\n"

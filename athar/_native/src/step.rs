@@ -96,7 +96,7 @@ impl<'a> Parser<'a> {
             let mut rewritten = Vec::new();
             let mut cursor = start;
             for (a, b, id) in self.id_spans.take().unwrap() {
-                let target = mapping.get(&id).ok_or_else(|| format!("unmapped reference #{id}"))?;
+                let target = mapping.get(&id).ok_or_else(|| self.error_at(a, format!("unmapped reference #{id}")))?;
                 rewritten.extend_from_slice(&self.bytes[cursor..a]);
                 rewritten.extend_from_slice(target.to_string().as_bytes());
                 cursor = b;
@@ -104,9 +104,13 @@ impl<'a> Parser<'a> {
             rewritten.extend_from_slice(&self.bytes[cursor..end]);
             records.push((mapping[&record.step_id], rewritten));
         }
-        if !self.looks_at(b"ENDSEC") || seen.len() != mapping.len() {
-            return Err("rekey requires one complete DATA section and a total entity mapping".to_string());
+        let suffix_start = self.pos;
+        if self.read_keyword() != "ENDSEC" || seen.len() != mapping.len() {
+            return Err(self.error_at(suffix_start, "rekey requires one complete DATA section and a total entity mapping"));
         }
+        self.skip_trivia()?;
+        self.expect(b';')?;
+        self.pos = suffix_start;
         records.sort_by_key(|(id, _)| *id);
         let mut output = self.bytes[..prefix_end].to_vec();
         for (_, record) in records {
@@ -447,10 +451,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn looks_at(&self, needle: &[u8]) -> bool {
-        self.bytes[self.pos..].starts_with(needle)
-    }
-
     #[inline]
     fn peek(&self) -> Option<u8> {
         self.bytes.get(self.pos).copied()
@@ -781,6 +781,22 @@ END-ISO-10303-21;
         assert_eq!(parse_error(src), "unexpected keyword IFCX in DATA section at byte 6 before the first record");
         let src = b"DATA;\n#1=IFCX(1)\n#2=IFCX(2);\nENDSEC;";
         assert_eq!(parse_error(src), "expected ';', found '#' at byte 17 in record #1");
+    }
+
+    #[test]
+    fn rekey_preserves_mixed_case_and_raw_literal_bytes() {
+        let src = b"DATA;\r\n#9=IfcLabel('H\xf6he',ifcReal(1.00E+0),.t.);\r\nendsec /* x */;\r\n";
+        let expected = b"DATA;\r\n#2=IfcLabel('H\xf6he',ifcReal(1.00E+0),.t.);\r\nendsec /* x */;\r\n";
+        assert_eq!(Parser::new(src).rekey(&HashMap::from([(9, 2)])).unwrap(), expected);
+        let err = Parser::new(b"DATA;#9=IFCX();ENDSEC_MISSPELLED;")
+            .rekey(&HashMap::from([(9, 2)])).unwrap_err();
+        assert!(err.contains("at byte 15 after record #9"), "{err}");
+    }
+
+    #[test]
+    fn unterminated_comment_carries_location() {
+        assert_eq!(parse_error(b"DATA;#7=IFCX(/*"), "unterminated comment at byte 13 in record #7");
+        assert_eq!(parse_error(b"DATA;#7=IFCX();/*"), "unterminated comment at byte 15 after record #7");
     }
 
     #[test]
