@@ -477,7 +477,7 @@ def test_property_deltas_keys_same_name_by_pset():
     }
 
 
-def test_property_deltas_keeps_type_value_apart_from_occurrence_value():
+def test_property_deltas_compare_the_occurrence_value_where_it_overrides_the_type():
     old_props = [
         PropertyEntry(pset="Pset_WallCommon", name="IsExternal", value=False, inherited=False),
         PropertyEntry(pset="Pset_WallCommon", name="IsExternal", value=True, inherited=True),
@@ -486,10 +486,13 @@ def test_property_deltas_keeps_type_value_apart_from_occurrence_value():
         PropertyEntry(pset="Pset_WallCommon", name="IsExternal", value=True, inherited=False),
         PropertyEntry(pset="Pset_WallCommon", name="IsExternal", value=True, inherited=True),
     ]
-    assert _property_deltas(old_props, new_props) == {
-        "changed": [
-            {"pset": "Pset_WallCommon", "name": "IsExternal", "inherited": False, "old_value": False, "new_value": True}
-        ],
+    [changed] = _property_deltas(old_props, new_props)["changed"]
+    assert {key: changed[key] for key in ("pset", "name", "inherited", "old_value", "new_value")} == {
+        "pset": "Pset_WallCommon",
+        "name": "IsExternal",
+        "inherited": False,
+        "old_value": False,
+        "new_value": True,
     }
 
 

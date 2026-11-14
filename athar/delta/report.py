@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 
 from athar.bottom.types import Coverage, OrphanPropertySet, PropertyEntry, SignatureBundle, SignatureVector
@@ -297,44 +298,106 @@ def _property_deltas(
     old_entries: list[PropertyEntry],
     new_entries: list[PropertyEntry],
 ) -> dict | None:
-    """Compare old and new property lists per (pset, name, inherited-from-type)."""
-    old_map = {(e.pset, e.name, e.inherited): e.value for e in old_entries}
-    new_map = {(e.pset, e.name, e.inherited): e.value for e in new_entries}
-    old_counts = Counter((e.pset, e.name, e.inherited) for e in old_entries)
-    new_counts = Counter((e.pset, e.name, e.inherited) for e in new_entries)
+    """Compare old and new properties per (pset name, property name).
 
-    def entry(key: tuple[str, str, bool], **values) -> dict:
-        pset, name, inherited = key
-        return {"pset": pset, "name": name, "inherited": inherited, **values}
+    A key may have several definitions: on the occurrence and on its type,
+    or in two sets of one name. The effective value is the occurrence's when
+    it defines the key, the type's otherwise; definitions of the effective
+    origin that disagree make it the sorted list of their distinct values.
+    """
 
-    changed = [
-        entry(key, old_value=old_map[key], new_value=value)
-        for key, value in new_map.items()
-        if key in old_map and old_map[key] != value
-    ]
-    added = [entry(key, new_value=value) for key, value in new_map.items() if key not in old_map]
-    removed = [entry(key, old_value=value) for key, value in old_map.items() if key not in new_map]
+    def by_key(entries: list[PropertyEntry]) -> dict[tuple[str, str], list[PropertyEntry]]:
+        out: dict[tuple[str, str], list[PropertyEntry]] = defaultdict(list)
+        for entry in entries:
+            out[(entry.pset, entry.name)].append(entry)
+        return out
 
-    count_changed = [
-        entry(key, old_count=old_counts[key], new_count=new_counts[key])
-        for key in old_map.keys() & new_map.keys()
-        if old_counts[key] != new_counts[key]
-    ]
+    def encoded(value) -> str:
+        return json.dumps(value, sort_keys=True, default=str)
 
-    if not (changed or added or removed or count_changed):
+    def value_of(definitions: list[PropertyEntry]):
+        distinct = {encoded(entry.value): entry.value for entry in definitions}
+        if len(distinct) == 1:
+            return next(iter(distinct.values()))
+        return [distinct[key] for key in sorted(distinct)]
+
+    def effective(definitions: list[PropertyEntry]) -> tuple[object, bool, str | None]:
+        own = [entry for entry in definitions if not entry.inherited]
+        deciding = own or definitions
+        return value_of(deciding), not own, deciding[0].unit
+
+    def origin(inherited: bool) -> str:
+        return "type" if inherited else "occurrence"
+
+    def listed(definitions: list[PropertyEntry]) -> list[dict]:
+        rows = [
+            {"origin": origin(entry.inherited), "pset_guid": entry.pset_guid, "value": entry.value}
+            for entry in definitions
+        ]
+        return sorted(rows, key=lambda row: (row["origin"], row["pset_guid"] or "", encoded(row["value"])))
+
+    def entry(key: tuple[str, str], inherited: bool, unit: str | None = None, **values) -> dict:
+        out = {"pset": key[0], "name": key[1], "inherited": inherited, **values}
+        if unit is not None:
+            out["unit"] = unit
+        return out
+
+    old_keys = by_key(old_entries)
+    new_keys = by_key(new_entries)
+    result: dict[str, list[dict]] = defaultdict(list)
+    for key in old_keys.keys() | new_keys.keys():
+        old_definitions = old_keys.get(key)
+        new_definitions = new_keys.get(key)
+        if old_definitions is None:
+            value, inherited, unit = effective(new_definitions)
+            added = entry(key, inherited, unit, new_value=value)
+            if len(new_definitions) > 1:
+                added["new_definitions"] = listed(new_definitions)
+            result["added"].append(added)
+            continue
+        if new_definitions is None:
+            value, inherited, unit = effective(old_definitions)
+            removed = entry(key, inherited, unit, old_value=value)
+            if len(old_definitions) > 1:
+                removed["old_definitions"] = listed(old_definitions)
+            result["removed"].append(removed)
+            continue
+
+        old_value, old_inherited, old_unit = effective(old_definitions)
+        new_value, new_inherited, unit = effective(new_definitions)
+        if old_value != new_value or old_unit != unit:
+            changed = entry(key, new_inherited, unit, old_value=old_value, new_value=new_value)
+            if old_unit != unit:
+                changed["old_unit"], changed["unit"] = old_unit, unit
+            if len(old_definitions) > 1 or len(new_definitions) > 1:
+                changed["old_definitions"] = listed(old_definitions)
+                changed["new_definitions"] = listed(new_definitions)
+            result["changed"].append(changed)
+        if old_inherited != new_inherited:
+            result["origin_changed"].append(
+                entry(key, new_inherited, old_origin=origin(old_inherited), new_origin=origin(new_inherited))
+            )
+        elif not new_inherited:
+            old_type = [e for e in old_definitions if e.inherited]
+            new_type = [e for e in new_definitions if e.inherited]
+            if old_type and new_type and value_of(old_type) != value_of(new_type):
+                result["overridden_changed"].append(
+                    entry(key, True, new_type[0].unit, old_value=value_of(old_type), new_value=value_of(new_type))
+                )
+        for inherited in (False, True):
+            old_count = sum(1 for e in old_definitions if e.inherited == inherited)
+            new_count = sum(1 for e in new_definitions if e.inherited == inherited)
+            if old_count != new_count:
+                result["count_changed"].append(entry(key, inherited, old_count=old_count, new_count=new_count))
+
+    if not result:
         return None
 
     def order(item: dict) -> tuple[str, str, bool]:
         return (item["name"], item["pset"], item["inherited"])
 
-    result: dict[str, list[dict]] = {}
-    if changed:
-        result["changed"] = sorted(changed, key=order)
-    if added:
-        result["added"] = sorted(added, key=order)
-    if removed:
-        result["removed"] = sorted(removed, key=order)
-    if count_changed:
-        result["count_changed"] = sorted(count_changed, key=order)
-
-    return result
+    return {
+        kind: sorted(result[kind], key=order)
+        for kind in ("changed", "added", "removed", "origin_changed", "overridden_changed", "count_changed")
+        if kind in result
+    }

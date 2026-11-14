@@ -156,22 +156,35 @@ def _safe_type_name(attr_type) -> str | None:
 
 
 def _extract_unit_context(ifc) -> dict[str, Any]:
+    """Factors per unit type of the file's unit assignment.
+
+    ``unit_factors`` covers every unit; ``property_unit_factors`` only the unit
+    types whose unit is an ``IfcSIUnit`` or an ``IfcConversionBasedUnit``,
+    the ones a value can be converted from to SI.
+    """
     unit_factors: dict[str, float] = {}
+    property_unit_factors: dict[str, float] = {}
     assignments = ifc.by_type("IfcUnitAssignment")
-    if not assignments:
-        return {"unit_factors": unit_factors}
-    for unit in assignments[0].Units:
-        unit_type = getattr(unit, "UnitType", None)
-        if not isinstance(unit_type, str) or not unit_type:
-            continue
-        factor = _unit_factor(unit)
-        if not (isinstance(factor, (int, float)) and math.isfinite(float(factor)) and float(factor) > 0):
-            continue
-        unit_factors[unit_type] = float(factor)
-    return {"unit_factors": {k: unit_factors[k] for k in sorted(unit_factors)}}
+    if assignments:
+        for unit in assignments[0].Units:
+            unit_type = getattr(unit, "UnitType", None)
+            if not isinstance(unit_type, str) or not unit_type:
+                continue
+            factor = unit_factor(unit)
+            if not (isinstance(factor, (int, float)) and math.isfinite(float(factor)) and float(factor) > 0):
+                continue
+            unit_factors[unit_type] = float(factor)
+            if unit.is_a("IfcSIUnit") or unit.is_a("IfcConversionBasedUnit"):
+                property_unit_factors[unit_type] = float(factor)
+            else:
+                property_unit_factors.pop(unit_type, None)
+    return {
+        "unit_factors": {k: unit_factors[k] for k in sorted(unit_factors)},
+        "property_unit_factors": {k: property_unit_factors[k] for k in sorted(property_unit_factors)},
+    }
 
 
-def _unit_factor(unit) -> float:
+def unit_factor(unit) -> float:
     if unit is None or not hasattr(unit, "is_a"):
         return 1.0
     if unit.is_a("IfcSIUnit"):
@@ -180,15 +193,15 @@ def _unit_factor(unit) -> float:
         conversion = getattr(unit, "ConversionFactor", None)
         if conversion is None:
             return 1.0
-        base = _unit_factor(getattr(conversion, "UnitComponent", None))
+        base = unit_factor(getattr(conversion, "UnitComponent", None))
         value = _float_value_component(getattr(conversion, "ValueComponent", None))
         return base if value is None else value * base
     if unit.is_a("IfcDerivedUnit"):
         factor = 1.0
         for element in getattr(unit, "Elements", []) or []:
-            unit_factor = _unit_factor(getattr(element, "Unit", None))
+            element_factor = unit_factor(getattr(element, "Unit", None))
             exponent = int(getattr(element, "Exponent", 0) or 0)
-            factor *= unit_factor ** exponent
+            factor *= element_factor ** exponent
         return factor
     return 1.0
 

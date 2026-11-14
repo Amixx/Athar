@@ -1026,9 +1026,14 @@ fn shape_facts_of_data_reached_entities(
 }
 
 /// Readable facts of everything `vh_data` of a root covers, so a data change
-/// can name what differs. A path is the positions of the ordered lists passed
-/// over data edges on the way, then the class and attribute of the entity
-/// holding the value; repeated paths are numbered.
+/// can name what differs. A path is the owners and the positions of the
+/// ordered lists passed over data edges on the way, then the class and
+/// attribute of the entity holding the value; repeated paths are numbered.
+///
+/// An owner is an entity with a GlobalId below the root (a property set, a
+/// type object). `GlobalId` enters no hash, so an owner is labelled by class
+/// and `Name`; the GlobalId is added only to owners of one root whose labels
+/// would otherwise be equal.
 struct FactCollector<'a> {
     entities: &'a [canon::Entity],
     graph: &'a edges::Graph,
@@ -1038,7 +1043,14 @@ struct FactCollector<'a> {
     prefixes: Vec<String>,
     seen: HashSet<(u32, Scope, u32)>,
     on_path: HashSet<u32>,
+    /// Owner label without GlobalId -> the first owner carrying it.
+    owners: HashMap<String, u32>,
+    /// Owners sharing a label with another owner of the current root.
+    collided: HashSet<u32>,
 }
+
+/// Delimits an owner's entity index inside a path until its label is known.
+const OWNER_MARK: char = '\0';
 
 impl<'a> FactCollector<'a> {
     fn new(
@@ -1055,13 +1067,40 @@ impl<'a> FactCollector<'a> {
             prefixes: vec![String::new()],
             seen: HashSet::new(),
             on_path: HashSet::new(),
+            owners: HashMap::new(),
+            collided: HashSet::new(),
         }
+    }
+
+    fn owner_label(&self, owner: u32, with_guid: bool) -> String {
+        let ent = &self.entities[owner as usize];
+        match (&ent.name, &ent.guid, with_guid) {
+            (Some(name), Some(guid), true) => format!("[Name={name},GlobalId={guid}]"),
+            (None, Some(guid), true) => format!("[GlobalId={guid}]"),
+            (Some(name), _, _) => format!("[Name={name}]"),
+            (None, _, _) => String::new(),
+        }
+    }
+
+    /// `path` with every marked owner index replaced by `label(owner)`.
+    fn with_owner_labels(path: &str, label: impl Fn(u32) -> String) -> String {
+        let mut out = String::with_capacity(path.len());
+        for (i, part) in path.split(OWNER_MARK).enumerate() {
+            if i % 2 == 0 {
+                out.push_str(part);
+            } else {
+                out.push_str(&label(part.parse().expect("owner index")));
+            }
+        }
+        out
     }
 
     fn collect(&mut self, root: u32) -> Vec<(String, String)> {
         self.prefixes.truncate(1);
         self.seen.clear();
         self.on_path.clear();
+        self.owners.clear();
+        self.collided.clear();
         let mut facts: Vec<(String, String)> = Vec::new();
         // (entity, scope, prefix, leaving)
         let mut stack: Vec<(u32, Scope, u32, bool)> = vec![(root, Scope::Full, 0, false)];
@@ -1078,7 +1117,22 @@ impl<'a> FactCollector<'a> {
 
             let ent = &self.entities[current as usize];
             let label = match &ent.guid {
-                Some(g) => format!("{}{}[GlobalId={}]", self.prefixes[prefix as usize], ent.canonical_class, g),
+                Some(g) if current == root => {
+                    format!("{}{}[GlobalId={}]", self.prefixes[prefix as usize], ent.canonical_class, g)
+                }
+                Some(_) => {
+                    let label = format!(
+                        "{}{}{OWNER_MARK}{current}{OWNER_MARK}",
+                        self.prefixes[prefix as usize], ent.canonical_class
+                    );
+                    let plain = Self::with_owner_labels(&label, |owner| self.owner_label(owner, false));
+                    let first = *self.owners.entry(plain).or_insert(current);
+                    if first != current {
+                        self.collided.insert(first);
+                        self.collided.insert(current);
+                    }
+                    label
+                }
                 None => format!("{}{}", self.prefixes[prefix as usize], ent.canonical_class),
             };
             for (attr, value) in &ent.data_facts {
@@ -1089,6 +1143,8 @@ impl<'a> FactCollector<'a> {
                     facts.push((format!("{label}.{attr}"), value.clone()));
                 }
             }
+            // Content below an owner is listed under that owner.
+            let mut owned_prefix: Option<u32> = None;
             let graph = self.graph;
             for i in graph.child_range(current) {
                 if self.repeated[i] {
@@ -1103,15 +1159,30 @@ impl<'a> FactCollector<'a> {
                     }
                     _ => continue,
                 };
-                let positioned = child_scope == Scope::Full && edge.ord != canon::UNORDERED && !edge.cyclic;
-                let child_prefix = if !positioned {
+                let base = if current == root || ent.guid.is_none() || child_scope != Scope::Full {
                     prefix
                 } else {
-                    let text = format!("{}{}[{}]/", self.prefixes[prefix as usize], edge.label, edge.ord + 1);
+                    *owned_prefix.get_or_insert_with(|| {
+                        self.prefixes.push(format!("{label}/"));
+                        self.prefixes.len() as u32 - 1
+                    })
+                };
+                let positioned = child_scope == Scope::Full && edge.ord != canon::UNORDERED && !edge.cyclic;
+                let child_prefix = if !positioned {
+                    base
+                } else {
+                    let text = format!("{}{}[{}]/", self.prefixes[base as usize], edge.label, edge.ord + 1);
                     self.prefixes.push(text);
                     self.prefixes.len() as u32 - 1
                 };
                 stack.push((edge.target, child_scope, child_prefix, false));
+            }
+        }
+        for (path, _) in facts.iter_mut() {
+            if path.contains(OWNER_MARK) {
+                *path = Self::with_owner_labels(path, |owner| {
+                    self.owner_label(owner, self.collided.contains(&owner))
+                });
             }
         }
         number_repeated_paths(facts)

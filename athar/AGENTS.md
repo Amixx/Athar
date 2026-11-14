@@ -111,10 +111,12 @@ corpus evidence and tests.
   `change_scope` (`intrinsic`, `transitive`, `mixed`, `none`). `data` is unchanged if and only if `data_hash.old == data_hash.new`; each hash-backed aspect is changed exactly when its hash differs.
 - Editing a type representation map reports `geometry` and `data` on an occurrence that maps it, with the map's `(shape)` fact in `data_delta`; an occurrence that does not map it reports `data` only. Editing a swept profile shared with a material profile reports `geometry` and `data`; an untouched equal copy in the material profile leaves `data` unchanged.
 - A data change always carries a non-empty `data_delta` of
-  `{path, old, new}` entries. A path is the positions of the ordered lists
-  passed on the way from the entity (`MaterialLayers[2]/`), then the class
-  (with `[GlobalId=...]` when rooted) and attribute holding the value;
-  repeated paths are numbered in value order. A value longer than 96 bytes
+  `{path, old, new}` entries. A path is the owners (entities with a
+  GlobalId below the entity) and the positions of the ordered lists passed
+  on the way from the entity (`IfcPropertySet[Name=...]/`,
+  `MaterialLayers[2]/`), then the class and attribute holding the value; the
+  entity itself is `Class[GlobalId=...]`. Repeated paths are numbered in
+  value order. A value longer than 96 bytes
   is bounded: a text keeps its first 96 bytes followed by
   `… (N bytes, sha256:<digest>)`, any other value (a colour list, a table)
   is given as its byte length and a digest. Shape content that counts as
@@ -122,7 +124,7 @@ corpus evidence and tests.
   its canonical encoding, with one `(shape)` digest for the geometry below
   it. When every fact
   is equal and only the attachment differs (an unordered member moved between
-  two owners of one class), the single entry is `<entity>.(structure)` with
+  two owners of one class that have no GlobalId), the single entry is `<entity>.(structure)` with
   the two data hash prefixes.
 - A placement chain that passes through an `IfcGridPlacement`, or that ends
   in a `PlacementRelTo` cycle, is not evaluated. The entity summary then
@@ -170,6 +172,49 @@ corpus evidence and tests.
   one content are reported from the end of the file. `stats.orphan_property_sets`
   carries `{old, new, added, removed}` counts; streams emit
   `orphan_property_set_added` / `_removed` records.
-- `count_changed` in `property_deltas` lists (pset, name, inherited) keys
-  whose occurrence count differs, so an object gaining a second identical
-  property set is not a silent data change.
+- `property_deltas` compares properties per (pset name, property name). A key
+  can have several definitions: on the occurrence and on its type, or in two
+  sets of one name. All are kept (`PropertyEntry` carries `inherited` and the
+  set's `pset_guid`). The effective value is the occurrence's when it defines
+  the key, otherwise the type's; when definitions of the effective origin
+  disagree it is the sorted list of their distinct values.
+  - `changed`: the effective value or its unit differs. `added` / `removed`:
+    the key exists on one side only. Each carries `inherited`, the origin of the
+    effective value, and `old_definitions` / `new_definitions`
+    (`{origin, pset_guid, value}`) when a side has more than one definition.
+  - `origin_changed` (`old_origin`, `new_origin`: `occurrence` or `type`):
+    the effective value comes from the other origin, reported whether or not
+    the value differs. Removing an occurrence's override of a key its type
+    also defines leaves the key in place with the type's value: it is an
+    `origin_changed` entry and a `count_changed` entry for the occurrence,
+    plus a `changed` entry when the two values differ, never `removed`.
+  - `overridden_changed`: the type's value differs while the occurrence
+    overrides it on both sides.
+  - `count_changed`: the number of definitions of one origin
+    (`inherited`) differs, so an object gaining a second identical property
+    set is not a silent data change.
+- Numbers shown for people are real numbers in SI units, never the quantized
+  integers that are hashed. A real in `data_delta` is the hashed quantity
+  printed as a decimal with the unit its measure is normalized to
+  (`IFCLENGTHMEASURE: 3.25 m`, `m2`, `m3`, `rad`; a real without a measure
+  has no unit), so two values print alike exactly when they hash alike.
+  `property_deltas` values of length, area, volume, plane angle, time and
+  mass measures and of the matching quantities are converted from the file's
+  unit (or the unit the property or quantity names itself) and the entry
+  carries `unit` (`m`, `m2`, `m3`, `rad`, `s`, `kg`); other values are as
+  written, without `unit`. A value is also as written, without `unit`, when
+  the file's unit of the measure's type, or the unit the property names, is
+  not an `IfcSIUnit` or an `IfcConversionBasedUnit` (an
+  `IfcContextDependentUnit` has no factor), or the file declares none. A `changed` entry whose two
+  sides have different units carries `old_unit` beside `unit` (either may be
+  `null`), and a value whose unit changed is `changed` even when the number
+  is equal. Only single values, enumerated values and quantities are
+  extracted; bounded, list and table values appear in `data_delta` only. `placement_delta_mm` is in millimetres whatever
+  the file's length unit.
+- `data_delta` paths list content below an owner under that owner
+  (`IfcWallType[Name=...]/IfcPropertySet[Name=...]/IfcPropertySingleValue.NominalValue`),
+  so a property fact names the set and, for a type-level value, the type it
+  comes from. An owner is labelled by class and `Name`, not by GlobalId,
+  which no hash covers: a set or type whose GlobalId was regenerated keeps
+  its paths. Owners of one entity whose labels would be equal (two sets of
+  one name) carry `[Name=...,GlobalId=...]`.

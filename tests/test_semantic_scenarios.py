@@ -100,6 +100,30 @@ def test_pset_value_edit_is_a_data_change_on_that_product(scenario_seed):
     assert "changed" in victim["property_deltas"]
 
 
+def _occurrences_overriding_the_edited_type_property(baseline: str, mutated: str, type_guid: str) -> set[str]:
+    """GlobalIds of the occurrences defining the key whose value differs on the type."""
+
+    def keys(definitions) -> dict[tuple[str, str], object]:
+        return {
+            (definition.Name, prop.Name): prop.NominalValue.wrappedValue
+            for definition in definitions
+            if definition.is_a("IfcPropertySet")
+            for prop in definition.HasProperties
+            if prop.is_a("IfcPropertySingleValue") and prop.NominalValue is not None
+        }
+
+    old_type = ifcopenshell.open(baseline).by_guid(type_guid)
+    new_model = ifcopenshell.open(mutated)
+    old_values, new_values = keys(old_type.HasPropertySets), keys(new_model.by_guid(type_guid).HasPropertySets)
+    [edited] = [key for key, value in new_values.items() if old_values[key] != value]
+    return {
+        occurrence.GlobalId
+        for rel in new_model.by_type("IfcRelDefinesByProperties")
+        if edited in keys([rel.RelatingPropertyDefinition])
+        for occurrence in rel.RelatedObjects
+    }
+
+
 def test_type_pset_value_edit_is_inherited_data_change_on_occurrences(scenario_seed):
     baseline, mutate = scenario_seed
     mutated, mutation = mutate(mutations.edit_type_pset_value)
@@ -111,14 +135,17 @@ def test_type_pset_value_edit_is_inherited_data_change_on_occurrences(scenario_s
     # inherited, so it must surface as a data change on exactly the linked
     # occurrences, each matched by GlobalId.
     affected = set(mutation.affected_guids)
+    overriding = _occurrences_overriding_the_edited_type_property(baseline, mutated, mutation.victim_guid)
     victims = [item for item in report["modified"] if item["old"]["guid"] in affected]
     assert sorted(item["old"]["guid"] for item in victims) == sorted(mutation.affected_guids)
     for item in victims:
         assert item["match"]["reason"] == "guid"
         _assert_aspects(item, mutation.expected_victim_aspects)
         assert item["data_hash"]["old"] != item["data_hash"]["new"]
-        assert "property_deltas" in item
-        assert "changed" in item["property_deltas"]
+        # An occurrence that defines the same key itself keeps its effective
+        # value; the type's edit is then listed as overridden.
+        expected = "overridden_changed" if item["old"]["guid"] in overriding else "changed"
+        assert set(item["property_deltas"]) == {expected}, item
     for other in report["modified"]:
         if other["old"]["guid"] not in affected:
             assert other["change_scope"] == "transitive", other

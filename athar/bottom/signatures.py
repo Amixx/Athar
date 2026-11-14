@@ -35,8 +35,9 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
     ifc = open_ifc(filepath)
     schema = str(ifc.schema or "")
     _assert_supported_schema(schema)
-    unit_factors = _extract_unit_context(ifc).get("unit_factors", {})
-    property_index = extract_properties(ifc)
+    unit_context = _extract_unit_context(ifc)
+    unit_factors = unit_context.get("unit_factors", {})
+    property_index = extract_properties(ifc, unit_context["property_unit_factors"])
     orphan_property_sets = extract_orphan_property_sets(ifc)
     del ifc
 

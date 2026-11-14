@@ -201,7 +201,21 @@ entity a data edge points at also lists its own geometry attributes
 (scalars readable, aggregates and frames in canonical encoding, a digest when
 long, a triangle count and digest) and one `(shape)` digest standing for the
 geometry below it. Fact paths carry the positions of ordered lists passed over
-data edges; the report layer turns differing facts into `data_delta`. Every
+data edges; the report layer turns differing facts into `data_delta`.
+
+The root is labelled `Class[GlobalId=...]`. An owner (an entity with a
+GlobalId reached below the root: a property or quantity set, a type object)
+prefixes everything below it, and its key is its class and `Name`:
+`IfcWallType[Name=WT]/IfcPropertySet[Name=Pset_WallCommon]/`. `GlobalId` enters
+no hash, so it is not part of the key and a regenerated owner GlobalId leaves
+every path as it was. When two owners of one root would get the same label at
+the same place in the path (two sets of one name), both carry
+`[Name=...,GlobalId=...]`, so their definitions stay apart; a regenerated
+GlobalId on such an owner lists its facts as removed and added. An owner
+without a `Name` is the bare class, or `Class[GlobalId=...]` on collision. A
+fact therefore shows whether it comes from the occurrence or from its type. A real is
+listed as the hashed quantity in SI units with its unit (`3.25 m`), not as
+the quantized integer. Every
 fact value is bounded: verbatim up to 96 bytes. Beyond that a single string
 (bare or type-tagged, such as a `Description` or an `IfcText` property value)
 keeps the leading characters that fit, followed by `… (N bytes,
