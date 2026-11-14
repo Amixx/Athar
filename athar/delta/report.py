@@ -24,7 +24,10 @@ def build_delta_report(
 
     modified: list[dict] = []
     unchanged: list[dict] = []
+    guid_changed: list[dict] = []
     dropped_matches = 0
+    new_step_of = {pair.old_step: pair.new_step for pair in matches}
+    matched_new = set(new_step_of.values())
 
     for pair in matches:
         old_sig = old_signatures.get(pair.old_step)
@@ -33,6 +36,14 @@ def build_delta_report(
             dropped_matches += 1
             continue
         aspects = _aspect_diff(old_sig, new_sig)
+        relations, relations_inherited = _relation_changes(
+            old_bundle, new_bundle, old_sig, new_sig, new_step_of, matched_new
+        )
+        aspects["relations"] = "changed" if relations else "unchanged"
+        aspects["class"] = _changed(old_sig.canonical_class, new_sig.canonical_class)
+        mover = None
+        if aspects["placement"] == "changed":
+            mover = _placement_mover(old_signatures, new_signatures, old_sig, new_sig, new_step_of)
         item = {
             "old": _entity_summary(old_sig),
             "new": _entity_summary(new_sig),
@@ -42,8 +53,19 @@ def build_delta_report(
                 "old": old_sig.vh_data,
                 "new": new_sig.vh_data,
             },
-            "change_scope": _change_scope(aspects),
+            "change_scope": _change_scope(
+                aspects, inherited_placement=mover is not None, inherited_relations=relations_inherited
+            ),
         }
+        if mover is not None:
+            item["moved_with"] = _entity_summary(mover)
+        if pair.reason == "geometry_hash" and old_sig.guid != new_sig.guid:
+            item["identity"] = {"guid_changed": True, "old_guid": old_sig.guid, "new_guid": new_sig.guid}
+            guid_changed.append({"old": item["old"], "new": item["new"]})
+        if relations:
+            item["relations"] = relations
+        if aspects["class"] == "changed":
+            item["class"] = {"old_class": old_sig.canonical_class, "new_class": new_sig.canonical_class}
         if aspects["data"] == "changed":
             item["data_delta"] = _data_delta(old_sig, new_sig)
             if old_props is not None and new_props is not None:
@@ -63,6 +85,7 @@ def build_delta_report(
 
     modified.sort(key=lambda item: (item["new"]["class"], item["new"]["step_id"]))
     unchanged.sort(key=lambda item: (item["new"]["class"], item["new"]["step_id"]))
+    guid_changed.sort(key=lambda item: (item["new"]["class"], item["new"]["step_id"]))
     added.sort(key=lambda item: (item["class"], item["step_id"]))
     deleted.sort(key=lambda item: (item["class"], item["step_id"]))
     orphans_added, orphans_removed = _orphan_property_set_diff(
@@ -87,6 +110,7 @@ def build_delta_report(
             "modified_change_scope": _scope_stats(modified),
             "placement_cohorts": _placement_cohorts(modified),
             "dropped_matches": dropped_matches,
+            "guid_changed": len(guid_changed),
             "orphan_property_sets": {
                 "old": len(old_bundle.orphan_property_sets),
                 "new": len(new_bundle.orphan_property_sets),
@@ -99,6 +123,7 @@ def build_delta_report(
         "deleted": deleted,
         "modified": modified,
         "unchanged": unchanged,
+        "guid_changed": guid_changed,
         "orphan_property_sets": {"added": orphans_added, "removed": orphans_removed},
     }
 
@@ -180,6 +205,97 @@ def _entity_summary(sig: SignatureVector) -> dict:
     return summary
 
 
+def _relation_changes(
+    old_bundle: SignatureBundle,
+    new_bundle: SignatureBundle,
+    old_sig: SignatureVector,
+    new_sig: SignatureVector,
+    new_step_of: dict[int, int],
+    matched_new: set[int],
+) -> tuple[list[dict], bool]:
+    """Relations of a matched pair whose targets are not the same entities.
+
+    A target with a signature is the same entity when it is matched to the
+    new target. A target without one (a type object) is the same when the
+    GlobalIds are equal or, like interchangeable entities in the matcher,
+    when class and content are equal; a GlobalId several entities of its
+    file carry identifies none of them. Each entry lists the targets only
+    the old side names and the targets only the new side names.
+
+    The flag is true when every listed target is an added or deleted entity:
+    the pair then differs only because a neighbour appeared or disappeared.
+    """
+    if not old_sig.relation_targets and not new_sig.relation_targets:
+        return [], False
+
+    def by_relation(bundle: SignatureBundle, sig: SignatureVector, matched: dict[int, int] | None) -> dict:
+        """Per (relation, role): target identity -> (summary, content, unmatched)."""
+        out: dict[tuple[str, str], dict[tuple, tuple]] = defaultdict(dict)
+        for target in sig.relation_targets:
+            root = bundle.signatures.get(target.step_id)
+            if root is not None:
+                if matched is None:
+                    identity = ("signature", target.step_id)
+                    unmatched = target.step_id not in matched_new
+                else:
+                    step = matched.get(target.step_id)
+                    identity = ("signature", step) if step is not None else ("unmatched", target.step_id)
+                    unmatched = step is None
+                out[(target.relation, target.role)][identity] = (_entity_summary(root), None, unmatched)
+            else:
+                related = bundle.related_entities[target.step_id]
+                summary = {
+                    "step_id": target.step_id,
+                    "guid": related.guid,
+                    "name": related.name,
+                    "class": related.canonical_class,
+                }
+                content = (related.canonical_class, related.content)
+                if related.guid is None or related.guid_shared:
+                    identity = ("related", matched is None, target.step_id)
+                else:
+                    identity = ("guid", related.guid)
+                out[(target.relation, target.role)][identity] = (summary, content, False)
+        return out
+
+    def order(target: tuple) -> tuple:
+        summary = target[0]
+        return (summary["class"], summary["guid"] or "", summary["step_id"])
+
+    old_targets = by_relation(old_bundle, old_sig, new_step_of)
+    new_targets = by_relation(new_bundle, new_sig, None)
+    changes: list[dict] = []
+    inherited = True
+    for key in sorted(old_targets.keys() | new_targets.keys()):
+        old = old_targets.get(key, {})
+        new = new_targets.get(key, {})
+        only_old = sorted((target for identity, target in old.items() if identity not in new), key=order)
+        only_new = sorted((target for identity, target in new.items() if identity not in old), key=order)
+        equal_content = Counter(content for _, content, _ in only_old if content is not None) & Counter(
+            content for _, content, _ in only_new if content is not None
+        )
+        for side in (only_old, only_new):
+            left = Counter(equal_content)
+            kept = []
+            for target in side:
+                if left[target[1]] > 0:
+                    left[target[1]] -= 1
+                else:
+                    kept.append(target)
+            side[:] = kept
+        if only_old or only_new:
+            inherited = inherited and all(unmatched for _, _, unmatched in (*only_old, *only_new))
+            changes.append(
+                {
+                    "relation": key[0],
+                    "role": key[1],
+                    "old": [summary for summary, _, _ in only_old],
+                    "new": [summary for summary, _, _ in only_new],
+                }
+            )
+    return changes, bool(changes) and inherited
+
+
 def _aspect_diff(old_sig: SignatureVector, new_sig: SignatureVector) -> dict:
     placement_delta = _placement_delta_mm(old_sig.placement, new_sig.placement)
     return {
@@ -202,6 +318,15 @@ def _data_delta(old_sig: SignatureVector, new_sig: SignatureVector) -> list[dict
     old_facts = dict(old_sig.data_facts)
     new_facts = dict(new_sig.data_facts)
     out: list[dict] = []
+    if old_sig.canonical_class != new_sig.canonical_class:
+        # The facts of the entity itself are compared under the new class.
+        old_label = f"{old_sig.canonical_class}[GlobalId={old_sig.guid}]."
+        new_label = f"{new_sig.canonical_class}[GlobalId={new_sig.guid}]."
+        old_facts = {
+            (new_label + path[len(old_label) :] if path.startswith(old_label) else path): value
+            for path, value in old_facts.items()
+        }
+        out.append({"path": f"{new_label}(class)", "old": old_sig.canonical_class, "new": new_sig.canonical_class})
     for path in sorted(set(old_facts) | set(new_facts)):
         old_value = old_facts.get(path)
         new_value = new_facts.get(path)
@@ -210,7 +335,8 @@ def _data_delta(old_sig: SignatureVector, new_sig: SignatureVector) -> list[dict
         out.append({"path": path, "old": old_value, "new": new_value})
     if not out:
         # The same values under the same paths, attached differently (an
-        # unordered member moved between two owners of one class).
+        # unordered member moved between two owners of one class that have
+        # no GlobalId).
         label = new_sig.canonical_class if new_sig.guid is None else f"{new_sig.canonical_class}[GlobalId={new_sig.guid}]"
         out.append({"path": f"{label}.(structure)", "old": old_sig.vh_data[:12], "new": new_sig.vh_data[:12]})
     return out
@@ -236,12 +362,48 @@ def _diagnostic_summary(bundle: SignatureBundle) -> dict:
     }
 
 
-def _change_scope(aspects: dict) -> str:
-    intrinsic_changed = any(
-        aspects.get(name) == "changed"
-        for name in ("geometry", "data", "placement")
+def _placement_mover(
+    old_signatures: dict[int, SignatureVector],
+    new_signatures: dict[int, SignatureVector],
+    old_sig: SignatureVector,
+    new_sig: SignatureVector,
+    new_step_of: dict[int, int],
+) -> SignatureVector | None:
+    """The new-side ancestor a pair whose world placement changed moved with.
+
+    Walks the placement parents of both sides together and stops at the
+    first pair whose own local placement differs or whose parents are not
+    matched to each other. ``None`` when that pair is the given one, or when
+    the chain ends without such a pair.
+    """
+    start = new_sig.step_id
+    visited = {start}
+    while old_sig.local_placement == new_sig.local_placement:
+        old_parent, new_parent = old_sig.placement_parent, new_sig.placement_parent
+        if old_parent is None and new_parent is None:
+            return None
+        if old_parent is None or new_parent is None or new_step_of.get(old_parent) != new_parent:
+            break
+        if new_parent in visited:
+            return None
+        visited.add(new_parent)
+        old_sig, new_sig = old_signatures[old_parent], new_signatures[new_parent]
+    return None if new_sig.step_id == start else new_sig
+
+
+def _change_scope(aspects: dict, *, inherited_placement: bool, inherited_relations: bool) -> str:
+    """Whether the pair itself changed, its surroundings did, or both.
+
+    ``inherited_placement``: the placement changed only through an ancestor.
+    ``inherited_relations``: the relations differ only in added or deleted
+    targets.
+    """
+    intrinsic_changed = (
+        any(aspects.get(name) == "changed" for name in ("geometry", "data", "class"))
+        or (aspects.get("placement") == "changed" and not inherited_placement)
+        or (aspects.get("relations") == "changed" and not inherited_relations)
     )
-    transitive_changed = aspects.get("topology") == "changed"
+    transitive_changed = aspects.get("topology") == "changed" or inherited_placement or inherited_relations
     if intrinsic_changed and transitive_changed:
         return "mixed"
     if intrinsic_changed:
@@ -265,6 +427,7 @@ def _placement_cohorts(modified: list[dict]) -> list[dict]:
     never join a cohort.
     """
     groups: dict[tuple[float, float, float], list[int]] = {}
+    causes: dict[tuple[float, float, float], list[dict]] = {}
     for item in modified:
         aspects = item["aspects"]
         if aspects.get("placement") != "changed":
@@ -276,11 +439,15 @@ def _placement_cohorts(modified: list[dict]) -> list[dict]:
         if key == (0.0, 0.0, 0.0):
             continue
         groups.setdefault(key, []).append(item["new"]["step_id"])
-    cohorts = [
-        {"delta_mm": list(delta), "count": len(members), "members": sorted(members)}
-        for delta, members in groups.items()
-        if len(members) >= 2
-    ]
+        causes.setdefault(key, []).append(item.get("moved_with", item["new"]))
+    cohorts = []
+    for delta, members in groups.items():
+        if len(members) < 2:
+            continue
+        cohort = {"delta_mm": list(delta), "count": len(members), "members": sorted(members)}
+        if len({cause["step_id"] for cause in causes[delta]}) == 1:
+            cohort["root_cause"] = causes[delta][0]
+        cohorts.append(cohort)
     cohorts.sort(key=lambda cohort: (-cohort["count"], cohort["delta_mm"]))
     return cohorts
 

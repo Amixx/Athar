@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 
 HashHex = str
@@ -67,6 +68,34 @@ class Coverage:
     ignored_by_design: dict[str, int] = field(default_factory=dict)
 
 
+class RelationTarget(NamedTuple):
+    """An entity a root names through a relationship.
+
+    ``relation`` is the relationship class and ``role`` its attribute holding
+    the named entity. ``step_id`` is a signature root of the same file or a
+    key of ``SignatureBundle.related_entities``.
+    """
+
+    relation: str
+    role: str
+    step_id: int
+
+
+class RelatedEntity(NamedTuple):
+    """A relation target without a signature, such as a type object.
+
+    ``content`` is a digest of the entity's content, ``GlobalId`` excluded.
+    ``guid_shared`` is true when another entity of the file carries the same
+    ``GlobalId``.
+    """
+
+    guid: str | None
+    canonical_class: str
+    name: str | None
+    content: HashHex
+    guid_shared: bool
+
+
 @dataclass
 class SignatureVector:
     """Signature vector of one root: a product, spatial element or the project.
@@ -75,6 +104,11 @@ class SignatureVector:
     the engine does not evaluate (``IfcGridPlacement``) has no matrix;
     ``placement_unresolved`` then holds a digest of the chain's content and
     ``centroid`` and ``aabb`` are ``None``.
+
+    ``local_placement`` is the quantized frame relative to the object
+    placement of ``placement_parent``, the root (by step id) owning the
+    nearest placement above this one that places a root; without such a root
+    it is relative to the end of the local placement chain.
     """
 
     step_id: int
@@ -91,6 +125,9 @@ class SignatureVector:
     name: str | None = None
     data_facts: tuple[tuple[str, str], ...] = ()
     placement_unresolved: HashHex | None = None
+    relation_targets: tuple[RelationTarget, ...] = ()
+    local_placement: tuple[int, ...] | None = None
+    placement_parent: int | None = None
 
 
 @dataclass
@@ -106,3 +143,4 @@ class SignatureBundle:
     coverage: Coverage
     property_index: dict[int, list[PropertyEntry]] | None = None
     orphan_property_sets: tuple[OrphanPropertySet, ...] = ()
+    related_entities: dict[int, RelatedEntity] = field(default_factory=dict)

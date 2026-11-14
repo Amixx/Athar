@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from ._native import native
 from .constants import CANON_VERSION
-from .types import Coverage, ParseDiagnostics, SignatureBundle, SignatureVector
+from .types import (
+    Coverage,
+    ParseDiagnostics,
+    RelatedEntity,
+    RelationTarget,
+    SignatureBundle,
+    SignatureVector,
+)
 
 
 def build_signature_bundle(filepath: str) -> SignatureBundle:
@@ -47,6 +54,7 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
         edge_stats_map,
         (dangling, cycle_breaks, warnings),
         (unknown_relationships, unreached, ignored_by_design),
+        (relation_labels, related_entities),
     ) = native_mod.build_signature_bundle(filepath, schema_json, unit_factors)
 
     signatures: dict[int, SignatureVector] = {}
@@ -59,10 +67,10 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
         vh_geometry,
         vh_data,
         vh_topology,
-        (placement, placement_unresolved),
+        (placement, placement_unresolved, local_placement, placement_parent),
         centroid,
         aabb,
-        data_facts,
+        (data_facts, relation_targets),
     ) in sigs:
         signatures[step_id] = SignatureVector(
             step_id=step_id,
@@ -79,6 +87,11 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
             canon_version=CANON_VERSION,
             data_facts=tuple((path, value) for path, value in data_facts),
             placement_unresolved=placement_unresolved,
+            local_placement=tuple(local_placement) if local_placement is not None else None,
+            placement_parent=placement_parent,
+            relation_targets=tuple(
+                RelationTarget(*relation_labels[label], target) for label, target in relation_targets
+            ),
         )
 
     diagnostics = ParseDiagnostics(
@@ -100,4 +113,5 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
         ),
         property_index=property_index,
         orphan_property_sets=orphan_property_sets,
+        related_entities={step: RelatedEntity(*label) for step, label in related_entities.items()},
     )

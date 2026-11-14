@@ -227,6 +227,273 @@ def relation(item: dict, name: str) -> dict:
     return change
 
 
+def targets(change: dict) -> tuple[list[str], list[str]]:
+    return [t["name"] for t in change["old"]], [t["name"] for t in change["new"]]
+
+
+def test_recontained_element_names_old_and_new_container(tmp_path):
+    def move(model):
+        w1 = model["W1"]
+        model.containment["L1"].RelatedElements = [model["W2"]]
+        model.containment["L2"].RelatedElements = [model["W3"], w1]
+
+    report = diff(tmp_path, move)
+
+    assert names(report["modified"]) == {"W1", "L1", "L2"}
+    w1 = modified(report, "W1")
+    assert w1["aspects"]["relations"] == "changed"
+    assert w1["aspects"]["placement"] == "unchanged"
+    assert w1["change_scope"] == "intrinsic"
+    change = relation(w1, "IfcRelContainedInSpatialStructure")
+    assert change["role"] == "RelatingStructure"
+    assert [(t["guid"], t["class"], t["name"]) for t in change["old"]] == [(guid("L1"), "IfcBuildingStorey", "L1")]
+    assert [(t["guid"], t["class"], t["name"]) for t in change["new"]] == [(guid("L2"), "IfcBuildingStorey", "L2")]
+    for storey in ("L1", "L2"):
+        item = modified(report, storey)
+        assert item["aspects"]["topology"] == "changed"
+        assert item["aspects"]["relations"] == "unchanged"
+        assert item["change_scope"] == "transitive"
+
+
+def test_reaggregated_part_names_old_and_new_whole(tmp_path):
+    def parts(model):
+        for name in ("A1", "A2"):
+            model.element("IfcElementAssembly", name, model["L1"], 0.0)
+        model.contain_more("L1", [model["A1"], model["A2"]])
+        part = model.element("IfcMember", "M", model["A1"], 0.0)
+        model.named["parts A"] = model.rel("IfcRelAggregates", RelatingObject=model["A1"], RelatedObjects=[part])
+
+    def move(model):
+        model.file.remove(model["parts A"])
+        model.rel("IfcRelAggregates", RelatingObject=model["A2"], RelatedObjects=[model["M"]])
+
+    report = diff(tmp_path, move, setup=parts)
+
+    change = relation(modified(report, "M"), "IfcRelAggregates")
+    assert (change["role"], *targets(change)) == ("RelatingObject", ["A1"], ["A2"])
+    assert {name: modified(report, name)["change_scope"] for name in ("A1", "A2")} == {"A1": "transitive", "A2": "transitive"}
+
+
+def test_retyped_element_names_old_and_new_type(tmp_path):
+    def types(model):
+        f = model.file
+        for name in ("T1", "T2"):
+            model.named[name] = f.create_entity("IfcWallType", GlobalId=guid(name), Name=name, PredefinedType="STANDARD")
+        model.named["typing"] = model.rel("IfcRelDefinesByType", RelatingType=model["T1"], RelatedObjects=[model["W1"], model["W2"]])
+
+    def retype(model):
+        model["typing"].RelatedObjects = [model["W2"]]
+        model.rel("IfcRelDefinesByType", RelatingType=model["T2"], RelatedObjects=[model["W1"]])
+
+    report = diff(tmp_path, retype, setup=types)
+
+    assert names(report["modified"]) == {"W1"}
+    change = relation(modified(report, "W1"), "IfcRelDefinesByType")
+    assert change["role"] == "RelatingType"
+    assert [(t["guid"], t["class"]) for t in change["old"]] == [(guid("T1"), "IfcWallType")]
+    assert [(t["guid"], t["class"]) for t in change["new"]] == [(guid("T2"), "IfcWallType")]
+
+
+def test_retyping_between_two_types_sharing_a_guid_is_reported(tmp_path):
+    def types(model):
+        f = model.file
+        for name in ("T1", "T2"):
+            model.named[name] = f.create_entity("IfcWallType", GlobalId=guid("T"), Name=name, PredefinedType="STANDARD")
+        model.named["typing"] = model.rel("IfcRelDefinesByType", RelatingType=model["T1"], RelatedObjects=[model["W1"]])
+
+    def retype(model):
+        model["typing"].RelatingType = model["T2"]
+
+    report = diff(tmp_path, retype, setup=types)
+
+    change = relation(modified(report, "W1"), "IfcRelDefinesByType")
+    assert targets(change) == (["T1"], ["T2"])
+
+
+def test_type_with_a_regenerated_guid_is_the_same_type(tmp_path):
+    def typed(model):
+        model.named["T"] = model.file.create_entity("IfcWallType", GlobalId=guid("T"), Name="T", PredefinedType="STANDARD")
+        model.rel("IfcRelDefinesByType", RelatingType=model["T"], RelatedObjects=[model["W1"]])
+
+    def regenerate(model):
+        model["T"].GlobalId = guid("T again")
+
+    assert diff(tmp_path, regenerate, setup=typed)["modified"] == []
+
+
+def test_rehosted_opening_and_refilled_door_name_their_targets(tmp_path):
+    def openings(model):
+        for name, wall in (("O1", "W1"), ("O2", "W2")):
+            opening = model.element("IfcOpeningElement", name, model[wall], 1.0)
+            model.named[f"void {name}"] = model.rel(
+                "IfcRelVoidsElement", RelatingBuildingElement=model[wall], RelatedOpeningElement=opening
+            )
+        door = model.element("IfcDoor", "D", model["L1"], 1.0)
+        model.contain_more("L1", [door])
+        model.named["fill"] = model.rel("IfcRelFillsElement", RelatingOpeningElement=model["O1"], RelatedBuildingElement=door)
+
+    def swap(model):
+        model["void O1"].RelatingBuildingElement = model["W2"]
+        model["void O2"].RelatingBuildingElement = model["W1"]
+        model["fill"].RelatingOpeningElement = model["O2"]
+
+    report = diff(tmp_path, swap, setup=openings)
+
+    void = relation(modified(report, "O1"), "IfcRelVoidsElement")
+    assert (void["role"], *targets(void)) == ("RelatingBuildingElement", ["W1"], ["W2"])
+    fill = relation(modified(report, "D"), "IfcRelFillsElement")
+    assert (fill["role"], *targets(fill)) == ("RelatingOpeningElement", ["O1"], ["O2"])
+
+
+def test_renested_part_names_old_and_new_host(tmp_path):
+    def nest(model):
+        part = model.element("IfcDiscreteAccessory", "N", model["W1"], 0.0)
+        model.named["nesting"] = model.rel("IfcRelNests", RelatingObject=model["W1"], RelatedObjects=[part])
+
+    def move(model):
+        model["nesting"].RelatingObject = model["W2"]
+
+    report = diff(tmp_path, move, setup=nest)
+
+    change = relation(modified(report, "N"), "IfcRelNests")
+    assert (change["role"], *targets(change)) == ("RelatingObject", ["W1"], ["W2"])
+    for wall in ("W1", "W2"):
+        assert modified(report, wall)["aspects"]["relations"] == "unchanged"
+        assert modified(report, wall)["change_scope"] == "transitive"
+
+
+def test_same_relations_between_matched_entities_report_nothing(tmp_path):
+    def renumber(model):
+        model.file.create_entity("IfcCartesianPoint", Coordinates=(9.0, 9.0, 9.0))
+        w3 = model["W3"]
+        model.file.remove(model.containment["L2"])
+        model.contain("L2", [w3])
+
+    report = diff(tmp_path, renumber)
+    assert report["modified"] == []
+
+
+def raise_building(model):
+    location = model["B"].ObjectPlacement.RelativePlacement.Location
+    location.Coordinates = (0.0, 0.0, 0.5 * model.scale)
+
+
+def test_children_of_a_moved_ancestor_move_with_it(tmp_path):
+    report = diff(tmp_path, raise_building)
+
+    assert names(report["modified"]) == {"B", "L1", "L2", "W1", "W2", "W3"}
+    building = modified(report, "B")
+    assert building["change_scope"] == "intrinsic"
+    assert "moved_with" not in building
+    for name in ("L1", "L2", "W1", "W2", "W3"):
+        item = modified(report, name)
+        assert item["aspects"]["placement"] == "changed"
+        assert item["aspects"]["placement_delta_mm"] == (0.0, 0.0, 500.0)
+        assert item["change_scope"] == "transitive"
+        assert (item["moved_with"]["guid"], item["moved_with"]["class"]) == (guid("B"), "IfcBuilding")
+    assert report["stats"]["modified_change_scope"] == {"intrinsic": 1, "transitive": 5, "mixed": 0}
+
+    [cohort] = report["stats"]["placement_cohorts"]
+    assert cohort["delta_mm"] == [0.0, 0.0, 500.0]
+    assert cohort["count"] == 6
+    assert cohort["root_cause"]["guid"] == guid("B")
+
+
+def test_nearest_moved_ancestor_is_named(tmp_path):
+    def raise_both(model):
+        raise_building(model)
+        model["L1"].ObjectPlacement.RelativePlacement.Location.Coordinates = (1.0 * model.scale, 0.0, 0.0)
+
+    report = diff(tmp_path, raise_both)
+
+    assert "moved_with" not in modified(report, "L1")
+    assert modified(report, "L1")["change_scope"] == "intrinsic"
+    assert modified(report, "W1")["moved_with"]["guid"] == guid("L1")
+    assert modified(report, "W3")["moved_with"]["guid"] == guid("B")
+    cohorts = {tuple(cohort["delta_mm"]): cohort for cohort in report["stats"]["placement_cohorts"]}
+    assert cohorts[(1000.0, 0.0, 500.0)]["root_cause"]["guid"] == guid("L1")
+    assert cohorts[(0.0, 0.0, 500.0)]["root_cause"]["guid"] == guid("B")
+
+
+def test_elements_moved_one_by_one_share_no_root_cause(tmp_path):
+    def shift(model):
+        for name in ("W1", "W2"):
+            location = model[name].ObjectPlacement.RelativePlacement.Location
+            location.Coordinates = (location.Coordinates[0], 2.0 * model.scale, 0.0)
+
+    report = diff(tmp_path, shift)
+
+    assert {name: modified(report, name)["change_scope"] for name in ("W1", "W2")} == {"W1": "intrinsic", "W2": "intrinsic"}
+    [cohort] = report["stats"]["placement_cohorts"]
+    assert cohort["count"] == 2 and "root_cause" not in cohort
+
+
+def test_placement_rehung_under_another_parent_is_intrinsic(tmp_path):
+    def rehang(model):
+        model["W1"].ObjectPlacement.PlacementRelTo = model["L2"].ObjectPlacement
+
+    report = diff(tmp_path, rehang)
+
+    w1 = modified(report, "W1")
+    assert w1["aspects"]["placement_delta_mm"] == (0.0, 0.0, 3000.0)
+    assert w1["change_scope"] == "intrinsic" and "moved_with" not in w1
+
+
+def test_placement_without_an_owner_belongs_to_the_element_below_it(tmp_path):
+    def intermediate(model):
+        w1 = model["W1"]
+        between = model.file.create_entity(
+            "IfcLocalPlacement", PlacementRelTo=model["L1"].ObjectPlacement, RelativePlacement=model.axes(0.0, 0.0, 0.0)
+        )
+        w1.ObjectPlacement.PlacementRelTo = between
+        model.named["between"] = between
+
+    def shift(model):
+        model["between"].RelativePlacement.Location.Coordinates = (0.0, 1.0 * model.scale, 0.0)
+
+    report = diff(tmp_path, shift, setup=intermediate)
+
+    assert names(report["modified"]) == {"W1"}
+    w1 = modified(report, "W1")
+    assert w1["change_scope"] == "intrinsic" and "moved_with" not in w1
+
+
+def test_regenerated_guid_is_flagged_on_the_content_match(tmp_path):
+    def regenerate(model):
+        model["W1"].GlobalId = guid("W1 again")
+
+    report = diff(tmp_path, regenerate)
+
+    assert report["modified"] == [] and report["added"] == [] and report["deleted"] == []
+    [item] = [item for item in report["unchanged"] if item["new"]["name"] == "W1"]
+    assert item["match"]["reason"] == "geometry_hash"
+    assert item["identity"] == {"guid_changed": True, "old_guid": guid("W1"), "new_guid": guid("W1 again")}
+    assert report["stats"]["guid_changed"] == 1
+    [listed] = report["guid_changed"]
+    assert (listed["old"]["guid"], listed["new"]["guid"]) == (guid("W1"), guid("W1 again"))
+    assert all("identity" not in other for other in report["unchanged"] if other is not item)
+
+
+def test_unchanged_guids_are_not_flagged(tmp_path):
+    report = diff(tmp_path, lambda model: None)
+    assert report["stats"]["guid_changed"] == 0 and report["guid_changed"] == []
+
+
+def test_regenerated_guid_with_a_changed_relation_is_modified_and_flagged(tmp_path):
+    def regenerate_and_move(model):
+        w1 = model["W1"]
+        w1.GlobalId = guid("W1 again")
+        model.containment["L1"].RelatedElements = [model["W2"]]
+        model.containment["L2"].RelatedElements = [model["W3"], w1]
+
+    report = diff(tmp_path, regenerate_and_move)
+
+    item = modified(report, "W1 again")
+    assert item["identity"]["old_guid"] == guid("W1")
+    assert item["aspects"]["relations"] == "changed"
+    assert report["stats"]["guid_changed"] == 1
+
+
 def typed_wall(model, values: dict[str, object] | None):
     """Give W1 a type that defines ``Pset_X`` with ``values`` (no set when ``None``)."""
     sets = [] if values is None else [model.pset("Pset_X", values, tag="type")]
@@ -487,3 +754,255 @@ def test_value_whose_unit_changed_is_a_change_carrying_both_units(tmp_path):
     assert changed == {**expected, "unit": None}
 
 
+def test_placement_delta_is_in_millimetres_whatever_the_file_unit(tmp_path):
+    report = diff(tmp_path, raise_building, length_prefix="MILLI")
+    assert modified(report, "B")["aspects"]["placement_delta_mm"] == (0.0, 0.0, 500.0)
+
+
+def test_renested_port_names_old_and_new_element(tmp_path):
+    def ports(model):
+        for name in ("P1", "P2"):
+            model.element("IfcFlowSegment", name, model["L1"], 0.0)
+        model.contain_more("L1", [model["P1"], model["P2"]])
+        port = model.element("IfcDistributionPort", "Port", model["P2"], 0.0)
+        model.named["nesting"] = model.rel("IfcRelNests", RelatingObject=model["P2"], RelatedObjects=[port])
+
+    def renest(model):
+        model["nesting"].RelatingObject = model["P1"]
+
+    report = diff(tmp_path, renest, setup=ports)
+
+    assert names(report["modified"]) == {"Port", "P1", "P2"}
+    change = relation(modified(report, "Port"), "IfcRelNests")
+    assert (change["role"], *targets(change)) == ("RelatingObject", ["P2"], ["P1"])
+    for name in ("P1", "P2"):
+        aspects = modified(report, name)["aspects"]
+        assert {aspect for aspect, state in aspects.items() if state == "changed"} == {"topology"}
+        assert modified(report, name)["change_scope"] == "transitive"
+
+
+def test_retargeted_space_boundary_is_reported_on_the_space(tmp_path):
+    def boundary(model):
+        space = model.spatial("IfcSpace", "S", model["L1"], 0.0)
+        model.aggregate(model["L1"], [space])
+        model.named["boundary"] = model.rel(
+            "IfcRelSpaceBoundary",
+            RelatingSpace=space,
+            RelatedBuildingElement=model["W1"],
+            PhysicalOrVirtualBoundary="PHYSICAL",
+            InternalOrExternalBoundary="INTERNAL",
+        )
+
+    def retarget(model):
+        model["boundary"].RelatedBuildingElement = model["W2"]
+
+    report = diff(tmp_path, retarget, setup=boundary)
+
+    change = relation(modified(report, "S"), "IfcRelSpaceBoundary")
+    assert (change["role"], *targets(change)) == ("RelatedBuildingElement", ["W1"], ["W2"])
+    lost = relation(modified(report, "W1"), "IfcRelSpaceBoundary")
+    assert (lost["role"], *targets(lost)) == ("RelatingSpace", ["S"], [])
+    gained = relation(modified(report, "W2"), "IfcRelSpaceBoundary")
+    assert (gained["role"], *targets(gained)) == ("RelatingSpace", [], ["S"])
+
+
+def test_covering_moved_to_another_element_is_reported_on_the_covering(tmp_path):
+    def covering(model):
+        cover = model.element("IfcCovering", "C", model["L1"], 0.0)
+        model.contain_more("L1", [cover])
+        model.named["covers"] = model.rel(
+            "IfcRelCoversBldgElements", RelatingBuildingElement=model["W1"], RelatedCoverings=[cover]
+        )
+
+    def move(model):
+        model["covers"].RelatingBuildingElement = model["W2"]
+
+    report = diff(tmp_path, move, setup=covering)
+
+    change = relation(modified(report, "C"), "IfcRelCoversBldgElements")
+    assert (change["role"], *targets(change)) == ("RelatingBuildingElement", ["W1"], ["W2"])
+    assert {modified(report, wall)["change_scope"] for wall in ("W1", "W2")} == {"transitive"}
+
+
+
+def reclassify(model, name: str, ifc_class: str):
+    """Replace the element ``name`` by one of ``ifc_class`` with the same GlobalId, placement and shape."""
+    old = model[name]
+    new = model.file.create_entity(
+        ifc_class,
+        GlobalId=old.GlobalId,
+        Name=old.Name,
+        ObjectPlacement=old.ObjectPlacement,
+        Representation=old.Representation,
+    )
+    for relation in model.file.by_type("IfcRelContainedInSpatialStructure"):
+        if old in relation.RelatedElements:
+            relation.RelatedElements = [new if element == old else element for element in relation.RelatedElements]
+    model.file.remove(old)
+    model.named[name] = new
+
+
+def test_reclassified_element_keeps_its_identity(tmp_path):
+    def proxy_to_wall(model):
+        reclassify(model, "W1", "IfcBuildingElementProxy")
+
+    report = diff(tmp_path, proxy_to_wall)
+
+    assert report["added"] == [] and report["deleted"] == []
+    item = modified(report, "W1")
+    assert item["match"] == {"score": 0.7, "reason": "guid_reclassified"}
+    assert item["class"] == {"old_class": "IfcWall", "new_class": "IfcBuildingElementProxy"}
+    assert item["aspects"]["class"] == "changed"
+    assert item["aspects"]["geometry"] == "unchanged"
+    assert item["aspects"]["placement"] == "unchanged"
+    assert item["aspects"]["relations"] == "unchanged"
+    label = f"IfcBuildingElementProxy[GlobalId={guid('W1')}]"
+    assert item["data_delta"] == [{"path": f"{label}.(class)", "old": "IfcWall", "new": "IfcBuildingElementProxy"}]
+    assert report["stats"]["matcher_diagnostics"]["matched_by_tier"]["guid_reclassified"] == 1
+    assert modified(report, "L1")["change_scope"] == "transitive"
+    assert all(other["aspects"]["class"] == "unchanged" for other in report["unchanged"])
+
+
+def test_reclassified_element_reports_what_else_differs(tmp_path):
+    def reclassify_and_edit(model):
+        reclassify(model, "W1", "IfcBuildingElementProxy")
+        model["W1"].Name = "W1 corrected"
+        model["W1"].ObjectPlacement.RelativePlacement.Location.Coordinates = (0.0, 1.0, 0.0)
+
+    report = diff(tmp_path, reclassify_and_edit)
+
+    [item] = [item for item in report["modified"] if item["new"]["guid"] == guid("W1")]
+    assert item["aspects"]["class"] == "changed"
+    assert item["aspects"]["placement_delta_mm"] == (0.0, 1000.0, 0.0)
+    label = f"IfcBuildingElementProxy[GlobalId={guid('W1')}]"
+    assert {"path": f"{label}.Name", "old": "W1", "new": "W1 corrected"} in item["data_delta"]
+
+
+def test_classes_never_pair_without_the_same_unique_guid(tmp_path):
+    def replace(model):
+        reclassify(model, "W1", "IfcBuildingElementProxy")
+        model["W1"].GlobalId = guid("another element")
+
+    report = diff(tmp_path, replace)
+
+    assert [item["class"] for item in report["added"]] == ["IfcBuildingElementProxy"]
+    assert [item["class"] for item in report["deleted"]] == ["IfcWall"]
+
+
+def twin_ports(model, order: tuple[str, str], *, port_guids: dict[str, str]):
+    """Pipes A and B, each with a nested port of one name at one world position."""
+    for name, x in (("A", 0.0), ("B", 2.0)):
+        model.element("IfcFlowSegment", name, model["L1"], x)
+    model.contain_more("L1", [model["A"], model["B"]])
+    for name in order:
+        port = model.file.create_entity(
+            "IfcDistributionPort",
+            GlobalId=port_guids[name],
+            Name="Port",
+            ObjectPlacement=model.placement(model["L1"], 1.0, 0.0, 0.0),
+        )
+        model.file.create_entity(
+            "IfcRelNests", GlobalId=guid(f"nests {name}"), RelatingObject=model[name], RelatedObjects=[port]
+        )
+
+
+def test_equal_ports_written_in_another_order_stay_with_their_pipes(tmp_path):
+    port_guids = {"A": guid("PA"), "B": guid("PB")}
+    old = Model()
+    twin_ports(old, ("A", "B"), port_guids=port_guids)
+    new = Model()
+    twin_ports(new, ("B", "A"), port_guids=port_guids)
+    for entity in new.file.by_type("IfcRoot"):
+        entity.GlobalId = guid(f"{entity.GlobalId} again")
+
+    report = diff_files(old.write(tmp_path / "old.ifc"), new.write(tmp_path / "new.ifc"))
+
+    assert report["modified"] == [] and report["added"] == [] and report["deleted"] == []
+    assert report["stats"]["guid_changed"] == len(report["unchanged"]) > 0
+
+
+def test_equal_ports_sharing_a_guid_stay_with_their_pipes(tmp_path):
+    port_guids = {"A": guid("P"), "B": guid("P")}
+    old = Model()
+    twin_ports(old, ("A", "B"), port_guids=port_guids)
+    new = Model()
+    twin_ports(new, ("B", "A"), port_guids=port_guids)
+
+    report = diff_files(old.write(tmp_path / "old.ifc"), new.write(tmp_path / "new.ifc"))
+
+    assert report["modified"] == [] and report["added"] == [] and report["deleted"] == []
+    assert report["guid_changed"] == []
+
+
+def test_neighbours_of_a_deleted_element_changed_transitively(tmp_path):
+    def hosted(model):
+        port = model.element("IfcDistributionPort", "Port", model["W1"], 0.0)
+        opening = model.element("IfcOpeningElement", "Opening", model["W1"], 0.0)
+        model.named["links"] = [
+            model.rel("IfcRelNests", RelatingObject=model["W1"], RelatedObjects=[port]),
+            model.rel("IfcRelVoidsElement", RelatingBuildingElement=model["W1"], RelatedOpeningElement=opening),
+        ]
+
+    def delete_wall(model):
+        model.containment["L1"].RelatedElements = [model["W2"]]
+        for link in model["links"]:
+            model.file.remove(link)
+        model.file.remove(model["W1"])
+
+    report = diff(tmp_path, delete_wall, setup=hosted)
+
+    assert names(report["deleted"]) == {"W1"}
+    assert targets(relation(modified(report, "Port"), "IfcRelNests")) == (["W1"], [])
+    assert targets(relation(modified(report, "Opening"), "IfcRelVoidsElement")) == (["W1"], [])
+    for name in ("Port", "Opening"):
+        item = modified(report, name)
+        assert item["aspects"]["relations"] == "changed" and item["change_scope"] == "transitive"
+    assert report["stats"]["modified_change_scope"] == {"intrinsic": 0, "transitive": 3, "mixed": 0}
+
+
+def test_element_under_a_replaced_storey_changed_transitively(tmp_path):
+    def replace_storey(model):
+        model["L2"].GlobalId = guid("L3")
+        model["L2"].Name = "L3"
+
+    report = diff(tmp_path, replace_storey)
+
+    assert names(report["deleted"]) == {"L2"} and names(report["added"]) == {"L3"}
+    wall = modified(report, "W3")
+    assert targets(relation(wall, "IfcRelContainedInSpatialStructure")) == (["L2"], ["L3"])
+    assert wall["change_scope"] == "transitive"
+
+
+def test_space_taken_out_of_its_present_storey_changed_intrinsically(tmp_path):
+    def space(model):
+        model.named["space in storey"] = model.rel(
+            "IfcRelAggregates", RelatingObject=model["L1"], RelatedObjects=[model.spatial("IfcSpace", "S", model["L1"], 0.0)]
+        )
+
+    def detach(model):
+        model.file.remove(model["space in storey"])
+
+    report = diff(tmp_path, detach, setup=space)
+
+    space = modified(report, "S")
+    assert targets(relation(space, "IfcRelAggregates")) == (["L1"], [])
+    assert space["change_scope"] == "mixed" and space["aspects"]["topology"] == "changed"
+
+
+def test_element_moved_from_a_deleted_storey_to_a_present_one_changed_intrinsically(tmp_path):
+    def move_and_delete(model):
+        w3 = model["W3"]
+        w3.ObjectPlacement = model.placement(model["L1"], 0.0, 0.0, 3.0)
+        model.file.remove(model.containment["L2"])
+        model.contain_more("L1", [w3])
+        building_parts = next(r for r in model.file.by_type("IfcRelAggregates") if r.RelatingObject == model["B"])
+        building_parts.RelatedObjects = [model["L1"]]
+        model.file.remove(model["L2"])
+
+    report = diff(tmp_path, move_and_delete)
+
+    assert names(report["deleted"]) == {"L2"}
+    wall = modified(report, "W3")
+    assert targets(relation(wall, "IfcRelContainedInSpatialStructure")) == (["L2"], ["L1"])
+    assert wall["aspects"]["placement"] == "unchanged"
+    assert wall["change_scope"] == "intrinsic"

@@ -39,10 +39,18 @@ the code they govern:
 
 Matching is conservative by design:
 
-- Unique `GlobalId` plus same canonical class is the strongest identity signal.
+Three tiers, each over what the tiers before it left unmatched:
+
+1. Unique `GlobalId` plus same canonical class is the strongest identity
+   signal.
+2. GUID-free recovery is limited to same-class full signature-vector equality,
+   emitted as disjoint 1:1 pairs.
+3. A unique `GlobalId` on both sides with a different canonical class is one
+   reclassified entity (a proxy corrected to a wall), reported as `modified`
+   with a `class` aspect. Classes never pair without the same unique
+   `GlobalId`.
+
 - Duplicated `GlobalId` values are never identity evidence.
-- GUID-free recovery is limited to same-class full signature-vector equality,
-  emitted as disjoint 1:1 pairs.
 - Weaker evidence, including shared topology or spatial proximity, is reported
   as added+deleted unless a future corpus study proves a real revision case
   needs it.

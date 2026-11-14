@@ -213,7 +213,7 @@ def _build_bundle_phased(path: str, rec: Recorder):
         holder["unit_factors"] = _extract_unit_context(ifc).get("unit_factors", {})
 
     rec.run("ifc_open", _open)
-    rec.run("extract_properties", lambda: holder.update(props=extract_properties(holder["ifc"])))
+    rec.run("extract_properties", lambda: holder.update(props=extract_properties(holder["ifc"], holder["unit_factors"])))
 
     def _release() -> None:
         del holder["ifc"]

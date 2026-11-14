@@ -38,7 +38,7 @@ def test_engine_diff_detects_changes_between_versions():
     assert report["stats"]["deleted"] == 1
     assert report["stats"]["modified"] == 1
     assert report["stats"]["unchanged"] == 7
-    assert report["stats"]["matcher_diagnostics"]["matched_by_tier"] == {"guid": 8, "geometry_hash": 0}
+    assert report["stats"]["matcher_diagnostics"]["matched_by_tier"] == {"guid": 8, "geometry_hash": 0, "guid_reclassified": 0}
     assert report["stats"]["modified_change_scope"] == {"intrinsic": 0, "transitive": 1, "mixed": 0}
 
 

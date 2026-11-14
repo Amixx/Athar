@@ -116,6 +116,13 @@ feed the topology neighbourhood.
   depend on record order. An `ObjectPlacement` or
   `PlacementRelTo` that names a signature root fails the build with an error
   naming both records.
+- Beside the world matrix a root carries `local_placement`, its frame
+  relative to the nearest placement above its own that is the
+  `ObjectPlacement` of a root, quantized like the world matrix, and
+  `placement_parent`, that root. Local placements in between that place no
+  root are multiplied into the frame. Where several roots share one placement
+  record the parent is chosen by content (with a GlobalId, spatial element
+  first, smallest GlobalId). Neither enters the matcher's vector.
 - Every attribute of a root belongs to one domain by its schema type:
   `ObjectPlacement` is placement, a shape-model reference is geometry,
   everything else is data.
@@ -133,7 +140,9 @@ feed the topology neighbourhood.
 - Shape-model entities hash their non-text attributes into the geometry
   digest and their text attributes (`RepresentationIdentifier`,
   `RepresentationType`, `ProfileName`, `Name`) into the data digest.
-- `vh_geometry` of a root covers its geometry-edge closure. `vh_data` covers
+- `vh_geometry` of a root covers its geometry-edge closure and not the root's
+  class, so two roots of different classes with one shape have one geometry
+  hash. `vh_data` covers
   its data parts, the full content (geometry and data digest) of everything
   reached over a data edge, and the data digests found along its geometry
   edges, so shape naming and presentation styles are a data change of the
@@ -184,6 +193,17 @@ Relationship projection kinds:
 signature, so type content is attributed to each occurrence's `vh_data`.
 Assignments (`IfcRelAssignsTo*`) point from member to group, never from group
 to members, so a group edit reaches its members and a member edit stays local.
+
+Every link that produces a context or spatial edge also yields relation
+targets (`Graph.relation_targets`): a root at one end names the entity at the
+other end when that end's role attribute holds a single reference, so the
+element names its container, the part its whole, the occurrence its type, and
+both ends of a 1:1 relationship (void, fill, space boundary, connection) name
+each other. The many side (a storey's elements) names nothing; it sees the
+change through `vh_topology`. Targets are roots or entities with a
+`GlobalId`; those without a signature are listed in
+`SignatureBundle.related_entities` with a content digest. Relation targets
+enter no hash.
 
 A relationship that sets attributes of its own besides its role attributes
 (a space boundary's `InternalOrExternalBoundary`, a path connection's
@@ -295,3 +315,6 @@ comparable within one version.
 | v9 | scalar attributes of shape-model entities and axis placements reached from geometry in `vh_geometry` |
 | v10 | string bytes decode as UTF-8 where valid, Latin-1 per byte otherwise; keywords and enumeration values normalized to upper case |
 | v11 | coverage by default: schema-complete relationship table, direct references included unless denied, `IfcProject` as a signature root, ordered aggregates keep position, sharing invisible, SET members counted once per content; placements and operators as resolved frames, directions at unit length; type representation maps as data of the occurrence; include cycles hashed per component; grid placements and placement cycles as an unresolved placement digest; feature positions relative to the host in host geometry |
+| v12 | signatures carry the local placement and the placement parent beside the world placement, and the relation targets of each root |
+| v13 | `vh_geometry` of a root does not cover the root's class |
+| v14 | hashes as in v13; `data_facts` paths label an owner below the root by class and `Name`; related entities say whether their GlobalId is shared; property values without a declared or convertible unit stay as written |

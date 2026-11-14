@@ -18,6 +18,13 @@ pub struct SpatialFeature {
     /// through a placement the engine does not evaluate (`IfcGridPlacement`)
     /// or ends in a `PlacementRelTo` cycle.
     pub placement_unresolved: Option<String>,
+    /// Quantized frame of the root relative to the nearest placement above
+    /// its own that is the object placement of a root, or to the end of the
+    /// local chain; `None` unless the root is placed by an
+    /// `IfcLocalPlacement`.
+    pub local_placement: Option<Vec<i64>>,
+    /// Entity index of the root owning that nearest placement.
+    pub placement_parent: Option<u32>,
     /// World-space centroid and bounding box; `None` for an unresolved chain.
     pub centroid: Option<[f64; 3]>,
     pub aabb: Option<[f64; 6]>,
@@ -249,10 +256,34 @@ pub fn build_spatial_features(ctx: &SpatialCtx) -> Result<HashMap<u32, SpatialFe
     let mut resolver = Resolver::new(ctx);
     let mut visited: Vec<u32> = vec![u32::MAX; ctx.entities.len()];
 
+    // Per placement record, the root it places. Among several roots sharing
+    // one record the choice is by content: a root with a GlobalId first, a
+    // spatial element first, then the smallest GlobalId.
+    let owner_rank = |entity: u32| {
+        let ent = &ctx.entities[entity as usize];
+        (ent.guid.is_none(), !ent.is_spatial, ent.guid.as_deref(), ent.step_id)
+    };
+    let mut owners: HashMap<i64, u32> = HashMap::new();
     for (i, ent) in ctx.entities.iter().enumerate() {
         if !ent.is_root() {
             continue;
         }
+        if let Some(step) = first_ref_target(ent, "ObjectPlacement") {
+            let owner = owners.entry(step).or_insert(i as u32);
+            if owner_rank(i as u32) < owner_rank(*owner) {
+                *owner = i as u32;
+            }
+        }
+    }
+
+    for (i, ent) in ctx.entities.iter().enumerate() {
+        if !ent.is_root() {
+            continue;
+        }
+        let (local_placement, placement_parent) = match first_ref_target(ent, "ObjectPlacement") {
+            Some(step) => local_frame(ctx, &resolver, &owners, step),
+            None => (None, None),
+        };
         let placed = match first_ref_target(ent, "ObjectPlacement") {
             Some(step) => resolver.resolve(step, ent.step_id)?,
             None => None,
@@ -303,6 +334,8 @@ pub fn build_spatial_features(ctx: &SpatialCtx) -> Result<HashMap<u32, SpatialFe
             SpatialFeature {
                 placement: placement_q,
                 placement_unresolved,
+                local_placement: local_placement.map(quantize_matrix),
+                placement_parent,
                 centroid,
                 aabb,
                 feature_positions,
@@ -310,6 +343,36 @@ pub fn build_spatial_features(ctx: &SpatialCtx) -> Result<HashMap<u32, SpatialFe
         );
     }
     Ok(out)
+}
+
+/// Frame of the local placement `start` relative to the nearest placement
+/// above it that places a root, and that root. Local placements in between
+/// that place no root are part of the frame. The chain ends without a root at
+/// its top, at a placement that is not local, and where it closes on itself.
+fn local_frame(
+    ctx: &SpatialCtx,
+    resolver: &Resolver,
+    owners: &HashMap<i64, u32>,
+    start: i64,
+) -> (Option<Matrix>, Option<u32>) {
+    let is_local = |step: i64| ctx.entity(step).is_some_and(|e| &*e.keyword == "IFCLOCALPLACEMENT");
+    if !is_local(start) {
+        return (None, None);
+    }
+    let mut local = resolver.relative_matrix(start);
+    let mut seen: HashSet<i64> = HashSet::from([start]);
+    let mut current = start;
+    loop {
+        let parent = ctx.entity(current).and_then(|placement| first_ref_target(placement, "PlacementRelTo"));
+        let Some(parent) = parent.filter(|&step| is_local(step) && seen.insert(step)) else {
+            return (Some(local), None);
+        };
+        if let Some(&owner) = owners.get(&parent) {
+            return (Some(local), Some(owner));
+        }
+        local = matmul(&resolver.relative_matrix(parent), &local);
+        current = parent;
+    }
 }
 
 /// Digest of where a feature element sits in its host, for the relationship

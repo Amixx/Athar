@@ -177,9 +177,13 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
     new_model = open_ifc(new_path)
     if base_model.schema != new_model.schema:
         raise SchemaMismatchError(base_model.schema, new_model.schema)
+    base_bundle = build_signature_bundle(base_path)
+    new_bundle = build_signature_bundle(new_path)
     pairs, _, _, _ = match_signatures(
-        build_signature_bundle(base_path).signatures,
-        build_signature_bundle(new_path).signatures,
+        base_bundle.signatures,
+        new_bundle.signatures,
+        base_bundle.related_entities,
+        new_bundle.related_entities,
     )
     old, new = _Graph(base_model), _Graph(new_model)
     mapping, reverse, reasons = {}, {}, {}

@@ -856,7 +856,7 @@ def test_a_bundle_cannot_be_built_without_its_coverage_account():
         SignatureBundle(
             filepath="model.ifc",
             schema="IFC4",
-            canon_version="athar-canon-v11",
+            canon_version="athar-canon-v14",
             signatures={},
             diagnostics=ParseDiagnostics(),
             edge_stats={},

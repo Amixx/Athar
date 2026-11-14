@@ -31,6 +31,7 @@ EXTERNAL_CORPUS_DIR = Path(
 _KNOWN_TIER_SCORES = {
     "guid": {0.9, 1.0},
     "geometry_hash": {0.8},
+    "guid_reclassified": {0.7},
 }
 _SECTIONS = ("added", "deleted", "modified", "unchanged")
 
@@ -171,20 +172,26 @@ def assert_report_invariants(report: dict) -> None:
     assert stats["guid_collisions"] == diag["duplicate_guids"]
 
     # Matched-pair contracts.
+    deleted_steps = {item["step_id"] for item in report["deleted"]}
+    added_steps = {item["step_id"] for item in report["added"]}
     for section in ("modified", "unchanged"):
         for item in report[section]:
-            # No tier may ever pair entities across canonical classes.
-            assert item["old"]["class"] == item["new"]["class"], item
             reason = item["match"]["reason"]
+            # Classes pair only through the same unique GlobalId.
+            reclassified = item["old"]["class"] != item["new"]["class"]
+            assert reclassified == (reason == "guid_reclassified"), item
+            assert reclassified == (item["aspects"]["class"] == "changed") == ("class" in item), item
             assert item["match"]["score"] in _KNOWN_TIER_SCORES[reason], item
-            if reason == "guid":
+            if reason in ("guid", "guid_reclassified"):
                 assert item["old"]["guid"], item
                 assert item["old"]["guid"] == item["new"]["guid"], item
-            if section == "modified":
-                # geometry_hash matches equal full vectors, so any modified
-                # item can only come from the guid tier with a changed vector.
-                assert reason == "guid" and item["match"]["score"] == 0.9, item
             aspects = item["aspects"]
+            if section == "modified" and aspects["relations"] == "unchanged" and not reclassified:
+                # geometry_hash matches equal full vectors, so a modified item
+                # whose relations kept their targets can only come from the
+                # guid tier with a changed vector.
+                assert reason == "guid" and item["match"]["score"] == 0.9, item
+            assert (aspects["relations"] == "changed") == bool(item.get("relations")), item
             changed = any(v == "changed" for k, v in aspects.items() if k != "placement_delta_mm")
             assert changed == (section == "modified"), item
             assert (aspects["data"] == "unchanged") == (item["data_hash"]["old"] == item["data_hash"]["new"]), item
@@ -196,8 +203,22 @@ def assert_report_invariants(report: dict) -> None:
             delta = aspects["placement_delta_mm"]
             if aspects["placement"] == "unchanged":
                 assert delta is None or math.hypot(*delta) == 0, item
-            intrinsic = any(aspects[name] == "changed" for name in ("geometry", "data", "placement"))
-            transitive = aspects["topology"] == "changed"
+            # Relations that differ only in deleted and added targets changed
+            # with the neighbours, not with the pair.
+            relations_inherited = bool(item.get("relations")) and all(
+                target["step_id"] in steps
+                for change in item["relations"]
+                for side, steps in (("old", deleted_steps), ("new", added_steps))
+                for target in change[side]
+            )
+            intrinsic = (
+                any(aspects[name] == "changed" for name in ("geometry", "data", "class"))
+                or (aspects["placement"] == "changed" and "moved_with" not in item)
+                or (aspects["relations"] == "changed" and not relations_inherited)
+            )
+            transitive = aspects["topology"] == "changed" or "moved_with" in item or relations_inherited
+            if "moved_with" in item:
+                assert aspects["placement"] == "changed", item
             expected_scope = (
                 "mixed" if intrinsic and transitive
                 else "intrinsic" if intrinsic
