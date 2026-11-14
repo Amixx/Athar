@@ -156,6 +156,29 @@ test('slider snaps and section toggles drive bucket appearances', async ({ page 
   )
 })
 
+test('picking excludes ghosted and toggled-off geometry', async ({ page }) => {
+  const report = JSON.parse(await readFile(join(FIXTURES, 'report.json'), 'utf8'))
+  report.unchanged.push(...report.modified)
+  report.modified = []
+  report.added = []
+  report.deleted = []
+  await page.route(`${srcOrigin}/report.json`, route => route.fulfill({ json: report }))
+  await page.goto(`/?src=${srcOrigin}`)
+  const state = await waitReady(page)
+  expect(state.rendererReady).toBe(true)
+  const viewport = page.viewportSize()!
+  await page.mouse.click(viewport.width / 2, viewport.height / 2)
+  await expect(page.locator('.inspector')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Ghost', exact: true }).click()
+  await page.mouse.click(viewport.width / 2, viewport.height / 2)
+  await expect(page.locator('.inspector')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Ghost', exact: true }).click()
+  await page.getByRole('button', { name: 'Unchanged', exact: true }).click()
+  await page.mouse.click(viewport.width / 2, viewport.height / 2)
+  await expect(page.locator('.inspector')).toHaveCount(0)
+})
+
 test('clicking an entity opens the inspector; Escape clears it', async ({ page }) => {
   await page.goto(`/?src=${srcOrigin}`)
   const state = await waitReady(page)

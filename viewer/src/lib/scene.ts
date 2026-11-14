@@ -46,6 +46,7 @@ interface BucketEntry {
   mesh: THREE.Mesh
   material: THREE.MeshLambertMaterial
   ranges: EntityRange[]
+  pickable: boolean
 }
 
 interface EntityLocation {
@@ -243,7 +244,7 @@ export class DiffScene {
     const mesh = new THREE.Mesh(geometry, material)
     mesh.name = `bucket:${bucket}`
     mesh.userData.bucket = bucket
-    return { bucket, mesh, material, ranges }
+    return { bucket, mesh, material, ranges, pickable: true }
   }
 
   private buildDisplacementLines(
@@ -303,6 +304,7 @@ export class DiffScene {
     for (const [bucket, entry] of this.buckets) {
       const appearance = appearances[bucket]
       entry.mesh.visible = appearance.visible
+      entry.pickable = appearance.visible && !(bucket === 'unchanged' && appearance.opacity < 1)
       entry.material.color.set(appearance.color)
       entry.material.emissive.set(appearance.color)
       entry.material.emissiveIntensity = bucket === 'unchanged' || bucket === 'extra' ? 0.28 : 0.06
@@ -323,7 +325,7 @@ export class DiffScene {
       -((clientY - rect.top) / rect.height) * 2 + 1,
     )
     this.raycaster.setFromCamera(ndc, this.camera)
-    const targets = [...this.buckets.values()].filter((b) => b.mesh.visible).map((b) => b.mesh)
+    const targets = [...this.buckets.values()].filter((b) => b.pickable).map((b) => b.mesh)
     const hits = this.raycaster.intersectObjects(targets, false)
     for (const hit of hits) {
       if (hit.faceIndex === undefined || hit.faceIndex === null) continue
