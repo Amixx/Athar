@@ -41,10 +41,13 @@ GitHub comments, and other presentation concerns.
 - `rekey.py` is an experimental serialization utility, not a semantic matcher
   tier. It anchors all unique rooted GUIDs plus the existing product matches,
   propagates same-attribute and inverse-relationship roles, and pairs remaining
-  exact resource content, unique content first so roles reach duplicates before
-  the rest pair in STEP order. A final role pass pairs entities whose role key
-  is unique among the unmatched on both sides. No pass gives an `IfcObjectDefinition` the id of
-  one with a different `GlobalId` (counted as `globalid_refusals`), Athar's
+  exact resource content, unique content first so roles reach duplicates.
+  Remaining equal-content twins pair only in buckets of equal size whose NEW
+  members nothing references, where every pairing yields the same output; the
+  rest get fresh ids and are counted as `unmatched_twins`. A final role pass
+  pairs entities whose role key is unique among the unmatched on both sides.
+  No pass gives an `IfcObjectDefinition` the id of one with a different
+  `GlobalId` (counted as `globalid_refusals`), Athar's
   GUID-free signature matches included: the rekey content hash of a uniquely
   GUIDed root is its GUID, so content cannot vouch for a regenerated one, and
   such a product ends as a refused rooted addition. Property definitions and

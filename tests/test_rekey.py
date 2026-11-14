@@ -300,3 +300,29 @@ def test_rekey_role_fallback_refuses_a_role_ambiguous_on_the_new_side(tmp_path):
     assert stats["role_fallback_ambiguous"] == 2
     assert stats["role_fallback_matches"] == 0
 
+
+def test_rekey_leaves_unequal_twin_buckets_unmatched(tmp_path):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    model(base)
+    f = model(new, 1000)
+    f.remove(f.by_id(1100))
+    f.write(str(new))
+    stats = rekey_files(str(base), str(new), str(out))
+    assert not {e.id() for e in ifcopenshell.open(str(out))} & {90, 100}
+    assert stats["fresh"] == 1
+    assert stats["unmatched_twins"] == 1
+
+
+def test_rekey_leaves_referenced_twins_without_matched_parents_unmatched(tmp_path):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    for path, offset, z in ((base, 0, 0.0), (new, 1000, 5.0)):
+        f = model(path, offset)
+        for number, direction in ((300, (1.0, 0.0, z)), (330, (0.0, 1.0, z))):
+            twin = f.create_entity("IfcCartesianPoint", id=number + offset, Coordinates=(0.0, 0.0, 0.0))
+            other = f.create_entity("IfcCartesianPoint", id=number + 10 + offset, Coordinates=direction)
+            f.create_entity("IfcPolyline", id=number + 20 + offset, Points=(twin, other))
+        f.write(str(path))
+    stats = rekey_files(str(base), str(new), str(out))
+    assert not {e.id() for e in ifcopenshell.open(str(out))} & {300, 330}
+    assert stats["fresh"] == 6
+    assert stats["unmatched_twins"] == 2

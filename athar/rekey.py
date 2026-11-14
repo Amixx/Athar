@@ -285,9 +285,12 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
         for a, b in unique:
             match(a, b, "content")
         propagate()
+    # Unreferenced NEW twins are indistinguishable, so every pairing yields the same output.
+    referenced = {t for value in new.values.values() for t in new.refs(value)}
     for aa, bb in content_buckets():
-        for a, b in zip(aa, bb):
-            match(a, b, "content")
+        if len(aa) == len(bb) and referenced.isdisjoint(bb):
+            for a, b in zip(aa, bb):
+                match(a, b, "content")
     old_roles, new_roles = defaultdict(list), defaultdict(list)
     for a in old.entities:
         if a not in reverse:
@@ -307,6 +310,7 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
             role_ambiguous += len(bb)
     role_matches = len(mapping) - before_roles
     propagate()
+    unmatched_twins = sum(len(bb) for _, bb in content_buckets())
 
     matched = dict(mapping)
     next_id = max(old.entities, default=0) + 1
@@ -324,7 +328,7 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
         "fresh": len(new.entities) - len(matched), "base_max_id": max(old.entities, default=0),
         "matched_by": dict(Counter(reasons.values())), "role_conflicts": conflicts,
         "role_fallback_matches": role_matches, "role_fallback_ambiguous": role_ambiguous,
-        "globalid_refusals": len(globalid_refusals),
+        "globalid_refusals": len(globalid_refusals), "unmatched_twins": unmatched_twins,
         "cyclic_content_unavailable": {"base": old.cycles, "new": new.cycles},
         "classes": {k: dict(v) for k, v in sorted(classes.items())},
     }
