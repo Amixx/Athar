@@ -203,7 +203,7 @@ _UNCHANGED_ASPECTS = {
 def _report() -> dict:
     return {
         **copy.deepcopy(_HEADER),
-        "stats": {"added": 0, "deleted": 1, "modified": 2, "unchanged": 3},
+        "stats": {"added": 0, "deleted": 1, "modified": 2, "unchanged": 3, "placement_cohorts": []},
         "added": [],
         "deleted": [
             {"class": "IfcWall", "step_id": 10, "guid": "WALL_DELETED", "name": "Deleted wall"},
@@ -526,6 +526,15 @@ def test_report_without_detail_a_rule_needs_names_the_rule():
         evaluate_report(report, {"max_modified_change_scope": {"mixed": 0}})
 
 
+def test_cli_explain_prints_normalized_policy(tmp_path, capsys):
+    policy = _write_json(tmp_path / "policy.json", {"max_deleted": 0, "max_placement_delta_mm": 2})
+
+    code = main_mod._run_check(["--policy", policy, "--explain"])
+
+    assert code == 0
+    assert json.loads(capsys.readouterr().out) == {"max_deleted": 0, "max_placement_delta_mm": 2.0}
+
+
 def test_cli_check_existing_engine_report(tmp_path, capsys):
     report = _diff(tmp_path, {"walls": _WALLS}, {"walls": _WALLS[:2]})
     report_path = _write_json(tmp_path / "report.json", report)
@@ -651,6 +660,44 @@ def test_count_limit_violations_name_the_entities(tmp_path):
     assert {ref["name"] for ref in section["affected"]} <= {f"w{i}" for i in range(2, 60)}
     assert by_class["count"] == 58
     assert by_class["truncated"] == 8
+
+
+def test_georeferencing_pack_catches_recreated_site(tmp_path):
+    report = _diff(tmp_path, {"walls": _WALLS, "site": "old-site"}, {"walls": _WALLS, "site": "new-site"})
+
+    verdict = evaluate_report(report, resolve_policy("georeferencing"))
+
+    assert verdict["ok"] is False
+    assert [violation["code"] for violation in verdict["violations"]] == ["site_recreated"]
+
+
+def test_bulk_shift_fails_even_when_site_does_not_move(tmp_path):
+    moved = [{**wall, "x": wall["x"] + 10} for wall in _WALLS]
+    report = _diff(tmp_path, {"walls": _WALLS}, {"walls": moved})
+
+    assert evaluate_report(report, {"forbid_site_placement_change": True})["ok"] is True
+    verdict = evaluate_report(report, {"max_placement_cohort_share": 0.5})
+    [violation] = verdict["violations"]
+    assert violation["code"] == "placement_cohort_share"
+    assert violation["delta_mm"] == [10000.0, 0.0, 0.0]
+    assert violation["count"] == 3
+    assert violation["matched"] == 4
+    assert violation["share"] == 0.75
+    assert {ref["guid"] for ref in violation["affected"]} == {_guid(w["id"]) for w in _WALLS}
+    assert evaluate_report(report, {"max_placement_cohort_share": 0.75})["ok"] is True
+
+
+@pytest.mark.parametrize("limit", [-0.1, 1.1, True, "0.5", float("nan"), float("inf")])
+def test_cohort_share_requires_a_fraction(limit):
+    with pytest.raises(ValueError, match="max_placement_cohort_share"):
+        evaluate_report(_report(), {"max_placement_cohort_share": limit})
+
+
+def test_cohort_rule_requires_detail():
+    report = _report()
+    del report["stats"]["placement_cohorts"]
+    with pytest.raises(ValueError, match="max_placement_cohort_share.*placement_cohorts"):
+        evaluate_report(report, {"max_placement_cohort_share": 0.5})
 
 
 def test_scope_limit_violation_names_the_entities():

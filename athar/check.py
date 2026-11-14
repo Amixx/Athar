@@ -70,6 +70,12 @@ def _mm_limit(value: Any, key: str) -> float:
     return float(value)
 
 
+def _share(value: Any, key: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+        raise ValueError(f"{key} must be a number from 0 to 1")
+    return float(value)
+
+
 def _object(value: Any, key: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{key} must be an object")
@@ -171,6 +177,7 @@ _POLICY_KEYS = {
     "forbid_site_placement_change": _flag,
     "max_placement_delta_mm": _mm_limit,
     "max_placement_delta_mm_by_class": _class_mm_limits,
+    "max_placement_cohort_share": _share,
     "forbid_aspect_changes": _aspect_bans,
     "forbid_property_removal": _class_filter,
     "forbid_property_value_change": _property_filters,
@@ -259,6 +266,30 @@ def _validate_report(report: Any, policy: dict[str, Any]) -> None:
         if delta is not None and not _is_vector(delta):
             raise ValueError(f"Report '{where}.aspects.placement_delta_mm' must be null or three numbers")
         _validate_rule_detail(item, where, policy)
+    if "max_placement_cohort_share" in policy:
+        _validate_cohorts(report)
+
+
+def _validate_cohorts(report: dict[str, Any]) -> None:
+    cohorts = report["stats"].get("placement_cohorts")
+    if not isinstance(cohorts, list):
+        raise ValueError("Policy rule max_placement_cohort_share needs 'stats.placement_cohorts', which the report lacks")
+    modified_steps = {item["new"]["step_id"] for item in report["modified"]}
+    for index, cohort in enumerate(cohorts):
+        if (
+            not isinstance(cohort, dict)
+            or not _is_vector(cohort.get("delta_mm"))
+            or not isinstance(cohort.get("members"), list)
+            or any(type(step) is not int for step in cohort["members"])
+            or type(cohort.get("count")) is not int
+            or cohort["count"] < 2
+            or cohort["count"] != len(set(cohort["members"]))
+            or not set(cohort["members"]) <= modified_steps
+        ):
+            raise ValueError(
+                f"Policy rule max_placement_cohort_share cannot read 'stats.placement_cohorts[{index}]': "
+                "it needs delta_mm, and count equal to its members, each a modified entity's new step_id"
+            )
 
 
 def _validate_entity(entity: Any, where: str) -> None:
@@ -331,6 +362,9 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     - ``forbid_site_placement_change``: bool
     - ``max_placement_delta_mm``: number, Euclidean translation delta limit
     - ``max_placement_delta_mm_by_class``: ``{"IfcSite": 0}``
+    - ``max_placement_cohort_share``: 0 to 1 — fail when one placement cohort
+      (entities moved by the same translation) is more than this share of the
+      matched entities (modified plus unchanged)
     - ``forbid_aspect_changes``: ``{"data": ["IfcWall"], "placement": "*"}``
     - ``forbid_property_removal``: ``"*"``, a class string, or a list of classes
       — fail when a matched entity drops a property/quantity value
@@ -351,6 +385,7 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     _check_scope_limits(report, policy, violations)
     _check_site_placement(report, policy, violations)
     _check_placement_limits(report, policy, violations)
+    _check_placement_cohorts(report, policy, violations)
     _check_aspect_bans(report, policy, violations)
     _check_property_removal(report, policy, violations)
     _check_property_value_changes(report, policy, violations)
@@ -424,6 +459,21 @@ def _check_site_placement(report: dict[str, Any], policy: dict[str, Any], violat
                 **_affected(affected),
             }
         )
+    recreated = [
+        {key: item["new"][key] for key in _ENTITY_KEYS}
+        for item in (*report["modified"], *report["unchanged"])
+        if item.get("old", {}).get("class") == "IfcSite"
+        and item.get("new", {}).get("class") == "IfcSite"
+        and item.get("old", {}).get("guid") != item.get("new", {}).get("guid")
+    ]
+    if recreated:
+        violations.append(
+            {
+                "code": "site_recreated",
+                "message": f"IfcSite identity was replaced for {len(recreated)} entity(s)",
+                **_affected(recreated),
+            }
+        )
 
 
 def _check_placement_limits(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
@@ -454,6 +504,34 @@ def _check_placement_limits(report: dict[str, Any], policy: dict[str, Any], viol
                 "code": "placement_delta_limit",
                 "message": f"Placement delta exceeded for {len(offenders)} entity(s)",
                 **_affected(offenders),
+            }
+        )
+
+
+def _check_placement_cohorts(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
+    limit = policy.get("max_placement_cohort_share")
+    if limit is None:
+        return
+    matched = report["stats"]["modified"] + report["stats"]["unchanged"]
+    by_step = {item["new"]["step_id"]: item for item in report["modified"]}
+    for cohort in report["stats"]["placement_cohorts"]:
+        share = cohort["count"] / matched
+        if share <= limit:
+            continue
+        delta = [float(value) for value in cohort["delta_mm"]]
+        violations.append(
+            {
+                "code": "placement_cohort_share",
+                "message": (
+                    f"{cohort['count']} of {matched} matched entities moved by the same translation "
+                    f"({', '.join(f'{value:g}' for value in delta)}) mm: share {share:.3g} > {limit:g}"
+                ),
+                "policy": "max_placement_cohort_share",
+                "delta_mm": delta,
+                "matched": matched,
+                "share": share,
+                "limit": limit,
+                **_affected([_modified_entity_ref(by_step[step]) for step in cohort["members"]]),
             }
         )
 

@@ -144,7 +144,6 @@ Example policy:
 
 ```json
 {
-  "forbid_schema_change": true,
   "max_deleted": 0,
   "max_deleted_by_class": {
     "IfcWall": 0
@@ -165,11 +164,16 @@ Example policy:
 }
 ```
 
-The gate is report-driven and CI-platform-agnostic. Current policies can only
-inspect signals present in the report: schema equality, section counts,
-class-specific counts, modified change scopes, changed aspects, and placement
-translation deltas. Fine-grained checks such as “property `FireRating` was
-removed” require future report detail beyond the current data hash.
+The gate is report-driven and CI-platform-agnostic. Policies inspect section counts,
+class-specific counts (including supertypes), modified change scopes, changed
+aspects, placement translation deltas, placement cohorts, and property deltas
+when the report contains them. `forbid_property_value_change` fails for a
+protected property that is changed, removed, or removed and re-added with a
+different value; equal-value moves between property origins are allowed. Duplicate
+property keys are represented by `count_changed` and fail closed. Schema mismatch
+is a failed gate with exit `2`, because Athar cannot semantically diff different
+schemas. Use `--explain` to print the normalized policy; `--list-packs` prints
+shipped pack descriptions.
 
 ### Git IFC Diff Driver
 

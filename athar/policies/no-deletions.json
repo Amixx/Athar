@@ -1,4 +1,4 @@
 {
-  "description": "Additive review: no schema drift and nothing deleted from the model.",
+  "description": "Additive review: nothing is deleted from the model.",
   "max_deleted": 0
 }

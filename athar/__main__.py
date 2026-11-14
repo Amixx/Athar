@@ -159,6 +159,11 @@ def _run_check(argv: list[str]) -> int:
         action="store_true",
         help="List the shipped policy packs and exit",
     )
+    parser.add_argument(
+        "--explain",
+        action="store_true",
+        help="Print the normalized policy and exit",
+    )
     args = parser.parse_args(argv)
 
     if args.list_packs:
@@ -166,6 +171,17 @@ def _run_check(argv: list[str]) -> int:
 
     if args.policy is None:
         parser.error("the following arguments are required: --policy")
+    if args.explain:
+        try:
+            policy = resolve_policy(args.policy)
+        except (OSError, ValueError) as exc:
+            if args.format == "text":
+                print(f"Error: {exc}")
+            else:
+                print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(policy, indent=2, sort_keys=True))
+        return 0
 
     using_report = args.report is not None
     using_files = args.old is not None or args.new is not None
