@@ -9,9 +9,11 @@ import {
   MANIFEST_SCHEMA_VERSION,
   NO_DROPS,
   parseManifest,
+  readReportFile,
   reportInputHashes,
   sha256Hex,
 } from '../src/lib/sources'
+import type { AtharReport } from '../src/lib/types'
 
 const singlePair = {
   athar_viewer_manifest: 1,
@@ -118,8 +120,8 @@ describe('chainFromFiles', () => {
     const a = await hashFile(new File(['first'], 'same.ifc'))
     const b = await hashFile(new File(['second'], 'same.ifc'))
     const copy = await hashFile(new File(['first'], 'renamed.ifc'))
-    const first = chainFromFiles(a, b, {}, 'report-a').steps[0]
-    const second = chainFromFiles(copy, b, {}, 'report-b').steps[0]
+    const first = chainFromFiles(a, b, {} as AtharReport, 'report-a').steps[0]
+    const second = chainFromFiles(copy, b, {} as AtharReport, 'report-b').steps[0]
     expect(first.oldKey).not.toBe(first.newKey)
     expect(first.oldKey).toBe(second.oldKey)
     expect(first.reportKey).not.toBe(second.reportKey)
@@ -211,5 +213,21 @@ describe('dataUrl', () => {
     expect(dataUrl(page, 'http://127.0.0.1:4799/?token=abc', 'https://elsewhere.example/x.ifc')).toBe(
       'https://elsewhere.example/x.ifc',
     )
+  })
+})
+
+describe('readReportFile', () => {
+  const minimal = { engine: 'athar', schemas: { old: 'IFC4', new: 'IFC4' }, added: [], deleted: [], modified: [], unchanged: [] }
+
+  it('returns the parsed report and the hash of the bytes it parsed', async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify(minimal))
+    const read = await readReportFile(new File([bytes], 'report.json'))
+    expect(read.report.engine).toBe('athar')
+    expect(read.sha256).toBe(await sha256Hex(bytes.buffer as ArrayBuffer))
+  })
+
+  it('names the file when it is not JSON and rejects a JSON file that is not a report', async () => {
+    await expect(readReportFile(new File(['{'], 'broken.json'))).rejects.toThrow('broken.json is not valid JSON.')
+    await expect(readReportFile(new File(['{}'], 'other.json'))).rejects.toThrow('Not an Athar report')
   })
 })

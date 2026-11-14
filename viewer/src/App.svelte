@@ -6,7 +6,6 @@
   import {
     buildDiffIndex,
     classBreakdown,
-    parseReport,
     type DiffIndex,
     type EntityRecord,
   } from './lib/report'
@@ -38,13 +37,13 @@
     type HashedFile,
     type StepSource,
   } from './lib/sources'
-  import type { Side } from './lib/types'
+  import type { AtharReport, Side } from './lib/types'
 
   type Phase = 'empty' | 'confirm' | 'loading' | 'ready' | 'error'
 
   interface UnverifiedPair {
     files: [HashedFile, HashedFile]
-    report: unknown
+    report: AtharReport
     reportHash: string
     reason: string
     oldIndex: 0 | 1 | null
@@ -82,7 +81,7 @@
   let steps = $state<StepSource[]>([])
   let activeStep = $state(0)
   const meshCache = new Map<string, ModelGeometry>()
-  const reportCache = new Map<string, unknown>()
+  const reportCache = new Map<string, AtharReport>()
   let loadSeq = 0
 
   let ifcInput: HTMLInputElement
@@ -139,9 +138,7 @@
     publishDebug({ phase: 'loading' })
     try {
       const [a, b] = await Promise.all(dropped.ifcs.map(hashFile))
-      const report = await readReportFile(dropped.reportFile!)
-      const { sha256: reportHash } = await hashFile(dropped.reportFile!)
-      parseReport(report)
+      const { report, sha256: reportHash } = await readReportFile(dropped.reportFile!)
       const roles = assignRoles([a, b], reportInputHashes(report))
       if (roles.verified) {
         startDropped(roles.old, roles.new, report, reportHash)
@@ -155,7 +152,7 @@
     }
   }
 
-  function startDropped(oldFile: HashedFile, newFile: HashedFile, report: unknown, reportHash: string): void {
+  function startDropped(oldFile: HashedFile, newFile: HashedFile, report: AtharReport, reportHash: string): void {
     unverified = null
     const chain = chainFromFiles(oldFile, newFile, report, reportHash)
     steps = chain.steps
@@ -211,14 +208,12 @@
     return geometry
   }
 
-  async function getReport(step: StepSource): Promise<unknown> {
-    const key = step.reportKey
-    const cached = reportCache.get(key)
-    if (cached !== undefined) return cached
-    const json = await step.fetchReport()
-    parseReport(json)
-    reportCache.set(key, json)
-    return json
+  async function getReport(step: StepSource): Promise<AtharReport> {
+    const cached = reportCache.get(step.reportKey)
+    if (cached) return cached
+    const report = await step.fetchReport()
+    reportCache.set(step.reportKey, report)
+    return report
   }
 
   function stepTo(target: number): void {
@@ -245,9 +240,8 @@
       })
 
       progress = { stage: 'Computing diff', count: 0 }
-      const reportJson = await getReport(step)
+      const report = await getReport(step)
       if (token !== loadSeq) return
-      const report = parseReport(reportJson)
       const nextIndex = buildDiffIndex(report)
 
       const oldGeometry = await getGeometry(step.oldKey, step.fetchOldBytes, step.oldName)

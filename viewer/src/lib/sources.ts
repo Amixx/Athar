@@ -33,6 +33,9 @@
  * App.svelte tessellates each revision once.
  */
 
+import { parseReport } from './report'
+import type { AtharReport } from './types'
+
 export const MANIFEST_SCHEMA_VERSION = 2
 
 interface ManifestFile {
@@ -67,7 +70,7 @@ export interface StepSource {
   reportKey: string
   fetchOldBytes: () => Promise<ArrayBuffer>
   fetchNewBytes: () => Promise<ArrayBuffer>
-  fetchReport: () => Promise<unknown>
+  fetchReport: () => Promise<AtharReport>
 }
 
 export interface LoadedChain {
@@ -197,7 +200,7 @@ export async function loadChainFromSrc(src: string, pageUrl: string): Promise<Lo
       reportKey: reportUrl,
       fetchOldBytes: () => fetchOk(oldUrl).then((r) => r.arrayBuffer()),
       fetchNewBytes: () => fetchOk(newUrl).then((r) => r.arrayBuffer()),
-      fetchReport: () => fetchOk(reportUrl).then((r) => r.json()),
+      fetchReport: () => fetchOk(reportUrl).then((r) => r.json()).then(parseReport),
     }
   })
   return { steps, activeStep: parsed.activeStep, warning: parsed.warning }
@@ -270,7 +273,12 @@ export function assignRoles<T extends { file: { name: string }; sha256: string }
   return { verified: false, reason: `${a.file.name} and ${b.file.name} both match the same input of the report.` }
 }
 
-export function chainFromFiles(oldFile: HashedFile, newFile: HashedFile, report: unknown, reportHash: string): LoadedChain {
+export function chainFromFiles(
+  oldFile: HashedFile,
+  newFile: HashedFile,
+  report: AtharReport,
+  reportHash: string,
+): LoadedChain {
   const step: StepSource = {
     label: `${oldFile.file.name} → ${newFile.file.name}`,
     oldName: oldFile.file.name,
@@ -285,12 +293,14 @@ export function chainFromFiles(oldFile: HashedFile, newFile: HashedFile, report:
   return { steps: [step], activeStep: 0 }
 }
 
-/** Parse a dropped report file, failing with a message that names it. */
-export async function readReportFile(file: File): Promise<unknown> {
-  const text = await file.text()
+/** Read a dropped report file once: its SHA-256 and the validated report, failing with a message that names it. */
+export async function readReportFile(file: File): Promise<{ report: AtharReport; sha256: string }> {
+  const bytes = await file.arrayBuffer()
+  let json: unknown
   try {
-    return JSON.parse(text)
+    json = JSON.parse(new TextDecoder().decode(bytes))
   } catch {
     throw new Error(`${file.name} is not valid JSON.`)
   }
+  return { report: parseReport(json), sha256: await sha256Hex(bytes) }
 }
