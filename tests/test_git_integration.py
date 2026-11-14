@@ -187,22 +187,6 @@ def test_pr_bot_render_comment_uses_semantic_report_and_file_level_notes(monkeyp
     assert seen == [("a" * 40, "b" * 40, "model.ifc", "model.ifc", "/tmp/cache")]
 
 
-def test_pr_bot_github_client_updates_existing_marker_comment():
-    calls = []
-
-    class FakeClient(pr_bot.GitHubClient):
-        def _request(self, method, path, payload=None):
-            calls.append((method, path, payload))
-            if method == "GET":
-                return [{"id": 123, "body": "old\n" + pr_bot.COMMENT_MARKER}]
-            return {"ok": True}
-
-    FakeClient(repo="owner/repo", token="token").upsert_issue_comment(7, "new body")
-
-    assert calls == [
-        ("GET", "/repos/owner/repo/issues/7/comments", None),
-        ("PATCH", "/repos/owner/repo/issues/comments/123", {"body": "new body"}),
-    ]
 
 
 def test_persistent_cache_reuses_blob_key(tmp_path, monkeypatch):

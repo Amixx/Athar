@@ -263,24 +263,93 @@ def _git_text(args: list[str]) -> str:
     return _git(args).decode("utf-8", errors="replace")
 
 
+GITHUB_ACTIONS_LOGIN = "github-actions[bot]"
+
+
 class GitHubClient:
     def __init__(self, *, repo: str, token: str) -> None:
         self.repo = repo
         self.token = token
         self.api_root = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+        self._login: str | None = None
+
+    def token_login(self) -> str:
+        if self._login is None:
+            self._login = self._resolve_login()
+        return self._login
+
+    def _resolve_login(self) -> str:
+        try:
+            user, _ = self._request("GET", self.api_root + "/user")
+            return str(user["login"])
+        except GitHubAPIError as exc:
+            if exc.status != 403:
+                raise
+            # Installation tokens cannot read /user; the Actions GITHUB_TOKEN is one.
+            is_actions_token = os.environ.get("GITHUB_ACTIONS") == "true" and self.token == os.environ.get(
+                "GITHUB_TOKEN"
+            )
+            if not is_actions_token:
+                raise RuntimeError(
+                    "cannot resolve the GitHub login of the supplied token (GET /user answered 403); "
+                    "use a user token or the GitHub Actions GITHUB_TOKEN"
+                ) from exc
+            return GITHUB_ACTIONS_LOGIN
 
     def upsert_issue_comment(self, pr_number: int, body: str) -> None:
-        comments = self._request("GET", f"/repos/{self.repo}/issues/{pr_number}/comments")
-        for comment in comments:
-            if COMMENT_MARKER in str(comment.get("body", "")):
-                self._request("PATCH", f"/repos/{self.repo}/issues/comments/{comment['id']}", {"body": body})
-                return
-        self._request("POST", f"/repos/{self.repo}/issues/{pr_number}/comments", {"body": body})
+        comments_url = f"{self.api_root}/repos/{self.repo}/issues/{pr_number}/comments"
+        for attempt in range(2):
+            own = self._own_marker_comments(comments_url)
+            if not own:
+                break
+            try:
+                self._request("PATCH", self._comment_url(own[0]["id"]), {"body": body})
+            except GitHubAPIError as exc:
+                if exc.status != 404 or attempt:
+                    raise
+                continue
+            self._delete_comments(own[1:])
+            return
 
-    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
+        created, _ = self._request("POST", comments_url, {"body": body})
+        own = self._own_marker_comments(comments_url)
+        if own and own[0]["id"] != created["id"]:
+            self._request("PATCH", self._comment_url(own[0]["id"]), {"body": body})
+        self._delete_comments(own[1:])
+
+    def _delete_comments(self, comments: list[dict]) -> None:
+        for comment in comments:
+            try:
+                self._request("DELETE", self._comment_url(comment["id"]))
+            except GitHubAPIError as exc:
+                if exc.status != 404:
+                    raise
+
+    def _own_marker_comments(self, comments_url: str) -> list[dict]:
+        login = self.token_login()
+        own = [
+            comment
+            for comment in self._paginate(comments_url + "?per_page=100")
+            if (comment.get("user") or {}).get("login") == login and COMMENT_MARKER in str(comment.get("body", ""))
+        ]
+        return sorted(own, key=lambda comment: comment["id"])
+
+    def _paginate(self, url: str) -> list[dict]:
+        items: list[dict] = []
+        next_url: str | None = url
+        while next_url:
+            page, headers = self._request("GET", next_url)
+            items.extend(page)
+            next_url = _next_link(headers.get("Link"))
+        return items
+
+    def _comment_url(self, comment_id: int) -> str:
+        return f"{self.api_root}/repos/{self.repo}/issues/comments/{comment_id}"
+
+    def _request(self, method: str, url: str, payload: dict[str, Any] | None = None) -> tuple[Any, Any]:
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
-            self.api_root + path,
+            url,
             data=data,
             method=method,
             headers={
@@ -294,9 +363,29 @@ class GitHubClient:
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 body = response.read()
+                headers = response.headers
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"GitHub API {method} {path} failed: HTTP {exc.code}: {detail}") from exc
-        if not body:
-            return None
-        return json.loads(body.decode("utf-8"))
+            raise GitHubAPIError(method, url, exc.code, detail) from exc
+        return (json.loads(body.decode("utf-8")) if body else None), headers
+
+
+class GitHubAPIError(RuntimeError):
+    def __init__(self, method: str, url: str, status: int, detail: str) -> None:
+        super().__init__(f"GitHub API {method} {url} failed: HTTP {status}: {detail}")
+        self.method = method
+        self.status = status
+        try:
+            message = json.loads(detail).get("message")
+        except (ValueError, AttributeError):
+            message = None
+        self.integration_forbidden = status == 403 and message == "Resource not accessible by integration"
+
+
+def _next_link(header: str | None) -> str | None:
+    for part in (header or "").split(","):
+        target, _, params = part.partition(";")
+        if 'rel="next"' in params:
+            return target.strip().strip("<>")
+    return None
+

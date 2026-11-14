@@ -83,6 +83,16 @@ core engine, but `athar/` must never depend on `athar_git/`.
   the cached path, renders Markdown, and creates or updates one stable GitHub
   issue comment identified by an HTML sentinel.
 
+- The comment upsert pages through every issue comment (`Link: rel="next"`)
+  and only considers sentinel comments authored by the token's own login,
+  resolved once via `GET /user`. Installation tokens cannot read `/user`; inside
+  GitHub Actions the `GITHUB_TOKEN` resolves to `github-actions[bot]`, and any
+  other unidentifiable token is an error. A sentinel comment that vanished
+  before the update triggers one re-list. The oldest own sentinel comment is
+  the one kept: it is updated (after a create, a re-list finds it) and every
+  other own sentinel comment is deleted; a delete answering 404 counts as
+  done, and a 403 on it follows the comment-write rule below.
+
 ## Boundaries
 
 - File-level add/delete entries are reported as semantic pair-diff skips
