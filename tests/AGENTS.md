@@ -55,7 +55,23 @@ Run the full default suite before committing.
     (extrusion `Depth`, profile dimensions, positions, mapped-item scale),
     each of which is a geometry change too.
   - `test_unit_normalization.py` builds the same model in metres and millimetres
-    to prove length quantization is unit-normalized (zero diff).
+    to prove length quantization is unit-normalized: only the project, which
+    owns the unit assignment, differs.
+
+## Change Coverage
+
+- `test_change_coverage.py` builds one small IFC4 model and applies one edit
+  per case; each edit must be reported on exactly the entity it belongs to
+  with the right aspect, be a no-op, or be named in
+  `stats.coverage.unexamined_changes`. Add a case there for every new policy
+  table entry.
+- `test_invariance.py` applies rewrites that change no content to the same
+  model (default axes written out, scaled directions, merged or split points,
+  reordered representations, a renumbered file with reversed record order
+  holding an include cycle); each must report nothing.
+- `test_coverage_policy.py` enumerates both schemas against the native policy
+  tables: every concrete relationship class has an entry and every
+  root-capable reference of a projected relationship is a role attribute.
 
 ## Large Acceptance
 

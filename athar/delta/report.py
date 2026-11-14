@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 
-from athar.bottom.types import OrphanPropertySet, PropertyEntry, SignatureBundle, SignatureVector
+from athar.bottom.types import Coverage, OrphanPropertySet, PropertyEntry, SignatureBundle, SignatureVector
 from athar.matcher.types import MatchedPair
 
 
@@ -92,12 +92,37 @@ def build_delta_report(
                 "added": len(orphans_added),
                 "removed": len(orphans_removed),
             },
+            "coverage": _coverage_stats(old_bundle.coverage, new_bundle.coverage),
         },
         "added": added,
         "deleted": deleted,
         "modified": modified,
         "unchanged": unchanged,
         "orphan_property_sets": {"added": orphans_added, "removed": orphans_removed},
+    }
+
+
+def _coverage_stats(old: Coverage, new: Coverage) -> dict:
+    """Per-file coverage blocks plus the classes whose unreached content differs."""
+
+    def block(coverage: Coverage) -> dict:
+        return {
+            "unknown_relationships": dict(sorted(coverage.unknown_relationships.items())),
+            "unreached": {
+                name: {"count": count, "digest": digest}
+                for name, (count, digest) in sorted(coverage.unreached.items())
+            },
+            "ignored_by_design": dict(sorted(coverage.ignored_by_design.items())),
+        }
+
+    return {
+        "old": block(old),
+        "new": block(new),
+        "unexamined_changes": sorted(
+            name
+            for name in old.unreached.keys() | new.unreached.keys()
+            if old.unreached.get(name) != new.unreached.get(name)
+        ),
     }
 
 
@@ -142,13 +167,16 @@ def _orphan_property_set_diff(
 
 
 def _entity_summary(sig: SignatureVector) -> dict:
-    return {
+    summary = {
         "step_id": sig.step_id,
         "guid": sig.guid,
         "name": sig.name,
         "class": sig.canonical_class,
         "entity_type": sig.entity_type,
     }
+    if sig.placement_unresolved is not None:
+        summary["placement_unresolved"] = True
+    return summary
 
 
 def _aspect_diff(old_sig: SignatureVector, new_sig: SignatureVector) -> dict:
@@ -157,7 +185,10 @@ def _aspect_diff(old_sig: SignatureVector, new_sig: SignatureVector) -> dict:
         "geometry": _changed(old_sig.vh_geometry, new_sig.vh_geometry),
         "data": _changed(old_sig.vh_data, new_sig.vh_data),
         "topology": _changed(old_sig.vh_topology, new_sig.vh_topology),
-        "placement": _changed(old_sig.placement, new_sig.placement),
+        "placement": _changed(
+            (old_sig.placement, old_sig.placement_unresolved),
+            (new_sig.placement, new_sig.placement_unresolved),
+        ),
         "placement_delta_mm": placement_delta,
     }
 
@@ -176,6 +207,11 @@ def _data_delta(old_sig: SignatureVector, new_sig: SignatureVector) -> list[dict
         if old_value == new_value:
             continue
         out.append({"path": path, "old": old_value, "new": new_value})
+    if not out:
+        # The same values under the same paths, attached differently (an
+        # unordered member moved between two owners of one class).
+        label = new_sig.canonical_class if new_sig.guid is None else f"{new_sig.canonical_class}[GlobalId={new_sig.guid}]"
+        out.append({"path": f"{label}.(structure)", "old": old_sig.vh_data[:12], "new": new_sig.vh_data[:12]})
     return out
 
 

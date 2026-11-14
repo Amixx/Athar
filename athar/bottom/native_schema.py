@@ -1,10 +1,8 @@
 """Build the per-class schema descriptor map the native parser consumes.
 
-This is the one place ifcopenshell's EXPRESS schema is read for the native
-path. It is *file-independent* — descriptors depend only on the schema name —
-so the result is cached per schema and reused across files. Rust applies these
-descriptors to the millions of STEP records; Python never touches the file's
-entities.
+Descriptors depend only on the schema name, so the result is cached per schema
+and reused across files. Rust applies them to the STEP records; Python never
+touches the file's entities.
 """
 
 from __future__ import annotations
@@ -143,6 +141,8 @@ def _build_descriptors(schema_name: str) -> dict:
         out[type_name.upper()] = {
             "class": canonical_class_name(schema_name, type_name),
             "product": "IfcProduct" in supers,
+            "project": "IfcProject" in supers,
+            "relationship": "IfcRelationship" in supers,
             "spatial": bool(
                 supers & {"IfcSpatialElement", "IfcSpatialStructureElement"}
             ),

@@ -1,17 +1,17 @@
 """Core-engine signature assembly pipeline.
 
-The bottom layer is native-only: ``athar_native`` tokenizes the STEP file and
-runs the whole parse → canonicalize → edges → Merkle → WL → spatial pipeline in
-Rust, returning only product/spatial signatures. The file's millions of
-entities never materialize as Python objects. ifcopenshell is used solely for
-the file-independent schema descriptors and unit factors.
+``athar_native`` tokenizes the STEP file and runs the whole parse →
+canonicalize → edges → Merkle → WL → spatial pipeline in Rust, returning the
+root signatures and the coverage account. The file's entities never
+materialize as Python objects. ifcopenshell supplies the schema descriptors,
+unit factors and raw property values.
 """
 
 from __future__ import annotations
 
 from ._native import native
 from .constants import CANON_VERSION
-from .types import ParseDiagnostics, SignatureBundle, SignatureVector
+from .types import Coverage, ParseDiagnostics, SignatureBundle, SignatureVector
 
 
 def build_signature_bundle(filepath: str) -> SignatureBundle:
@@ -30,10 +30,8 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
     from .parser import _assert_supported_schema, _extract_unit_context, open_ifc
     from .properties import extract_orphan_property_sets, extract_properties
 
-    # ifcopenshell is used for the schema name, unit factors, and raw property
-    # values (relationship/pset traversal only, not the mesh primitives); it is
-    # released before the native parse so the file's geometry entities are never
-    # held as Python/C++ model state during signature building.
+    # The ifcopenshell model is released before the native parse so both
+    # representations of the file are never resident together.
     ifc = open_ifc(filepath)
     schema = str(ifc.schema or "")
     _assert_supported_schema(schema)
@@ -43,9 +41,12 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
     del ifc
 
     schema_json = schema_descriptors_json(schema)
-    sigs, edge_stats_map, (dangling, cycle_breaks, warnings) = native_mod.build_signature_bundle(
-        filepath, schema_json, unit_factors
-    )
+    (
+        sigs,
+        edge_stats_map,
+        (dangling, cycle_breaks, warnings),
+        (unknown_relationships, unreached, ignored_by_design),
+    ) = native_mod.build_signature_bundle(filepath, schema_json, unit_factors)
 
     signatures: dict[int, SignatureVector] = {}
     for (
@@ -57,7 +58,7 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
         vh_geometry,
         vh_data,
         vh_topology,
-        placement,
+        (placement, placement_unresolved),
         centroid,
         aabb,
         data_facts,
@@ -76,6 +77,7 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
             aabb=tuple(aabb) if aabb is not None else None,
             canon_version=CANON_VERSION,
             data_facts=tuple((path, value) for path, value in data_facts),
+            placement_unresolved=placement_unresolved,
         )
 
     diagnostics = ParseDiagnostics(
@@ -90,6 +92,11 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
         signatures=signatures,
         diagnostics=diagnostics,
         edge_stats=dict(edge_stats_map),
+        coverage=Coverage(
+            unknown_relationships=dict(unknown_relationships),
+            unreached={name: (count, digest) for name, (count, digest) in unreached.items()},
+            ignored_by_design=dict(ignored_by_design),
+        ),
         property_index=property_index,
         orphan_property_sets=orphan_property_sets,
     )

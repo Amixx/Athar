@@ -17,7 +17,7 @@ import athar_git.cache as cache_mod
 import athar_git.cli as cli_mod
 import athar_git.pr_bot as pr_bot
 from athar.bottom.constants import CANON_VERSION
-from athar.bottom.types import ParseDiagnostics, SignatureBundle
+from athar.bottom.types import Coverage, ParseDiagnostics, SignatureBundle
 from athar_git.render import render_markdown_report, render_text_report
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +32,7 @@ def _bundle(schema: str = "IFC4", count: int = 1) -> SignatureBundle:
         signatures={},
         diagnostics=ParseDiagnostics(),
         edge_stats={},
+        coverage=Coverage(),
     )
 
 
