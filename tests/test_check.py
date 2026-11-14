@@ -564,12 +564,14 @@ def test_nonfinite_placement_report_is_an_error(tmp_path, capsys, number):
 
 
 def test_cli_explain_prints_normalized_policy(tmp_path, capsys):
-    policy = _write_json(tmp_path / "policy.json", {"max_deleted": 0, "max_placement_delta_mm": 2})
+    policy = _write_json(
+        tmp_path / "policy.json", {"max_deleted": 0, "max_deleted_by_class": {"ifcwallstandardcase": 0}}
+    )
 
     code = main_mod._run_check(["--policy", policy, "--explain"])
 
     assert code == 0
-    assert json.loads(capsys.readouterr().out) == {"max_deleted": 0, "max_placement_delta_mm": 2.0}
+    assert json.loads(capsys.readouterr().out) == {"max_deleted": 0, "max_deleted_by_class": {"IfcWall": 0}}
 
 
 def test_cli_check_existing_engine_report(tmp_path, capsys):
