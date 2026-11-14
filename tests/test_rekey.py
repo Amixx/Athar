@@ -386,3 +386,40 @@ def test_rekey_twins_require_identical_resolved_reference_targets(tmp_path, same
         assert restored.by_id(400).Location.id() == restored.by_id(410).Location.id() == 300
     else:
         assert not {400, 410} & {e.id() for e in restored}
+
+
+@pytest.mark.parametrize("extra", [False, True])
+def test_rekey_ordered_duplicate_children_follow_positions_not_step_ids(tmp_path, extra):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    for path, offset in ((base, 0), (new, 1000)):
+        f = model(path, offset)
+        first = f.create_entity("IfcCartesianPoint", id=300 + offset, Coordinates=(4.0, 5.0, 6.0))
+        second = f.create_entity("IfcCartesianPoint", id=310 + offset, Coordinates=(4.0, 5.0, 6.0))
+        tail = f.create_entity("IfcCartesianPoint", id=320 + offset, Coordinates=(8.0, 9.0, 10.0))
+        points = [first, second, tail] if not offset else [second, first, tail]
+        if offset and extra:
+            added = f.create_entity("IfcCartesianPoint", id=330 + offset, Coordinates=(4.0, 5.0, 6.0))
+            points.insert(2, added)
+        f.create_entity("IfcPolyline", id=340 + offset, Points=points)
+        f.write(str(path))
+    stats = rekey_files(str(base), str(new), str(out))
+    restored = ifcopenshell.open(str(out))
+    point_ids = [point.id() for point in restored.by_id(340).Points]
+    assert point_ids[:2] == [300, 310]
+    assert point_ids[-1] == 320
+    if extra:
+        assert point_ids[2] > 340
+    assert stats["fresh"] == int(extra)
+
+
+def test_rekey_unequal_unordered_child_twins_stay_unmatched(tmp_path):
+    base, new, out = (tmp_path / name for name in ("base.ifc", "new.ifc", "out.ifc"))
+    for path, offset, count in ((base, 0, 2), (new, 1000, 3)):
+        f = model(path, offset)
+        props = [f.create_entity("IfcPropertySingleValue", id=300 + offset + i, Name="Twin") for i in range(count)]
+        f.create_entity("IfcPropertySet", id=340 + offset, GlobalId="0000000000000000000040", HasProperties=props)
+        f.write(str(path))
+    stats = rekey_files(str(base), str(new), str(out))
+    restored = ifcopenshell.open(str(out))
+    assert all(prop.id() > 340 for prop in restored.by_id(340).HasProperties)
+    assert stats["fresh"] == stats["unmatched_twins"] == 3

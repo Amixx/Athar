@@ -42,6 +42,9 @@ GitHub comments, and other presentation concerns.
   tier. It anchors all unique rooted GUIDs plus the existing product matches,
   propagates same-attribute and inverse-relationship roles, and pairs remaining
   exact resource content, unique content first so roles reach duplicates.
+  Equal-content duplicate children use attribute positions in ordered aggregates;
+  unordered child buckets must have equal sizes. Role-only child keys must be
+  unique on both sides.
   Remaining equal-content twins pair only in equal-size buckets with no
   incoming NEW references and identical NEW bodies after all outgoing references
   resolve through established mappings. Leaf twins satisfy the outgoing check.

@@ -227,18 +227,24 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
                     buckets[k].append(i)
             return buckets
 
-        # Equal content is interchangeable; role-only matches must be unique.
-        for key, interchangeable in (
+        for key, content in (
             (lambda g, i: g.hashes.get(i), True),
             (lambda g, i: g.role(i), False),
         ):
             la, lb = bucket(left, old, key), bucket(right, new, key)
             for k in la.keys() & lb.keys():
-                if interchangeable or len(la[k]) == len(lb[k]) == 1:
-                    for a, b in zip(la[k], lb[k]):
-                        result.append((a, b))
-                        left.remove(a)
-                        right.remove(b)
+                if len(la[k]) == len(lb[k]) == 1:
+                    candidates = list(zip(la[k], lb[k]))
+                elif content and ordered:
+                    old_bucket, new_bucket = set(la[k]), set(lb[k])
+                    candidates = [(a, b) for a, b in zip(aa, bb) if a in old_bucket and b in new_bucket]
+                elif content and len(la[k]) == len(lb[k]):
+                    candidates = list(zip(la[k], lb[k]))
+                else:
+                    continue
+                result.extend(candidates)
+                left.difference_update(a for a, _ in candidates)
+                right.difference_update(b for _, b in candidates)
         if ordered and len(aa) == len(bb):
             result.extend((a, b) for a, b in zip(aa, bb) if a in left and b in right)
         return result

@@ -100,7 +100,9 @@ This experimental command restores BASE's STEP IDs on matched entities in NEW
 and assigns unmatched entities IDs above BASE's maximum. It uses unique GUIDs,
 Athar's product matches, same-parent attribute roles, inverse relationship
 roles, and exact resource content. Identical duplicates are paired through their
-matched parents. Remaining equal-content twins pair only when the buckets have
+matched parents: ordered duplicate children use attribute positions, and
+unordered duplicate child buckets must have equal sizes. Remaining equal-content
+twins pair only when the buckets have
 matching sizes, no incoming NEW references, and every NEW body resolves through
 established mappings to the same values at every reference position. Leaf twins
 satisfy the outgoing-reference check. These pairings do not propagate role
