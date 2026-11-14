@@ -13,6 +13,7 @@ import ifcopenshell
 from ifcopenshell import ifcopenshell_wrapper
 
 from athar.bottom._native import native
+from athar.bottom.parser import open_ifc
 from athar.bottom.signatures import build_signature_bundle
 from athar.engine import SchemaMismatchError
 from athar.matcher.core import match_signatures
@@ -172,8 +173,8 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
     output = Path(output_path)
     if output.resolve() in {Path(base_path).resolve(), Path(new_path).resolve()}:
         raise ValueError("output must not overwrite either input")
-    base_model = ifcopenshell.open(base_path)
-    new_model = ifcopenshell.open(new_path)
+    base_model = open_ifc(base_path)
+    new_model = open_ifc(new_path)
     if base_model.schema != new_model.schema:
         raise SchemaMismatchError(base_model.schema, new_model.schema)
     pairs, _, _, _ = match_signatures(
@@ -383,7 +384,7 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
                 **stats, "unsafe_rooted_additions": rooted_additions, "unmergeable_changes": unmergeable,
                 "records_off_their_line": {"base": sorted(spanning_base), "new": sorted(spanning_new)},
             })
-        reopened = ifcopenshell.open(temporary)
+        reopened = open_ifc(temporary)
         if len(list(reopened)) != len(new.entities):
             raise ValueError("rekey changed the entity count")
         for b, e in new.entities.items():

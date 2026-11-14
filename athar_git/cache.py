@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from athar.bottom.constants import CANON_VERSION
+from athar.bottom.parser import require_readable_file
 from athar.bottom.signatures import build_signature_bundle
 from athar.bottom.types import SignatureBundle
 from athar.engine import package_version
@@ -54,6 +55,7 @@ def load_or_build_bundle(
     """
 
     source_path = Path(path)
+    require_readable_file(source_path)
     lfs_oid = _lfs_pointer_oid(source_path)
     if lfs_oid is not None:
         cache_key = f"sha256-{lfs_oid}"

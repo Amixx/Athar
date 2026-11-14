@@ -43,9 +43,16 @@ class SchemaMismatchError(ValueError):
         )
 
 
-def diff_files(old_path: str, new_path: str, *, generated_at: str | None = None) -> dict:
+def diff_files(
+    old_path: str | os.PathLike[str],
+    new_path: str | os.PathLike[str],
+    *,
+    generated_at: str | None = None,
+) -> dict:
     """Diff two IFC files with the current architecture."""
 
+    old_path = os.fsdecode(old_path)
+    new_path = os.fsdecode(new_path)
     old_bundle = _load_bundle(old_path)
     if old_path == new_path:
         new_bundle = old_bundle
@@ -80,8 +87,8 @@ def diff_bundles(
 
 
 def stream_diff_files(
-    old_path: str,
-    new_path: str,
+    old_path: str | os.PathLike[str],
+    new_path: str | os.PathLike[str],
     *,
     mode: str = "ndjson",
     chunk_size: int = 1000,

@@ -12,7 +12,11 @@ surface is thin glue:
 
 - `_native.py` — discovers the compiled module (`native()`).
 - `parser.py` — file-independent schema/unit glue only: schema-support guard,
-  measure-type helpers, `IfcUnitAssignment` factor extraction.
+  measure-type helpers, `IfcUnitAssignment` factor extraction. `open_ifc` is
+  the one place `ifcopenshell` opens a file. ifcopenshell crashes the
+  interpreter on a file it cannot open, so `require_readable_file` raises an
+  `OSError` naming the path unless it is a regular file the process can read.
+  `open_ifc` calls it, and the Git cache calls it before hashing a file.
 - `native_schema.py` — builds the per-class descriptor map (JSON, cached per
   schema) that Rust applies to the STEP records.
 - `signatures.py` — opens the file once via `ifcopenshell` for the schema name

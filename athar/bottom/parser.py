@@ -2,8 +2,11 @@
 
 File-independent schema glue the native parser needs from ifcopenshell:
 
-- ``open_ifc`` — open a file with ifcopenshell, turning its parse failures into
-  an ``IfcParseError`` that names the file and the cause.
+- ``require_readable_file`` — rejects a path that is not a readable regular
+  file.
+- ``open_ifc`` — the one place ifcopenshell opens a file: checks the path with
+  ``require_readable_file`` and turns parse failures into an ``IfcParseError``
+  that names the file and the cause.
 - ``_assert_supported_schema`` — guard the engine's supported schema families.
 - the measure-type helpers (``_measure_type_from_attr_type`` and the measure
   sets), consumed by ``native_schema`` to precompute per-attribute descriptors.
@@ -16,8 +19,11 @@ never materializes the file's entities.
 
 from __future__ import annotations
 
+import errno
 import math
+import os
 import re
+import stat
 from typing import Any
 
 from .constants import SUPPORTED_SCHEMAS
@@ -47,8 +53,26 @@ class IfcParseError(ValueError):
     """An IFC file ifcopenshell cannot parse."""
 
 
+def require_readable_file(path: str | os.PathLike[str]) -> None:
+    """Raise an ``OSError`` naming ``path`` unless it is a regular file this process can read.
+
+    ifcopenshell crashes the interpreter on a file it cannot open, and opening
+    a FIFO blocks, so the check runs before anything opens the path.
+    """
+    mode = os.stat(path).st_mode
+    if stat.S_ISDIR(mode):
+        raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), path)
+    if not stat.S_ISREG(mode):
+        raise OSError(errno.EINVAL, "Not a regular file", path)
+    with open(path, "rb"):
+        pass
+
+
 def open_ifc(path: str):
+    """Open ``path`` with ifcopenshell after ``require_readable_file``."""
     import ifcopenshell
+
+    require_readable_file(path)
 
     # ifcopenshell reports the cause only in its process-wide log, which
     # get_log() drains; drop earlier entries so only this parse's remain.

@@ -672,3 +672,22 @@ def test_lfs_pointer_miss_smudges_and_verifies(tmp_path, monkeypatch):
     assert result.hit is False
     assert result.key == f"sha256-{oid}"
     assert built == [content]
+
+
+def test_cache_rejects_a_directory_naming_the_path(tmp_path):
+    with pytest.raises(OSError) as raised:
+        cache_mod.load_or_build_bundle(tmp_path, cache_dir=tmp_path / "cache")
+
+    assert str(tmp_path) in str(raised.value)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="os.mkfifo is unavailable")
+def test_cache_rejects_a_fifo_without_blocking(tmp_path):
+    fifo = tmp_path / "pipe.ifc"
+    os.mkfifo(fifo)
+
+    with pytest.raises(OSError) as raised:
+        cache_mod.load_or_build_bundle(fifo, cache_dir=tmp_path / "cache")
+
+    assert str(fifo) in str(raised.value)
+
