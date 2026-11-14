@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from athar.check import builtin_policy_packs, evaluate_report, resolve_policy
+import athar.__main__ as main_mod
+from athar.check import builtin_policy_packs, evaluate_report, normalize_policy, resolve_policy
 
 
 def test_check_passes_when_report_stays_within_policy():
@@ -86,8 +89,67 @@ def test_check_rejects_invalid_policy_shape():
     with pytest.raises(ValueError, match="max_deleted must be a non-negative integer"):
         evaluate_report(_report(), {"max_deleted": -1})
 
-    with pytest.raises(ValueError, match="Unsupported aspect"):
+    with pytest.raises(ValueError, match="Unknown aspect.*forbid_aspect_changes: owner"):
         evaluate_report(_report(), {"forbid_aspect_changes": {"owner": "*"}})
+
+
+@pytest.mark.parametrize(
+    ("policy", "message"),
+    [
+        ({"max_delete": 0}, "Unknown policy key.*max_delete"),
+        ({"max_deleted": "0"}, "max_deleted must be a non-negative integer"),
+        ({"max_deleted": True}, "max_deleted must be a non-negative integer"),
+        ({"max_deleted_by_class": {"IfcWall": -1}}, "max_deleted_by_class.IfcWall must be a non-negative integer"),
+        ({"max_modified_change_scope": {"intrinisc": 0}}, "Unknown change scope.*intrinisc"),
+        ({"forbid_aspect_changes": {"geometry": []}}, "forbid_aspect_changes.geometry must be"),
+        ({"forbid_site_placement_change": "yes"}, "forbid_site_placement_change must be true or false"),
+        ({"forbid_property_value_change": ["FireRating"]}, "forbid_property_value_change must be an object"),
+        ({"description": 3}, "description must be a string"),
+    ],
+)
+def test_policy_validation_names_the_offending_key(policy, message):
+    with pytest.raises(ValueError, match=message):
+        normalize_policy(policy)
+
+
+def test_placement_limit_is_validated_without_a_placement_change():
+    report = _report()
+    report["modified"] = report["modified"][:1]
+    report["stats"]["modified"] = 1
+
+    with pytest.raises(ValueError, match="max_placement_delta_mm_by_class.IfcSite must be a non-negative number"):
+        evaluate_report(report, {"max_placement_delta_mm_by_class": {"IfcSite": -5}})
+
+
+def test_cli_rejects_a_policy_typo_before_diffing(tmp_path, capsys):
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps({"max_delete": 0}), encoding="utf-8")
+
+    code = main_mod._run_check([str(tmp_path / "missing-old.ifc"), str(tmp_path / "missing-new.ifc"), "--policy", str(policy_path)])
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "max_delete" in err
+    assert "missing-old.ifc" not in err
+
+
+def test_normalized_policy_is_a_fixed_point():
+    policy = normalize_policy(
+        {
+            "description": "d",
+            "forbid_aspect_changes": {"placement": "*", "data": "IfcWall"},
+            "forbid_property_value_change": {"FireRating": ["IfcWall", "IfcDoor"]},
+            "max_placement_delta_mm": 5,
+        }
+    )
+
+    assert policy == {
+        "description": "d",
+        "max_placement_delta_mm": 5.0,
+        "forbid_aspect_changes": {"data": ["IfcWall"], "placement": "*"},
+        "forbid_property_value_change": {"FireRating": ["IfcDoor", "IfcWall"]},
+    }
+    assert normalize_policy(policy) == policy
 
 
 def _report() -> dict:
@@ -207,11 +269,6 @@ def test_check_protected_property_change_ignores_other_properties():
     )
 
     assert result["ok"] is True
-
-
-def test_check_rejects_invalid_property_value_change_shape():
-    with pytest.raises(ValueError, match="forbid_property_value_change must be an object"):
-        evaluate_report(_report_with_property_deltas(), {"forbid_property_value_change": ["FireRating"]})
 
 
 def test_builtin_policy_packs_are_loadable():

@@ -9,19 +9,128 @@ from pathlib import Path
 from typing import Any
 
 
-ASPECTS = {"geometry", "data", "topology", "placement"}
+ASPECTS = ("geometry", "data", "topology", "placement")
+CHANGE_SCOPES = ("intrinsic", "transitive", "mixed")
 
 
 _POLICY_PACK_DIR = Path(__file__).parent / "policies"
 
 
 def load_policy(path: str | Path) -> dict[str, Any]:
-    """Load a JSON policy file."""
+    """Load and normalize a JSON policy file."""
     with open(path, encoding="utf-8") as fh:
         policy = json.load(fh)
+    return normalize_policy(policy)
+
+
+def normalize_policy(policy: Any) -> dict[str, Any]:
+    """Validate a policy and return its normalized form.
+
+    Every key is checked up front; an unknown key, a wrong value type, a
+    negative limit, an unknown change scope or an unknown aspect raises
+    ``ValueError`` naming the key. The normalized form is itself a valid policy,
+    so normalizing it again returns an equal dict.
+    """
     if not isinstance(policy, dict):
         raise ValueError("Policy must be a JSON object")
-    return policy
+    unknown = sorted(set(policy) - set(_POLICY_KEYS))
+    if unknown:
+        allowed = ", ".join(_POLICY_KEYS)
+        raise ValueError(f"Unknown policy key(s): {', '.join(unknown)}. Allowed keys: {allowed}")
+    return {key: _POLICY_KEYS[key](policy[key], key) for key in _POLICY_KEYS if key in policy}
+
+
+def _description(value: Any, key: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string")
+    return value
+
+
+def _flag(value: Any, key: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} must be true or false")
+    return value
+
+
+def _count_limit(value: Any, key: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{key} must be a non-negative integer")
+    return value
+
+
+def _mm_limit(value: Any, key: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+        raise ValueError(f"{key} must be a non-negative number")
+    return float(value)
+
+
+def _object(value: Any, key: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be an object")
+    return value
+
+
+def _class_count_limits(value: Any, key: str) -> dict[str, int]:
+    return {
+        name: _count_limit(limit, f"{key}.{name}") for name, limit in sorted(_object(value, key).items())
+    }
+
+
+def _class_mm_limits(value: Any, key: str) -> dict[str, float]:
+    return {name: _mm_limit(limit, f"{key}.{name}") for name, limit in sorted(_object(value, key).items())}
+
+
+def _scope_limits(value: Any, key: str) -> dict[str, int]:
+    limits = _object(value, key)
+    unknown = sorted(set(limits) - set(CHANGE_SCOPES))
+    if unknown:
+        raise ValueError(f"Unknown change scope(s) in {key}: {', '.join(unknown)}. Allowed: {', '.join(CHANGE_SCOPES)}")
+    return {scope: _count_limit(limits[scope], f"{key}.{scope}") for scope in CHANGE_SCOPES if scope in limits}
+
+
+def _aspect_bans(value: Any, key: str) -> dict[str, Any]:
+    bans = _object(value, key)
+    unknown = sorted(set(bans) - set(ASPECTS))
+    if unknown:
+        raise ValueError(f"Unknown aspect(s) in {key}: {', '.join(unknown)}. Allowed: {', '.join(ASPECTS)}")
+    return {aspect: _class_filter(bans[aspect], f"{key}.{aspect}") for aspect in ASPECTS if aspect in bans}
+
+
+def _property_filters(value: Any, key: str) -> dict[str, Any]:
+    filters = _object(value, key)
+    for name in filters:
+        if not name:
+            raise ValueError(f"{key} has an empty property name")
+    return {name: _class_filter(spec, f"{key}.{name}") for name, spec in sorted(filters.items())}
+
+
+def _class_filter(value: Any, key: str) -> str | list[str]:
+    if value == "*":
+        return "*"
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list) and value and all(isinstance(item, str) for item in value):
+        return sorted(set(value))
+    raise ValueError(f"{key} must be '*', a class name, or a non-empty list of class names")
+
+
+_POLICY_KEYS = {
+    "description": _description,
+    "forbid_schema_change": _flag,
+    "max_added": _count_limit,
+    "max_deleted": _count_limit,
+    "max_modified": _count_limit,
+    "max_added_by_class": _class_count_limits,
+    "max_deleted_by_class": _class_count_limits,
+    "max_modified_by_class": _class_count_limits,
+    "max_modified_change_scope": _scope_limits,
+    "forbid_site_placement_change": _flag,
+    "max_placement_delta_mm": _mm_limit,
+    "max_placement_delta_mm_by_class": _class_mm_limits,
+    "forbid_aspect_changes": _aspect_bans,
+    "forbid_property_removal": _class_filter,
+    "forbid_property_value_change": _property_filters,
+}
 
 
 def builtin_policy_packs() -> dict[str, Path]:
@@ -59,10 +168,11 @@ def load_report(path: str | Path) -> dict[str, Any]:
 
 
 def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
-    """Evaluate a report against a CI policy.
+    """Evaluate a report against a CI policy (see :func:`normalize_policy`).
 
     The policy format is deliberately small and JSON-only:
 
+    - ``description``: free text label
     - ``forbid_schema_change``: bool, defaults true
     - ``max_added`` / ``max_deleted`` / ``max_modified``: integer limits
     - ``max_added_by_class`` / ``max_deleted_by_class`` /
@@ -71,16 +181,16 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     - ``forbid_site_placement_change``: bool
     - ``max_placement_delta_mm``: number, Euclidean translation delta limit
     - ``max_placement_delta_mm_by_class``: ``{"IfcSite": 0}``
-    - ``forbid_aspect_changes``: ``{"data": ["IfcWall"], "placement": "*"}`
+    - ``forbid_aspect_changes``: ``{"data": ["IfcWall"], "placement": "*"}``
     - ``forbid_property_removal``: ``"*"``, a class string, or a list of classes
       — fail when a matched entity drops a property/quantity value
     - ``forbid_property_value_change``: ``{"FireRating": "*", "LoadBearing":
       ["IfcWall"]}`` — fail when a protected property's value changes
 
-    A leading ``description`` (or any other unrecognized key) is ignored, so
-    shipped policy packs can carry their own human-readable label.
+    Any other key is an error.
     """
 
+    policy = normalize_policy(policy)
     violations: list[dict[str, Any]] = []
     _check_schema(report, policy, violations)
     _check_section_limits(report, policy, violations)
@@ -126,7 +236,7 @@ def _check_section_limits(report: dict[str, Any], policy: dict[str, Any], violat
         key = f"max_{section}"
         if key not in policy:
             continue
-        limit = _as_int(policy[key], key)
+        limit = policy[key]
         actual = _section_count(report, section)
         if actual > limit:
             violations.append(_limit_violation(f"{section}_limit", key, actual, limit))
@@ -135,14 +245,10 @@ def _check_section_limits(report: dict[str, Any], policy: dict[str, Any], violat
 def _check_class_limits(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
     for section in ("added", "deleted", "modified"):
         key = f"max_{section}_by_class"
-        limits = policy.get(key)
-        if limits is None:
+        if key not in policy:
             continue
-        if not isinstance(limits, dict):
-            raise ValueError(f"{key} must be an object")
         counts = _section_class_counts(report, section)
-        for class_name in sorted(limits):
-            limit = _as_int(limits[class_name], f"{key}.{class_name}")
+        for class_name, limit in policy[key].items():
             actual = counts.get(class_name, 0)
             if actual > limit:
                 violations.append(
@@ -158,14 +264,10 @@ def _check_class_limits(report: dict[str, Any], policy: dict[str, Any], violatio
 
 def _check_scope_limits(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
     key = "max_modified_change_scope"
-    limits = policy.get(key)
-    if limits is None:
+    if key not in policy:
         return
-    if not isinstance(limits, dict):
-        raise ValueError(f"{key} must be an object")
     counts = Counter(item.get("change_scope") for item in report.get("modified", []))
-    for scope in sorted(limits):
-        limit = _as_int(limits[scope], f"{key}.{scope}")
+    for scope, limit in policy[key].items():
         actual = counts.get(scope, 0)
         if actual > limit:
             violations.append(
@@ -203,8 +305,6 @@ def _check_placement_limits(report: dict[str, Any], policy: dict[str, Any], viol
     class_limits = policy.get("max_placement_delta_mm_by_class", {})
     if global_limit is None and not class_limits:
         return
-    if class_limits and not isinstance(class_limits, dict):
-        raise ValueError("max_placement_delta_mm_by_class must be an object")
 
     offenders: list[dict[str, Any]] = []
     for item in report.get("modified", []):
@@ -212,11 +312,9 @@ def _check_placement_limits(report: dict[str, Any], policy: dict[str, Any], viol
         norm = _placement_norm(delta)
         if norm is None:
             continue
-        class_name = _modified_class(item)
-        limit_value = class_limits.get(class_name, global_limit)
-        if limit_value is None:
+        limit = class_limits.get(_modified_class(item), global_limit)
+        if limit is None:
             continue
-        limit = _as_float(limit_value, f"placement limit for {class_name}")
         if norm > limit:
             offender = _modified_entity_ref(item)
             offender["placement_delta_mm"] = round(norm, 3)
@@ -234,21 +332,11 @@ def _check_placement_limits(report: dict[str, Any], policy: dict[str, Any], viol
 
 
 def _check_aspect_bans(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
-    key = "forbid_aspect_changes"
-    bans = policy.get(key)
-    if bans is None:
-        return
-    if not isinstance(bans, dict):
-        raise ValueError(f"{key} must be an object")
-
-    for aspect in sorted(bans):
-        if aspect not in ASPECTS:
-            raise ValueError(f"Unsupported aspect in {key}: {aspect}")
-        class_filter = _class_filter(bans[aspect], f"{key}.{aspect}")
+    for aspect, classes in policy.get("forbid_aspect_changes", {}).items():
         affected = [
             _modified_entity_ref(item)
             for item in report.get("modified", [])
-            if item.get("aspects", {}).get(aspect) == "changed" and class_filter(_modified_class(item))
+            if item.get("aspects", {}).get(aspect) == "changed" and _class_matches(classes, _modified_class(item))
         ]
         if affected:
             violations.append(
@@ -263,13 +351,12 @@ def _check_aspect_bans(report: dict[str, Any], policy: dict[str, Any], violation
 
 
 def _check_property_removal(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
-    spec = policy.get("forbid_property_removal")
-    if spec is None:
+    classes = policy.get("forbid_property_removal")
+    if classes is None:
         return
-    class_filter = _class_filter(spec, "forbid_property_removal")
     affected: list[dict[str, Any]] = []
     for item in report.get("modified", []):
-        if not class_filter(_modified_class(item)):
+        if not _class_matches(classes, _modified_class(item)):
             continue
         removed = (item.get("property_deltas") or {}).get("removed") or []
         if not removed:
@@ -292,16 +379,10 @@ def _check_property_removal(report: dict[str, Any], policy: dict[str, Any], viol
 
 
 def _check_property_value_changes(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
-    spec = policy.get("forbid_property_value_change")
-    if spec is None:
-        return
-    if not isinstance(spec, dict):
-        raise ValueError("forbid_property_value_change must be an object")
-    for prop_name in sorted(spec):
-        class_filter = _class_filter(spec[prop_name], f"forbid_property_value_change.{prop_name}")
+    for prop_name, classes in policy.get("forbid_property_value_change", {}).items():
         affected: list[dict[str, Any]] = []
         for item in report.get("modified", []):
-            if not class_filter(_modified_class(item)):
+            if not _class_matches(classes, _modified_class(item)):
                 continue
             changed = (item.get("property_deltas") or {}).get("changed") or []
             matches = [e for e in changed if e.get("name") == prop_name]
@@ -376,16 +457,8 @@ def _placement_norm(delta: Any) -> float | None:
         return None
 
 
-def _class_filter(value: Any, key: str):
-    if value == "*":
-        return lambda _class_name: True
-    if isinstance(value, str):
-        allowed = {value}
-    elif isinstance(value, list) and all(isinstance(item, str) for item in value):
-        allowed = set(value)
-    else:
-        raise ValueError(f"{key} must be '*', a class string, or a list of class strings")
-    return lambda class_name: class_name in allowed
+def _class_matches(classes: str | list[str], class_name: str | None) -> bool:
+    return classes == "*" or class_name in classes
 
 
 def _limit_violation(
@@ -404,15 +477,3 @@ def _limit_violation(
     }
     out.update(extra)
     return out
-
-
-def _as_int(value: Any, key: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"{key} must be a non-negative integer")
-    return value
-
-
-def _as_float(value: Any, key: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
-        raise ValueError(f"{key} must be a non-negative number")
-    return float(value)
