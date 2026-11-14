@@ -47,7 +47,7 @@ TIMING_REFERENCE = "athar"
 RATIO_METRICS = ("seconds_median", "peak_rss_mb_max", "gb_seconds_median")
 
 Counts = dict[str, int]
-PairBuilder = Callable[[Path], tuple[str, str]]
+PairBuilder = Callable[[Path], "tuple[str, str, Expected | None]"]
 
 
 @dataclass(frozen=True)
@@ -70,13 +70,14 @@ class Pair:
     large: bool = False
     revit: bool = False
     set_name: str = "synthetic"
+    unscored: str = ""
 
 
 def _static_pair(old_key: str, new_key: str, *, acceptance: bool = False) -> PairBuilder:
     resolver = acceptance_path if acceptance else corpus_path
 
-    def build(_workdir: Path) -> tuple[str, str]:
-        return resolver(old_key), resolver(new_key)
+    def build(_workdir: Path) -> tuple[str, str, Expected | None]:
+        return resolver(old_key), resolver(new_key), None
 
     return build
 
@@ -89,12 +90,12 @@ def _same_file_pair(key: str, *, acceptance: bool = False) -> PairBuilder:
     """
     resolver = acceptance_path if acceptance else corpus_path
 
-    def build(workdir: Path) -> tuple[str, str]:
+    def build(workdir: Path) -> tuple[str, str, Expected | None]:
         src = Path(resolver(key))
         workdir.mkdir(parents=True, exist_ok=True)
         copy = workdir / f"{key}-copy{src.suffix}"
         shutil.copyfile(src, copy)
-        return str(src), str(copy)
+        return str(src), str(copy), None
 
     return build
 
@@ -102,7 +103,7 @@ def _same_file_pair(key: str, *, acceptance: bool = False) -> PairBuilder:
 def _ifcopenshell_rewrite_pair(key: str) -> PairBuilder:
     """Same model, both sides written through IfcOpenShell."""
 
-    def build(workdir: Path) -> tuple[str, str]:
+    def build(workdir: Path) -> tuple[str, str, Expected | None]:
         import ifcopenshell
 
         src = corpus_path(key)
@@ -111,7 +112,7 @@ def _ifcopenshell_rewrite_pair(key: str) -> PairBuilder:
         new_path = workdir / f"{key}-rewrite-new.ifc"
         ifcopenshell.open(src).write(old_path)
         ifcopenshell.open(src).write(new_path)
-        return str(old_path), str(new_path)
+        return str(old_path), str(new_path), None
 
     return build
 
@@ -119,14 +120,14 @@ def _ifcopenshell_rewrite_pair(key: str) -> PairBuilder:
 def _asymmetric_rewrite_pair(key: str) -> PairBuilder:
     """Original file vs its IfcOpenShell rewrite — the export-churn scenario."""
 
-    def build(workdir: Path) -> tuple[str, str]:
+    def build(workdir: Path) -> tuple[str, str, Expected | None]:
         import ifcopenshell
 
         src = corpus_path(key)
         workdir.mkdir(parents=True, exist_ok=True)
         new_path = workdir / f"{key}-rewritten.ifc"
         ifcopenshell.open(src).write(new_path)
-        return src, str(new_path)
+        return src, str(new_path), None
 
     return build
 
@@ -134,7 +135,7 @@ def _asymmetric_rewrite_pair(key: str) -> PairBuilder:
 def _owner_history_churn_pair(key: str) -> PairBuilder:
     """Only OwnerHistory metadata changes; core hashes intentionally ignore it."""
 
-    def build(workdir: Path) -> tuple[str, str]:
+    def build(workdir: Path) -> tuple[str, str, Expected | None]:
         import ifcopenshell
 
         src = corpus_path(key)
@@ -154,13 +155,13 @@ def _owner_history_churn_pair(key: str) -> PairBuilder:
         if changed == 0:
             raise RuntimeError(f"{key} has no editable OwnerHistory metadata")
         model.write(new_path)
-        return str(old_path), str(new_path)
+        return str(old_path), str(new_path), None
 
     return build
 
 
 def _guid_scramble_pair(key: str) -> PairBuilder:
-    def build(workdir: Path) -> tuple[str, str]:
+    def build(workdir: Path) -> tuple[str, str, Expected | None]:
         import ifcopenshell
         import ifcopenshell.guid
 
@@ -177,26 +178,109 @@ def _guid_scramble_pair(key: str) -> PairBuilder:
             if isinstance(guid, str) and guid.strip():
                 entity.GlobalId = ifcopenshell.guid.compress(uuid.uuid5(_SCRAMBLE_NAMESPACE, guid).hex)
         model.write(str(scrambled))
-        return str(clean), str(scrambled)
+        return str(clean), str(scrambled), None
 
     return build
 
 
 def _mutation_pair(key: str, mutator: Callable[[Any], mutations.Mutation]) -> PairBuilder:
-    def build(workdir: Path) -> tuple[str, str]:
+    def build(workdir: Path) -> tuple[str, str, Expected]:
         import ifcopenshell
 
         src = corpus_path(key)
         workdir.mkdir(parents=True, exist_ok=True)
         baseline = workdir / f"{key}-{mutator.__name__}-baseline.ifc"
         mutated = workdir / f"{key}-{mutator.__name__}.ifc"
-        ifcopenshell.open(src).write(baseline)
-        model = ifcopenshell.open(src)
-        mutator(model)
-        model.write(mutated)
-        return str(baseline), str(mutated)
+        before = ifcopenshell.open(src)
+        before.write(baseline)
+        after = ifcopenshell.open(src)
+        manifest = mutator(after)
+        after.write(mutated)
+        return str(baseline), str(mutated), mutation_truth(before, after, manifest)
 
     return build
+
+
+def mutation_truth(before: Any, after: Any, manifest: mutations.Mutation) -> Expected:
+    """GUID-level truth of one constructed edit, from its manifest and the two models.
+
+    ``required`` holds the products whose own content the edit changed: the
+    victim renamed, re-valued, moved, deleted or added, or, for a type property
+    edit, the occurrences that inherit the value.
+
+    ``optional_modified`` holds entities whose change is a consequence of the
+    edit, so reporting them is defensible but not required:
+    - the relating side of every relationship whose member list the edit
+      changed (container, type, property sets of a deleted product; container
+      of an added one);
+    - the type object whose property was edited, which is not a product and
+      whose change the occurrences carry;
+    - products placed relative to a moved product, whose world placement
+      moved with it.
+
+    Anything else a tool reports is a false positive.
+    """
+    op = manifest.operation
+    athar: dict[str, Any] | None = None
+    required: dict[str, list[str]] = {"added": [], "deleted": [], "modified": []}
+    optional: set[str] = set()
+    if op == "scramble_guids":
+        athar = {"matched_by_tier": {"guid": 0}}
+    elif op == "duplicate_guid":
+        athar = {"guid_collisions": {"old": 0, "new": 1}}
+    elif op in {"rename_product", "edit_pset_value"}:
+        required["modified"] = [manifest.victim_guid]
+    elif op == "edit_type_pset_value":
+        required["modified"] = list(manifest.affected_guids)
+        optional.add(manifest.victim_guid)
+    elif op == "move_product":
+        required["modified"] = [manifest.victim_guid]
+        moved = after.by_guid(manifest.victim_guid).ObjectPlacement
+        for product in after.by_type("IfcProduct"):
+            if product.GlobalId != manifest.victim_guid and moved in _placement_chain(product):
+                optional.add(product.GlobalId)
+    elif op == "delete_product":
+        required["deleted"] = [manifest.victim_guid]
+        for rel in before.get_inverse(before.by_guid(manifest.victim_guid)):
+            optional.update(_relating_guids(rel))
+    elif op == "add_product":
+        required["added"] = [manifest.victim_guid]
+        for rel in after.get_inverse(after.by_guid(manifest.victim_guid)):
+            optional.update(_relating_guids(rel))
+    else:
+        raise ValueError(f"no truth rule for mutation {op!r}")
+    changed_guids = {**required, "optional_modified": sorted(optional)} if optional else required
+    return Expected(counts=_counts_from_truth(changed_guids), athar=athar, changed_guids=changed_guids)
+
+
+def _placement_chain(product: Any) -> list[Any]:
+    chain = []
+    placement = product.ObjectPlacement
+    while placement is not None:
+        chain.append(placement)
+        placement = getattr(placement, "PlacementRelTo", None)
+    return chain
+
+
+def _relating_guids(rel: Any) -> set[str]:
+    guids = set()
+    for name, value in rel.get_info(recursive=False).items():
+        if name.startswith("Relating") and value is not None and getattr(value, "GlobalId", None):
+            guids.add(value.GlobalId)
+    return guids
+
+
+def _counts_from_truth(changed_guids: dict[str, list[str]]) -> Counts:
+    counts: Counts = {}
+    for category in CATEGORIES:
+        required = len(changed_guids.get(category, ()))
+        optional = len(changed_guids.get(f"optional_{category}", ()))
+        if optional:
+            counts[f"{category}_min"] = required
+            counts[f"{category}_max"] = required + optional
+        else:
+            counts[category] = required
+    return counts
 
 
 EMPTY_CHANGESET: dict[str, list[str]] = {"added": [], "deleted": [], "modified": []}
@@ -243,6 +327,7 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
         kind="revision",
         builder=_static_pair("bl_v1", "bl_v2"),
         expectation="mostly GUID matches, limited added/deleted churn",
+        unscored="no independent record of the edits between the two versions",
     ),
     Pair(
         name="guid_scramble_gni_190",
@@ -256,60 +341,48 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
         kind="synthetic_guid_scramble",
         builder=_mutation_pair("gni_190", mutations.scramble_guids),
         expectation="synthetic GUID scramble: zero semantic changes without GUID-tier matches",
-        expected=ZERO_DIFF,
     ),
     Pair(
         name="mutation_duplicate_guid_gni_190",
         kind="synthetic_duplicate_guid",
         builder=_mutation_pair("gni_190", mutations.duplicate_guid),
         expectation="duplicated GlobalId is surfaced but not used as identity evidence",
-        expected=Expected(
-            counts={"added": 0, "deleted": 0, "modified": 0},
-            athar={"guid_collisions": {"old": 0, "new": 1}},
-            changed_guids=EMPTY_CHANGESET,
-        ),
     ),
     Pair(
         name="mutation_rename_product_gni_190",
         kind="synthetic_data",
         builder=_mutation_pair("gni_190", mutations.rename_product),
         expectation="one product Name scalar changed",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 1}),
     ),
     Pair(
         name="mutation_pset_value_gni_190",
         kind="synthetic_data",
         builder=_mutation_pair("gni_190", mutations.edit_pset_value),
         expectation="one exclusive property-set value changed",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 1}),
     ),
     Pair(
         name="mutation_type_pset_value_gni_190",
         kind="synthetic_inherited_data",
         builder=_mutation_pair("gni_190", mutations.edit_type_pset_value),
-        expectation="one type property value changes inherited occurrence data",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 28}),
+        expectation="one type property value changes inherited occurrence data; the type may be reported",
     ),
     Pair(
         name="mutation_move_product_gni_190",
         kind="synthetic_placement",
         builder=_mutation_pair("gni_190", mutations.move_product),
         expectation="one product placement changed",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 1}),
     ),
     Pair(
         name="mutation_delete_product_gni_190",
         kind="synthetic_delete",
         builder=_mutation_pair("gni_190", mutations.delete_product),
-        expectation="one product deleted, with possible transitive fallout",
-        expected=Expected(counts={"added": 0, "deleted": 1, "modified_max": 20}),
+        expectation="one product deleted; its container, type and property sets may be reported modified",
     ),
     Pair(
         name="mutation_add_product_gni_190",
         kind="synthetic_add",
         builder=_mutation_pair("gni_190", mutations.add_product),
-        expectation="one product added, with possible transitive fallout",
-        expected=Expected(counts={"added": 1, "deleted": 0, "modified_max": 20}),
+        expectation="one product added; its container may be reported modified",
     ),
     Pair(
         name="large_same_file_gni_p5_arc",
@@ -353,8 +426,8 @@ def _revit_export_path(name: str) -> Path:
 
 
 def _revit_pair(old_name: str, new_name: str) -> PairBuilder:
-    def build(_workdir: Path) -> tuple[str, str]:
-        return str(_revit_export_path(old_name)), str(_revit_export_path(new_name))
+    def build(_workdir: Path) -> tuple[str, str, Expected | None]:
+        return str(_revit_export_path(old_name)), str(_revit_export_path(new_name)), None
 
     return build
 
@@ -538,7 +611,8 @@ def main() -> int:
         print(f"[{time.strftime('%H:%M:%S')}] pair {pair.name}", flush=True)
         pair_workdir = workdir / pair.name
         try:
-            old_path, new_path = pair.builder(pair_workdir)
+            old_path, new_path, derived_expected = pair.builder(pair_workdir)
+            expected = derived_expected if derived_expected is not None else pair.expected
         except BaseException as exc:  # noqa: BLE001 - benchmark records skips/failures
             entry = {
                 "name": pair.name,
@@ -560,7 +634,8 @@ def main() -> int:
             "kind": pair.kind,
             "set": pair.set_name,
             "expectation": pair.expectation,
-            "expected": _expected_json(pair.expected),
+            "expected": _expected_json(expected),
+            "unscored": pair.unscored,
             "old": _input_summary(old_path),
             "new": _input_summary(new_path),
             "runs": {
@@ -592,7 +667,7 @@ def main() -> int:
                 lambda: _run_json_runner(_IFCGIT_RUNNER, old_path, new_path, args.timeout_s), args.repeats
             )
         results["pairs"].append(entry)
-        results["summary"].append(finish_pair(entry, pair.expected))
+        results["summary"].append(finish_pair(entry, expected))
         results["aggregates"] = aggregate_tools(results["summary"])
         _write_json(Path(args.out), results)
 

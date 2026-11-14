@@ -220,6 +220,53 @@ def test_peak_rss_covers_descendant_processes():
 
 def test_same_file_pairs_diff_a_copy_at_a_second_path(tmp_path):
     pair = next(pair for pair in bench.BENCHMARK_PAIRS if pair.kind == "same_file")
-    old, new = pair.builder(tmp_path)
+    old, new, _ = pair.builder(tmp_path)
     assert old != new
     assert Path(old).read_bytes() == Path(new).read_bytes()
+
+
+def test_mutation_truth_uses_edited_type_occurrences_and_container(tmp_path):
+    type_pair = next(pair for pair in bench.BENCHMARK_PAIRS if pair.kind == "synthetic_inherited_data")
+    old, new, expected = type_pair.builder(tmp_path / "type")
+
+    import ifcopenshell
+    import ifcopenshell.util.element
+
+    changed = expected.changed_guids["modified"]
+    model = ifcopenshell.open(new)
+    type_guid, = expected.changed_guids["optional_modified"]
+    edited_type = model.by_guid(type_guid)
+    inheritors = sorted(p.GlobalId for p in model.by_type("IfcProduct")
+                        if ifcopenshell.util.element.get_type(p) == edited_type)
+    assert changed == inheritors
+    assert len(changed) > 1
+    assert bench.score_pair({"runs": {"tool": _ok_run(modified=changed + ["UNRELATED"])}}, expected)["tool"]["fp"] == 1
+
+    add_pair = next(pair for pair in bench.BENCHMARK_PAIRS if pair.kind == "synthetic_add")
+    old, new, expected = add_pair.builder(tmp_path / "add")
+    import ifcopenshell
+    before, after = ifcopenshell.open(old), ifcopenshell.open(new)
+    added = {p.GlobalId for p in after.by_type("IfcProduct")} - {p.GlobalId for p in before.by_type("IfcProduct")}
+    assert expected.changed_guids["added"] == sorted(added)
+    product = after.by_guid(next(iter(added)))
+    container = product.ContainedInStructure[0].RelatingStructure.GlobalId
+    assert expected.changed_guids["optional_modified"] == [container]
+    runs = {"tool": _ok_run(added=list(added), modified=[container, "UNRELATED"])}
+    assert bench.score_pair({"runs": runs}, expected)["tool"]["fp"] == 1
+
+
+def test_benchmark_cli_scores_derived_mutation_truth(tmp_path):
+    import json
+    import subprocess
+
+    output = tmp_path / "benchmark.json"
+    python = Path(__file__).resolve().parent.parent / ".venv" / "bin" / "python"
+    subprocess.run(
+        [str(python), str(_BENCHMARK_PATH), "--only", "mutation_rename", "--repeats", "1",
+         "--no-speckle", "--no-ifcfast", "--no-ifcgit", "--out", str(output), "--workdir", str(tmp_path / "work")],
+        check=True, capture_output=True, text=True,
+    )
+    pair, = json.loads(output.read_text())["pairs"]
+    assert "error" not in pair
+    assert len(pair["expected"]["changed_guids"]["modified"]) == 1
+    assert "athar" in pair["changeset_scores"]
