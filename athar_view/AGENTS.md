@@ -104,7 +104,7 @@ cache; nothing depends on it.
 Viewer tests live in `viewer/`. `bun test tests` unit-tests the pure
 report→render-state mapping (parsing, bucket assignment, crossfade appearances)
 and manifest parsing (`sources.test.ts`: v1 accepted, v2 chain parsed,
-`active_step` honored, malformed chain rejected). `bunx playwright test` runs a
+`active_step` honored, out-of-range `active_step` and malformed chain rejected). `bunx playwright test` runs a
 headless smoke against the committed fixture pair in `viewer/e2e/fixtures/`
 (regenerate with `scripts/make_viewer_fixture.py`), asserting bucket/meshless
 counts through the `window.__athar_viewer` debug state rather than pixels — it

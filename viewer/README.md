@@ -58,8 +58,8 @@ highlight overlay.
    The manifest has two forms. **v1** is a single pair (`old`, `new`, `report`
    at the top level). **v2** is a revision chain: `steps: [{label, old, new,
    report}, ...]` plus `active_step`, where each step is one consecutive pair
-   (`athar view a.ifc b.ifc c.ifc …`). A v1 manifest is treated as a one-step
-   chain, so single-pair loads are unchanged. When a chain has more than one
+   (`athar view a.ifc b.ifc c.ifc …`). A v1 manifest is a one-step chain. An
+   `active_step` that is not an index into `steps` is a load error. When a chain has more than one
    step the app shows a prev/next navigator (`[` / `]`) and a `n/N: label`
    indicator; adjacent steps share a file url, so a per-url mesh cache means
    switching a step re-tessellates only the new revision.

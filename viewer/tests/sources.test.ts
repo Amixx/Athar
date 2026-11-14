@@ -60,9 +60,10 @@ describe('parseManifest', () => {
     expect(parsed.steps[0].new.url).toBe(parsed.steps[1].old.url)
   })
 
-  it('clamps an out-of-range active_step to 0', () => {
-    expect(parseManifest({ ...chain, active_step: 9 }).activeStep).toBe(0)
-    expect(parseManifest({ ...chain, active_step: -1 }).activeStep).toBe(0)
+  it('rejects an out-of-range active_step', () => {
+    expect(() => parseManifest({ ...chain, active_step: 9 })).toThrow('active_step')
+    expect(() => parseManifest({ ...chain, active_step: -1 })).toThrow('active_step')
+    expect(() => parseManifest({ ...chain, active_step: 0.5 })).toThrow('active_step')
   })
 
   it('warns when the manifest schema is newer than the viewer', () => {

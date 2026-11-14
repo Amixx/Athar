@@ -121,8 +121,14 @@ export function parseManifest(json: unknown): ParsedManifest {
   }
 
   let activeStep = 0
-  if (typeof m.active_step === 'number' && m.active_step >= 0 && m.active_step < steps.length) {
-    activeStep = Math.floor(m.active_step)
+  if (m.active_step !== undefined) {
+    const step = m.active_step
+    if (typeof step !== 'number' || !Number.isInteger(step) || step < 0 || step >= steps.length) {
+      throw new ManifestFormatError(
+        `manifest active_step ${JSON.stringify(step)} is not a step index from 0 to ${steps.length - 1}.`,
+      )
+    }
+    activeStep = step
   }
   return { steps, activeStep, warning }
 }
@@ -147,7 +153,7 @@ export async function loadChainFromSrc(src: string): Promise<LoadedChain> {
   try {
     parsed = parseManifest(json)
   } catch (error) {
-    throw new Error(`${base}/manifest.json is not an Athar viewer manifest. (${error})`)
+    throw new Error(`${base}/manifest.json is invalid: ${error instanceof Error ? error.message : error}`)
   }
   const resolve = (file: ManifestFile) => new URL(file.url, `${base}/`).toString()
   const steps: StepSource[] = parsed.steps.map((step) => {
