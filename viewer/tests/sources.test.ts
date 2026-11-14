@@ -196,6 +196,13 @@ describe('dataUrl', () => {
     expect(dataUrl(served, '.', '/files/new.ifc')).toBe('http://127.0.0.1:4799/files/new.ifc?token=abc')
   })
 
+  it('carries the page query only when the page is served from the src origin', () => {
+    const hosted = 'https://viewer.example/?key=secret&src=http%3A%2F%2F127.0.0.1%3A4799%2F%3Ftoken%3Dabc'
+    expect(dataUrl(hosted, 'http://127.0.0.1:4799/?token=abc', 'manifest.json')).toBe(
+      'http://127.0.0.1:4799/manifest.json?token=abc',
+    )
+  })
+
   it('does not carry the query to another origin', () => {
     expect(dataUrl(page, 'http://127.0.0.1:4799/?token=abc', 'https://elsewhere.example/x.ifc')).toBe(
       'https://elsewhere.example/x.ifc',

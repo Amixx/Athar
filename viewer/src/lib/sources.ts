@@ -148,16 +148,17 @@ async function fetchOk(url: string): Promise<Response> {
 
 /**
  * URL of a file the `src` server serves. `path` resolves under the src path,
- * a leading slash included, and the query parameters of the src and of the
- * page (except `src`) are carried to same-origin URLs, so an access token in
- * either survives.
+ * a leading slash included. A URL on the src origin carries the src's query
+ * parameters, plus the page's (except `src`) when the page itself is served
+ * from the src origin; a URL on another origin carries neither.
  */
 export function dataUrl(pageUrl: string, src: string, path: string): string {
   const base = new URL(src, pageUrl)
   if (!base.pathname.endsWith('/')) base.pathname += '/'
   const url = new URL(path.replace(/^\/+/, ''), base)
   if (url.origin !== base.origin) return url.toString()
-  const carried = new URLSearchParams(new URL(pageUrl).search)
+  const page = new URL(pageUrl)
+  const carried = new URLSearchParams(page.origin === base.origin ? page.search : '')
   carried.delete('src')
   for (const [key, value] of base.searchParams) carried.set(key, value)
   for (const [key, value] of carried) {

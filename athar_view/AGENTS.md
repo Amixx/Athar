@@ -47,7 +47,8 @@ so parser and renderer can be swapped independently.
   `audit.inputs.*.sha256`, and an unverifiable pair goes to an explicit
   confirm step, never name order) and `?src=<origin>` manifest handoff.
   `dataUrl` resolves every fetched url under the src path and carries the
-  src's and the page's query, so a launch token in either reaches the server.
+  src's query, plus the page's when the page is served from the src origin,
+  so a launch token in either reaches the server and never another origin.
   `parseManifest` is a pure,
   unit-tested function that normalizes v1 single-pair and v2 chain manifests
   into one `steps[]` shape (a v1 manifest is one step); each `StepSource`
