@@ -14,6 +14,7 @@ import {
   reportCoverage,
   SNAP,
   TRANSITIVE_OPACITY,
+  unreportedEntities,
 } from '../src/lib/renderState'
 import type { Aspects, AtharReport, EntitySummary, MatchedItem } from '../src/lib/types'
 
@@ -323,5 +324,13 @@ describe('reportCoverage', () => {
       ['transitive', 'new', 114],
       ['unchanged', 'new', 120],
     ])
+  })
+})
+
+describe('unreportedEntities', () => {
+  it('lists the tessellated entities of each side that have no report record', () => {
+    const index = buildDiffIndex(report)
+    const unreported = unreportedEntities([900, 1, 10, 901], [100, 950, 112], (side, stepId) => index[side].has(stepId))
+    expect(unreported).toEqual({ old: [900, 901], new: [950] })
   })
 })

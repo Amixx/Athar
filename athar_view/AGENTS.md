@@ -36,7 +36,9 @@ so parser and renderer can be swapped independently.
   model. Every entity lands in exactly one visual bucket
   (`deleted/added/modifiedOld/modifiedNew/modifiedStatic/unchanged/extra`);
   modified pairs whose geometry+placement are identical render once
-  (`modifiedStatic`) to avoid z-fighting; unchanged renders new-side only.
+  (`modifiedStatic`) to avoid z-fighting; unchanged and extra render new-side
+  only, and `unreportedEntities` lists old-side meshes without a report record
+  for the legend.
   Per-bucket appearance (visible/opacity/color) is a pure function of slider t
   and toggles.
 - `src/lib/scene.ts` — three.js scene: one merged mesh per bucket, so slider

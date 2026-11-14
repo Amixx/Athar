@@ -19,6 +19,7 @@
     groupDisplacements,
     isPlacementOnly,
     SNAP,
+    unreportedEntities,
     type ReportCoverage,
     type ReportKey,
     type Toggles,
@@ -62,7 +63,8 @@
   let dragging = $state(false)
   let selection = $state<{ side: Side; stepId: number } | null>(null)
   let coverage = $state<ReportCoverage | null>(null)
-  let extraCount = $state(0)
+  let extraDrawn = $state(0)
+  let unreported = $state<{ old: Array<{ stepId: number; klass: string }>; new: number }>({ old: [], new: 0 })
 
   const REPORT_KEY_LEGEND: Record<ReportKey, { label: string; dot: string }> = {
     added: { label: 'Added', dot: 'add' },
@@ -179,7 +181,8 @@
     steps = []
     index = null
     coverage = null
-    extraCount = 0
+    extraDrawn = 0
+    unreported = { old: [], new: 0 }
     drops = NO_DROPS
     unverified = null
     publishDebug({ phase: 'empty', error: undefined })
@@ -265,7 +268,17 @@
         newGeometry.byEntity.keys(),
         bucketOfFn,
       )
-      extraCount = bucketEntityCounts.extra ?? 0
+      extraDrawn = bucketEntityCounts.extra ?? 0
+      const unreportedIds = unreportedEntities(oldGeometry.byEntity.keys(), newGeometry.byEntity.keys(), (side, stepId) =>
+        (side === 'old' ? diff.old : diff.new).has(stepId),
+      )
+      unreported = {
+        old: unreportedIds.old.map((stepId) => ({
+          stepId,
+          klass: oldGeometry.byEntity.get(stepId)?.[0]?.ifcType ?? 'unknown class',
+        })),
+        new: unreportedIds.new.length,
+      }
       coverage = reportCoverage(report, (side, stepId) => geometries[side].byEntity.has(stepId), bucketOfFn)
 
       if (!scene) {
@@ -499,10 +512,10 @@
         {/if}
         <div class="legendrow" data-testid="legend-extra">
           <span><i class="dot extra"></i>Extra</span>
-          <span class="mono">{extraCount} drawn</span>
+          <span class="mono">{unreported.old.length} old, {unreported.new} new, {extraDrawn} drawn</span>
         </div>
       </div>
-      <div class="footnote">Extra: drawn in the new model, but the report has no record of it.</div>
+      <div class="footnote">Extra: geometry the report has no record of. The new file's is drawn; the old file's is listed below.</div>
       {#if coverage && coverage.undrawn.length > 0}
         <span class="microlabel">not drawn ({coverage.undrawn.length})</span>
         <div class="footnote">In the report, but no 3D geometry is drawn for them (spatial containers, property-only objects).</div>
@@ -510,6 +523,18 @@
           {#each coverage.undrawn as entity (entity.side + entity.stepId)}
             <button class="classrow" onclick={() => select({ side: entity.side, stepId: entity.stepId })}>
               <span class="cls"><i class="dot {REPORT_KEY_LEGEND[entity.key].dot}"></i>{entity.name ?? `#${entity.stepId}`}</span>
+              <span class="nums mono">{entity.klass}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+      {#if unreported.old.length > 0}
+        <span class="microlabel">old file, not in report ({unreported.old.length})</span>
+        <div class="footnote">Old-file geometry the report has no record of. Not drawn.</div>
+        <div class="undrawn" data-testid="unreported-old">
+          {#each unreported.old as entity (entity.stepId)}
+            <button class="classrow" onclick={() => select({ side: 'old', stepId: entity.stepId })}>
+              <span class="cls"><i class="dot extra"></i>#{entity.stepId}</span>
               <span class="nums mono">{entity.klass}</span>
             </button>
           {/each}
@@ -574,7 +599,11 @@
             </dl>
           {/if}
         {:else if !selectedRecord}
-          <p class="footnote">Not in the report: the diff says nothing about this entity. Drawn in the Extra colour.</p>
+          <p class="footnote">
+            Not in the report: the diff says nothing about this entity. {selection.side === 'new'
+              ? 'Drawn in the Extra colour.'
+              : 'Old-file geometry without a record is not drawn.'}
+          </p>
         {/if}
       </aside>
     {/if}

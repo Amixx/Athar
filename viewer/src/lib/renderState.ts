@@ -25,7 +25,8 @@
  *                the report makes no claim about them.
  *
  * Old-side meshes for unchanged/extra entities are not rendered at all to
- * avoid duplicate coincident geometry.
+ * avoid duplicate coincident geometry; `unreportedEntities` lists the old-side
+ * ones without a report record so the legend still accounts for them.
  */
 
 import type { EntityRecord } from './report'
@@ -233,6 +234,17 @@ export function countBucketEntities(
   tally('old', oldIds)
   tally('new', newIds)
   return counts
+}
+
+/** Tessellated entities of each side that have no report record, in ascending step id order. */
+export function unreportedEntities(
+  oldIds: Iterable<number>,
+  newIds: Iterable<number>,
+  hasRecord: (side: Side, stepId: number) => boolean,
+): Record<Side, number[]> {
+  const missing = (side: Side, ids: Iterable<number>) =>
+    [...ids].filter((stepId) => !hasRecord(side, stepId)).sort((a, b) => a - b)
+  return { old: missing('old', oldIds), new: missing('new', newIds) }
 }
 
 /** Legend rows that count report entities; `extra` meshes have no report record. */

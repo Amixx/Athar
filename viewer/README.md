@@ -46,7 +46,10 @@ highlight overlay.
 The summary legend shows, for each row (added, deleted, direct, indirect,
 unchanged), how many entities the report lists and how many the scene draws.
 Report entities with no drawn geometry (spatial containers, property-only
-objects) are listed under it and open in the inspector when clicked.
+objects) are listed under it and open in the inspector when clicked. The
+`extra` row counts meshes without a report record in the old and the new file;
+the new file's are drawn, and the old file's are listed (not drawn) so that no
+tessellated entity in either file goes unaccounted for.
 
 ## Inputs
 
@@ -103,8 +106,8 @@ before building the Python distribution.
   counts and report coverage through `window.__athar_viewer` instead of
   pixels, and covers the `?src=` path, the legend and undrawn list, slider
   snaps, toggles, and click selection.
-- `e2e/extra.spec.ts` — a report that omits one wall: the wall's mesh is
-  counted, drawn and toggled as `extra`.
+- `e2e/extra.spec.ts` — a report that omits one wall: the wall's new mesh is
+  counted, drawn and toggled as `extra`, and its old mesh is counted and listed.
 - `e2e/drop.spec.ts` — dropped files: roles assigned by report hash despite
   misleading names, and the confirm step for an unverifiable report.
 - `e2e/frame.spec.ts` — the fixture pair moved to a large world coordinate so

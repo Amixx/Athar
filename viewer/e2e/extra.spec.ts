@@ -1,6 +1,7 @@
 /**
  * A mesh with no report record: the fixture pair served with a report that
- * omits WallA, so WallA's new-side mesh lands in the `extra` bucket.
+ * omits WallA, so WallA's new-side mesh lands in the `extra` bucket and its
+ * old-side mesh is counted and listed but not drawn.
  */
 
 import { createServer, type Server } from 'node:http'
@@ -55,7 +56,7 @@ test.afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()))
 })
 
-test('an entity missing from the report is drawn, counted and toggled as extra', async ({ page }) => {
+test('an entity missing from the report is drawn, counted and toggled as extra, and its old side is listed', async ({ page }) => {
   await page.goto(`/?src=${srcOrigin}`)
   await page.waitForFunction(() => {
     const phase = (window as any).__athar_viewer?.phase
@@ -66,7 +67,11 @@ test('an entity missing from the report is drawn, counted and toggled as extra',
   expect(state.bucketEntityCounts.extra).toBe(1)
   expect(state.bucketEntityCounts.transitive).toBeUndefined()
 
-  await expect(page.getByTestId('legend-extra')).toContainText('1 drawn')
+  await expect(page.getByTestId('legend-extra')).toContainText('1 old, 1 new, 1 drawn')
+  const oldOnly = page.getByTestId('unreported-old').getByRole('button')
+  await expect(oldOnly).toHaveText([new RegExp(`#${WALL_A}`)])
+  await oldOnly.click()
+  await expect(page.locator('.inspector')).toContainText(`old #${WALL_A}`)
   await page.waitForTimeout(500)
   await page.screenshot({ path: 'test-results/extra.png' })
 
