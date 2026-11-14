@@ -168,49 +168,92 @@ export async function loadChainFromSrc(src: string): Promise<LoadedChain> {
 }
 
 export interface DroppedFiles {
-  oldFile?: File
-  newFile?: File
+  /** Dropped or picked IFC files, most recent last, at most two. */
+  ifcs: File[]
   reportFile?: File
 }
 
-/**
- * Classify a multi-file drop: .json → report, .ifc by name-sorted order →
- * old then new (single .ifc → fills the first empty slot).
- */
-export function classifyDrop(files: File[], current: DroppedFiles): DroppedFiles {
-  const next = { ...current }
-  const ifcs = files
-    .filter((f) => f.name.toLowerCase().endsWith('.ifc'))
-    .sort((a, b) => a.name.localeCompare(b.name))
-  const jsons = files.filter((f) => f.name.toLowerCase().endsWith('.json'))
-  if (jsons.length > 0) next.reportFile = jsons[0]
-  if (ifcs.length >= 2) {
-    next.oldFile = ifcs[0]
-    next.newFile = ifcs[1]
-  } else if (ifcs.length === 1) {
-    if (!next.oldFile) next.oldFile = ifcs[0]
-    else next.newFile = ifcs[0]
+export const NO_DROPS: DroppedFiles = { ifcs: [] }
+
+/** Add dropped files: `.json` replaces the report, `.ifc` files join the last two kept. */
+export function addDroppedFiles(files: File[], current: DroppedFiles): DroppedFiles {
+  const ifcs = files.filter((f) => f.name.toLowerCase().endsWith('.ifc'))
+  const json = files.find((f) => f.name.toLowerCase().endsWith('.json'))
+  return {
+    ifcs: [...current.ifcs, ...ifcs].slice(-2),
+    reportFile: json ?? current.reportFile,
   }
-  return next
 }
 
-export function chainFromFiles(files: Required<DroppedFiles>): LoadedChain {
+export interface HashedFile {
+  file: File
+  sha256: string
+}
+
+export async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
+  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+export async function hashFile(file: File): Promise<HashedFile> {
+  return { file, sha256: await sha256Hex(await file.arrayBuffer()) }
+}
+
+/** The input file hashes a report names in `audit.inputs`, or null when it names none. */
+export function reportInputHashes(report: unknown): { old: string; new: string } | null {
+  const inputs = (report as { audit?: { inputs?: Record<string, { sha256?: unknown }> } })?.audit?.inputs
+  const oldHash = inputs?.old?.sha256
+  const newHash = inputs?.new?.sha256
+  if (typeof oldHash !== 'string' || typeof newHash !== 'string') return null
+  return { old: oldHash.toLowerCase(), new: newHash.toLowerCase() }
+}
+
+export type RoleAssignment<T> =
+  | { verified: true; old: T; new: T }
+  | { verified: false; reason: string }
+
+/**
+ * Old/new roles for two dropped IFC files, decided only by the report's input
+ * hashes. Anything short of an exact match is unverified; there is no guess.
+ */
+export function assignRoles<T extends { file: { name: string }; sha256: string }>(
+  files: [T, T],
+  inputs: { old: string; new: string } | null,
+): RoleAssignment<T> {
+  if (!inputs) {
+    return { verified: false, reason: 'The report does not record the hashes of the files it compared.' }
+  }
+  const [a, b] = files
+  if (a.sha256 === inputs.old && b.sha256 === inputs.new) return { verified: true, old: a, new: b }
+  if (b.sha256 === inputs.old && a.sha256 === inputs.new) return { verified: true, old: b, new: a }
+  const unknown = files.filter((f) => f.sha256 !== inputs.old && f.sha256 !== inputs.new)
+  if (unknown.length > 0) {
+    const names = unknown.map((f) => f.file.name).join(' and ')
+    return { verified: false, reason: `${names} ${unknown.length === 1 ? 'is' : 'are'} not one of the files the report compared.` }
+  }
+  return { verified: false, reason: `${a.file.name} and ${b.file.name} both match the same input of the report.` }
+}
+
+export function chainFromFiles(oldFile: File, newFile: File, report: unknown): LoadedChain {
   const step: StepSource = {
-    label: `${files.oldFile.name} → ${files.newFile.name}`,
-    oldName: files.oldFile.name,
-    newName: files.newFile.name,
-    oldKey: `file:${files.oldFile.name}`,
-    newKey: `file:${files.newFile.name}`,
-    fetchOldBytes: () => files.oldFile.arrayBuffer(),
-    fetchNewBytes: () => files.newFile.arrayBuffer(),
-    fetchReport: () =>
-      files.reportFile.text().then((text) => {
-        try {
-          return JSON.parse(text)
-        } catch {
-          throw new Error(`${files.reportFile.name} is not valid JSON.`)
-        }
-      }),
+    label: `${oldFile.name} → ${newFile.name}`,
+    oldName: oldFile.name,
+    newName: newFile.name,
+    oldKey: `file:${oldFile.name}`,
+    newKey: `file:${newFile.name}`,
+    fetchOldBytes: () => oldFile.arrayBuffer(),
+    fetchNewBytes: () => newFile.arrayBuffer(),
+    fetchReport: () => Promise.resolve(report),
   }
   return { steps: [step], activeStep: 0 }
+}
+
+/** Parse a dropped report file, failing with a message that names it. */
+export async function readReportFile(file: File): Promise<unknown> {
+  const text = await file.text()
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`${file.name} is not valid JSON.`)
+  }
 }

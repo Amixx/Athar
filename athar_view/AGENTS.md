@@ -41,8 +41,10 @@ so parser and renderer can be swapped independently.
 - `src/lib/scene.ts` — three.js scene: one merged mesh per bucket, so slider
   drags are O(buckets) material updates regardless of entity count; per-entity
   index ranges drive raycast picking and a zero-copy highlight overlay.
-- `src/lib/sources.ts` — both input paths: drag-drop (old.ifc + new.ifc +
-  report.json) and `?src=<origin>` manifest handoff. `parseManifest` is a pure,
+- `src/lib/sources.ts` — both input paths: drag-drop (two IFC files +
+  report.json; `assignRoles` takes old/new from the report's
+  `audit.inputs.*.sha256`, and an unverifiable pair goes to an explicit
+  confirm step, never name order) and `?src=<origin>` manifest handoff. `parseManifest` is a pure,
   unit-tested function that normalizes v1 single-pair and v2 chain manifests
   into one `steps[]` shape (a v1 manifest is one step); each `StepSource`
   carries display names, per-file cache keys, and lazy byte/report resolvers so

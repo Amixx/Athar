@@ -97,15 +97,6 @@ test('loads a pair via ?src= hand-off and buckets entities', async ({ page }) =>
   await page.screenshot({ path: 'test-results/smoke-both.png' })
 })
 
-test('loads a pair via the three file inputs', async ({ page }) => {
-  await page.goto('/')
-  await page.setInputFiles('[data-testid=input-old]', join(FIXTURES, 'old.ifc'))
-  await page.setInputFiles('[data-testid=input-new]', join(FIXTURES, 'new.ifc'))
-  await page.setInputFiles('[data-testid=input-report]', join(FIXTURES, 'report.json'))
-  const state = await waitReady(page)
-  expect(state.bucketEntityCounts).toEqual(EXPECTED_BUCKETS)
-})
-
 test('slider snaps and section toggles drive bucket appearances', async ({ page }) => {
   await page.goto(`/?src=${srcOrigin}`)
   await waitReady(page)

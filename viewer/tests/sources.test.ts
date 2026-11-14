@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'bun:test'
 
-import { classifyDrop, MANIFEST_SCHEMA_VERSION, parseManifest } from '../src/lib/sources'
+import {
+  addDroppedFiles,
+  assignRoles,
+  MANIFEST_SCHEMA_VERSION,
+  NO_DROPS,
+  parseManifest,
+  reportInputHashes,
+  sha256Hex,
+} from '../src/lib/sources'
 
 const singlePair = {
   athar_viewer_manifest: 1,
@@ -81,13 +89,66 @@ describe('parseManifest', () => {
   })
 })
 
-describe('classifyDrop', () => {
+describe('addDroppedFiles', () => {
   const file = (name: string) => new File(['x'], name)
 
-  it('assigns two ifcs by sorted order and a json report', () => {
-    const result = classifyDrop([file('b.ifc'), file('a.ifc'), file('r.json')], {})
-    expect(result.oldFile?.name).toBe('a.ifc')
-    expect(result.newFile?.name).toBe('b.ifc')
+  it('keeps ifcs in drop order without assigning roles, and takes the json as report', () => {
+    const result = addDroppedFiles([file('final.ifc'), file('r.json'), file('draft.ifc')], NO_DROPS)
+    expect(result.ifcs.map((f) => f.name)).toEqual(['final.ifc', 'draft.ifc'])
     expect(result.reportFile?.name).toBe('r.json')
+  })
+
+  it('keeps the two most recent ifcs across drops', () => {
+    let drops = addDroppedFiles([file('a.ifc')], NO_DROPS)
+    drops = addDroppedFiles([file('b.ifc'), file('c.ifc')], drops)
+    expect(drops.ifcs.map((f) => f.name)).toEqual(['b.ifc', 'c.ifc'])
+  })
+})
+
+describe('sha256Hex', () => {
+  it('hashes bytes as lowercase hex', async () => {
+    expect(await sha256Hex(new TextEncoder().encode('abc').buffer as ArrayBuffer)).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    )
+  })
+})
+
+describe('assignRoles', () => {
+  const hashed = (name: string, sha256: string) => ({ file: { name }, sha256 })
+  const inputs = { old: 'aaa', new: 'bbb' }
+  const report = (old: unknown, new_: unknown) => ({ audit: { inputs: { old: { sha256: old }, new: { sha256: new_ } } } })
+
+  it('assigns by hash when the names sort the other way', () => {
+    const final = hashed('final.ifc', 'aaa')
+    const draft = hashed('draft.ifc', 'bbb')
+    const roles = assignRoles([draft, final], inputs)
+    expect(roles).toEqual({ verified: true, old: final, new: draft })
+  })
+
+  it('assigns by hash in drop order too', () => {
+    const a = hashed('a.ifc', 'aaa')
+    const b = hashed('b.ifc', 'bbb')
+    expect(assignRoles([a, b], inputs)).toEqual({ verified: true, old: a, new: b })
+  })
+
+  it('refuses a file the report did not compare and names it', () => {
+    const roles = assignRoles([hashed('a.ifc', 'aaa'), hashed('other.ifc', 'ccc')], inputs)
+    expect(roles.verified).toBe(false)
+    if (!roles.verified) expect(roles.reason).toContain('other.ifc')
+  })
+
+  it('refuses the same input dropped twice', () => {
+    const roles = assignRoles([hashed('a.ifc', 'aaa'), hashed('copy.ifc', 'aaa')], inputs)
+    expect(roles.verified).toBe(false)
+  })
+
+  it('refuses when the report records no input hashes', () => {
+    expect(assignRoles([hashed('a.ifc', 'aaa'), hashed('b.ifc', 'bbb')], null).verified).toBe(false)
+  })
+
+  it('reads input hashes from the report audit block', () => {
+    expect(reportInputHashes(report('AAA', 'bbb'))).toEqual({ old: 'aaa', new: 'bbb' })
+    expect(reportInputHashes({})).toBeNull()
+    expect(reportInputHashes(report('aaa', undefined))).toBeNull()
   })
 })

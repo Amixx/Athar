@@ -23,21 +23,35 @@
   } from './lib/renderState'
   import { DiffScene, type PickHit } from './lib/scene'
   import {
+    addDroppedFiles,
+    assignRoles,
     chainFromFiles,
-    classifyDrop,
+    hashFile,
     loadChainFromSrc,
+    NO_DROPS,
+    readReportFile,
+    reportInputHashes,
     type DroppedFiles,
+    type HashedFile,
     type StepSource,
   } from './lib/sources'
   import type { Side } from './lib/types'
 
-  type Phase = 'empty' | 'loading' | 'ready' | 'error'
+  type Phase = 'empty' | 'confirm' | 'loading' | 'ready' | 'error'
+
+  interface UnverifiedPair {
+    files: [HashedFile, HashedFile]
+    report: unknown
+    reason: string
+    oldIndex: 0 | 1 | null
+  }
 
   let phase = $state<Phase>('empty')
   let error = $state('')
   let warning = $state('')
   let progress = $state({ stage: '', count: 0 })
-  let drops = $state<DroppedFiles>({})
+  let drops = $state<DroppedFiles>(NO_DROPS)
+  let unverified = $state<UnverifiedPair | null>(null)
   let names = $state({ old: 'old.ifc', new: 'new.ifc' })
   let rendererReady = $state(false)
   let sliderT = $state<number>(SNAP.both)
@@ -58,8 +72,7 @@
   const reportCache = new Map<string, unknown>()
   let loadSeq = 0
 
-  let oldInput: HTMLInputElement
-  let newInput: HTMLInputElement
+  let ifcInput: HTMLInputElement
   let reportInput: HTMLInputElement
 
   const ASPECT_KEYS = ['geometry', 'data', 'topology', 'placement'] as const
@@ -76,7 +89,7 @@
     return map.get(selection.stepId) ?? null
   })
   const selectedPair = $derived(selectedRecord?.pair ?? null)
-  const complete = $derived(Boolean(drops.oldFile && drops.newFile && drops.reportFile))
+  const complete = $derived(drops.ifcs.length === 2 && Boolean(drops.reportFile))
   const hasChain = $derived(steps.length > 1)
   const currentLabel = $derived(steps[activeStep]?.label ?? '')
 
@@ -88,11 +101,7 @@
   })
 
   $effect(() => {
-    if (phase === 'empty' && complete) {
-      const chain = chainFromFiles(drops as Required<DroppedFiles>)
-      steps = chain.steps
-      void loadStep(chain.activeStep)
-    }
+    if (phase === 'empty' && complete) void verifyDrops(drops)
   })
 
   onMount(() => {
@@ -110,6 +119,49 @@
     }
     return () => scene?.dispose()
   })
+
+  async function verifyDrops(dropped: DroppedFiles): Promise<void> {
+    phase = 'loading'
+    progress = { stage: 'Checking the files against the report', count: 0 }
+    publishDebug({ phase: 'loading' })
+    try {
+      const [a, b] = await Promise.all(dropped.ifcs.map(hashFile))
+      const report = await readReportFile(dropped.reportFile!)
+      parseReport(report)
+      const roles = assignRoles([a, b], reportInputHashes(report))
+      if (roles.verified) {
+        startDropped(roles.old.file, roles.new.file, report)
+      } else {
+        unverified = { files: [a, b], report, reason: roles.reason, oldIndex: null }
+        phase = 'confirm'
+        publishDebug({ phase: 'confirm' })
+      }
+    } catch (cause) {
+      fail(cause)
+    }
+  }
+
+  function startDropped(oldFile: File, newFile: File, report: unknown): void {
+    unverified = null
+    const chain = chainFromFiles(oldFile, newFile, report)
+    steps = chain.steps
+    void loadStep(chain.activeStep)
+  }
+
+  function confirmUnverified(): void {
+    if (!unverified || unverified.oldIndex === null) return
+    const oldFile = unverified.files[unverified.oldIndex].file
+    const newFile = unverified.files[1 - unverified.oldIndex].file
+    startDropped(oldFile, newFile, unverified.report)
+  }
+
+  function startOver(): void {
+    phase = 'empty'
+    error = ''
+    drops = NO_DROPS
+    unverified = null
+    publishDebug({ phase: 'empty', error: undefined })
+  }
 
   function fail(cause: unknown): void {
     error = cause instanceof Error ? cause.message : String(cause)
@@ -252,12 +304,11 @@
     event.preventDefault()
     dragging = false
     if (phase !== 'empty' || !event.dataTransfer) return
-    drops = classifyDrop([...event.dataTransfer.files], drops)
+    drops = addDroppedFiles([...event.dataTransfer.files], drops)
   }
 
-  function onSlotFiles(slot: 'oldFile' | 'newFile' | 'reportFile', input: HTMLInputElement): void {
-    const file = input.files?.[0]
-    if (file) drops = { ...drops, [slot]: file }
+  function onPickedFiles(input: HTMLInputElement): void {
+    drops = addDroppedFiles([...(input.files ?? [])], drops)
     input.value = ''
   }
 
@@ -532,17 +583,20 @@
       <div class="panel hero" class:armed={dragging}>
         <h1><em>Athar</em> — semantic IFC diff viewer</h1>
         <p>
-          Drop two IFC revisions and the Athar report that compares them. Everything runs in your
-          browser — models never leave this machine.
+          Drop two IFC revisions and the Athar report that compares them. Old and new are taken
+          from the file hashes the report records. Everything runs in your browser — models never
+          leave this machine.
         </p>
         <div class="dropzones">
-          <button class="dropzone" class:filled={drops.oldFile} onclick={() => oldInput.click()}>
-            <span class="slot">Old .ifc</span>
-            <span class="hint">{drops.oldFile?.name ?? 'drop or browse'}</span>
-          </button>
-          <button class="dropzone" class:filled={drops.newFile} onclick={() => newInput.click()}>
-            <span class="slot">New .ifc</span>
-            <span class="hint">{drops.newFile?.name ?? 'drop or browse'}</span>
+          <button
+            class="dropzone"
+            class:filled={drops.ifcs.length === 2}
+            onclick={() => ifcInput.click()}
+          >
+            <span class="slot">Two .ifc files</span>
+            <span class="hint">
+              {drops.ifcs.length ? drops.ifcs.map((f) => f.name).join(', ') : 'drop or browse'}
+            </span>
           </button>
           <button
             class="dropzone"
@@ -574,15 +628,48 @@
         <h1>Could not load</h1>
         <p class="panel banner error" style="position: static; transform: none;">{error}</p>
         <div class="cta">
-          <button
-            class="primary"
-            onclick={() => {
-              phase = 'empty'
-              error = ''
-              drops = {}
-              publishDebug({ phase: 'empty', error: undefined })
-            }}>Start over</button
+          <button class="primary" onclick={startOver}>Start over</button>
+        </div>
+      </div>
+    </div>
+  {:else if phase === 'confirm' && unverified}
+    <div class="center-stage">
+      <div class="panel hero">
+        <h1>Which file is old?</h1>
+        <p class="panel banner warn" role="alert" data-testid="unverified-warning">
+          These files could not be verified against the report. {unverified.reason} Assign old and
+          new yourself; a wrong assignment shows every change reversed.
+        </p>
+        <div class="assign">
+          {#each unverified.files as hashed, i (i)}
+            <div class="assignrow">
+              <span class="mono" title={hashed.sha256}>{hashed.file.name}</span>
+              <label>
+                <input
+                  type="radio"
+                  name="role-{i}"
+                  checked={unverified.oldIndex === i}
+                  onchange={() => unverified && (unverified.oldIndex = i as 0 | 1)}
+                  aria-label="{hashed.file.name} is old"
+                />Old
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="role-{i}"
+                  checked={unverified.oldIndex === 1 - i}
+                  onchange={() => unverified && (unverified.oldIndex = (1 - i) as 0 | 1)}
+                  aria-label="{hashed.file.name} is new"
+                />New
+              </label>
+            </div>
+          {/each}
+        </div>
+        <div class="cta">
+          <button class="primary" disabled={unverified.oldIndex === null} onclick={confirmUnverified}
+            >Start diff</button
           >
+          <button onclick={startOver}>Start over</button>
         </div>
       </div>
     </div>
@@ -591,22 +678,16 @@
   <input
     type="file"
     accept=".ifc"
-    bind:this={oldInput}
-    data-testid="input-old"
-    onchange={() => onSlotFiles('oldFile', oldInput)}
-  />
-  <input
-    type="file"
-    accept=".ifc"
-    bind:this={newInput}
-    data-testid="input-new"
-    onchange={() => onSlotFiles('newFile', newInput)}
+    multiple
+    bind:this={ifcInput}
+    data-testid="input-ifc"
+    onchange={() => onPickedFiles(ifcInput)}
   />
   <input
     type="file"
     accept=".json,application/json"
     bind:this={reportInput}
     data-testid="input-report"
-    onchange={() => onSlotFiles('reportFile', reportInput)}
+    onchange={() => onPickedFiles(reportInput)}
   />
 </main>

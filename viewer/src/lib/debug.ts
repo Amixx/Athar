@@ -9,7 +9,7 @@ import type { Bucket, Appearance } from './renderState'
 import type { Section, Side } from './types'
 
 export interface ViewerDebugState {
-  phase: 'empty' | 'loading' | 'ready' | 'error'
+  phase: 'empty' | 'confirm' | 'loading' | 'ready' | 'error'
   error?: string
   warning?: string
   rendererReady?: boolean

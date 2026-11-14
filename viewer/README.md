@@ -43,8 +43,12 @@ highlight overlay.
 
 ## Inputs
 
-1. **Drag-drop / file pickers**: `old.ifc`, `new.ifc`, and the report JSON
-   (`python -m athar old.ifc new.ifc > report.json`).
+1. **Drag-drop / file pickers**: two IFC files and the report JSON
+   (`python -m athar old.ifc new.ifc > report.json`). Old and new are assigned
+   by matching each file's SHA-256 against the report's
+   `audit.inputs.{old,new}.sha256`. When a file matches neither or the report
+   records no hashes, the app shows a warning and asks the user to assign the
+   roles before it starts; it never assigns them by file name.
 2. **`?src=<origin>`**: fetches `<origin>/manifest.json`
    (`athar_viewer_manifest: 1`, `schema_version` handshake) and the files it
    points at. This is what `athar view` (in `athar_view/`) serves.
@@ -82,7 +86,9 @@ before building the Python distribution.
   pair in `e2e/fixtures/` (regenerate with
   `python scripts/make_viewer_fixture.py` from the repo root). Asserts bucket
   and meshless counts through `window.__athar_viewer` instead of pixels, and
-  covers both input paths, slider snaps, toggles, and click selection.
+  covers the `?src=` path, slider snaps, toggles, and click selection.
+- `e2e/drop.spec.ts` — dropped files: roles assigned by report hash despite
+  misleading names, and the confirm step for an unverifiable report.
 - `e2e/frame.spec.ts` — the fixture pair moved to a large world coordinate so
   each file gets a different RTC offset; asserts an element's old and new
   bounds coincide (`entityBounds` debug probe).
