@@ -93,6 +93,33 @@ test('start over loads changed contents under the same file names', async ({ pag
   expect(after.min[0] - before.min[0]).toBeCloseTo(10, 3)
 })
 
+async function canvasShot(page: Page): Promise<Buffer> {
+  await page.evaluate(() => document.querySelectorAll<HTMLElement>('.center-stage').forEach((el) => (el.style.visibility = 'hidden')))
+  const shot = await page.locator('canvas').screenshot()
+  await page.evaluate(() => document.querySelectorAll<HTMLElement>('.center-stage').forEach((el) => (el.style.visibility = '')))
+  return shot
+}
+
+test('start over leaves no model pixels on the canvas', async ({ page }) => {
+  const audited = {
+    ...reportJson,
+    audit: { inputs: { old: { sha256: sha256(oldBytes) }, new: { sha256: sha256(newBytes) } } },
+  }
+  await page.goto('/')
+  const blank = await canvasShot(page)
+  await page.setInputFiles('[data-testid=input-ifc]', [ifc('old.ifc', oldBytes), ifc('new.ifc', newBytes)])
+  await page.setInputFiles('[data-testid=input-report]', json('report.json', audited))
+  const state = await waitPhase(page, 'ready')
+  expect(state.rendererReady).toBe(true)
+  await page.waitForTimeout(300)
+  expect((await page.locator('canvas').screenshot()).equals(blank)).toBe(false)
+
+  await page.getByRole('button', { name: 'Start over', exact: true }).click()
+  await expect(page.locator('h1')).toContainText('semantic IFC diff viewer')
+  await page.waitForTimeout(300)
+  expect((await canvasShot(page)).equals(blank)).toBe(true)
+})
+
 test('asks for the roles when the report cannot verify the files', async ({ page }) => {
   await page.goto('/')
   await page.setInputFiles('[data-testid=input-ifc]', [ifc('b.ifc', oldBytes), ifc('a.ifc', newBytes)])

@@ -442,6 +442,7 @@ export class DiffScene {
     this.clearModels()
     this.controls.dispose()
     this.highlightMaterial.dispose()
+    this.renderer.clear()
     this.renderer.dispose()
   }
 }
