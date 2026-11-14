@@ -243,6 +243,12 @@ export interface HashedFile {
 }
 
 export async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error(
+      'Files cannot be hashed because this page is not a secure context, so the browser hides crypto.subtle. ' +
+        'Open the viewer through localhost, 127.0.0.1 or https.',
+    )
+  }
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
   return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('')
 }

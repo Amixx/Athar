@@ -62,7 +62,9 @@ tessellated entity in either file goes unaccounted for.
    records no hashes, the app shows a warning and asks the user to assign the
    roles before it starts; it never assigns them by file name. Only the two
    most recent `.ifc` files and the first `.json` of a drop are kept; a note
-   names every file a drop replaces or ignores. Files are
+   names every file a drop replaces or ignores. Hashing needs a secure
+   context: through a LAN address over plain http the drop fails with a
+   message to open the viewer through `localhost`, `127.0.0.1` or https. Files are
    accepted only on the empty view, and Start over clears the mesh and report
    caches and the scene.
 2. **`?src=<origin>`**: fetches `<origin>/manifest.json`

@@ -132,6 +132,15 @@ test('names the files a drop replaces or ignores', async ({ page }) => {
   await expect(page.getByTestId('drop-notes')).toContainText('readme.txt was ignored')
 })
 
+test('explains how to reach a secure context when hashing is unavailable', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(Crypto.prototype, 'subtle', { get: () => undefined }))
+  await page.goto('/')
+  await page.setInputFiles('[data-testid=input-ifc]', [ifc('old.ifc', oldBytes), ifc('new.ifc', newBytes)])
+  await page.setInputFiles('[data-testid=input-report]', json('report.json', reportJson))
+  await expect(page.locator('.banner.error')).toContainText('not a secure context')
+  await expect(page.locator('.banner.error')).toContainText('localhost, 127.0.0.1 or https')
+})
+
 test('asks for the roles when the report cannot verify the files', async ({ page }) => {
   await page.goto('/')
   await page.setInputFiles('[data-testid=input-ifc]', [ifc('b.ifc', oldBytes), ifc('a.ifc', newBytes)])
