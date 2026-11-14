@@ -237,19 +237,44 @@ def test_peak_rss_covers_descendant_processes():
     assert completed["peak_rss_mb"] >= 200
 
 
-def test_gb_seconds_cover_descendant_processes():
-    def run(child_body: str) -> float:
-        spawn = (
-            "import subprocess, sys\n"
-            f"subprocess.run([sys.executable, '-c', {child_body!r}], check=True)\n"
-        )
-        completed = bench._run_subprocess([sys.executable, "-c", spawn], timeout_s=60)
-        assert completed["returncode"] == 0
-        return completed["gb_seconds"]
+def _rss_kib(pid: int) -> int:
+    return int(subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, check=True).stdout)
 
-    idle = run("import time; time.sleep(1.5)")
-    allocating = run("import time; b = b'x' * (400 * 2**20); time.sleep(1.5)")
-    assert allocating > idle + 0.2
+
+def test_group_rss_covers_descendant_processes():
+    allocated_mib = 150
+    child = (
+        "import sys\n"
+        f"buf = bytearray({allocated_mib} * 2**20)\n"
+        "for offset in range(0, len(buf), 4096):\n"
+        "    buf[offset] = 1\n"
+        "print('allocated', flush=True)\n"
+        "sys.stdin.read()\n"
+    )
+    leader = (
+        "import subprocess, sys\n"
+        f"subprocess.run([sys.executable, '-c', {child!r}], check=True)\n"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", leader],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        assert process.stdout.readline().strip() == "allocated"
+        group_mb = bench._read_group_rss_mb(process.pid)
+        assert group_mb is not None and group_mb >= allocated_mib
+        assert _rss_kib(process.pid) / 1024.0 < allocated_mib / 2
+    finally:
+        process.stdin.close()
+        process.stdout.close()
+        try:
+            os.killpg(process.pid, 9)
+        except ProcessLookupError:
+            pass
+        process.wait()
 
 
 def _pid_alive(pid: int) -> bool:
