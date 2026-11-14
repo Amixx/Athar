@@ -148,7 +148,7 @@ def test_pr_bot_discovers_modified_renamed_added_and_deleted_ifc(monkeypatch):
     ]
 
 
-def test_pr_bot_render_comment_uses_semantic_report_and_file_level_notes(monkeypatch, tmp_path):
+def test_pr_bot_render_comment_uses_semantic_report_and_file_level_notes(monkeypatch):
     report = {
         "schemas": {"old": "IFC4", "new": "IFC4"},
         "stats": {"added": 0, "deleted": 0, "modified": 0, "unchanged": 1, "old_signatures": 1, "new_signatures": 1},
@@ -163,9 +163,6 @@ def test_pr_bot_render_comment_uses_semantic_report_and_file_level_notes(monkeyp
         lambda base, head, *, old_path, new_path, cache_dir: seen.append((base, head, old_path, new_path, cache_dir))
         or report,
     )
-    policy = tmp_path / "policy.json"
-    policy.write_text('{"ok": false, "violations": [{}, {}]}', encoding="utf-8")
-
     body = pr_bot.render_pr_comment(
         [
             pr_bot.IfcChange(status="M", old_path="model.ifc", new_path="model.ifc"),
@@ -176,17 +173,16 @@ def test_pr_bot_render_comment_uses_semantic_report_and_file_level_notes(monkeyp
         cache_dir="/tmp/cache",
         max_files=10,
         max_items=5,
-        policy_result_path=str(policy),
-    )
+        policy_results={"model.ifc": {"ok": False, "violations": [{"message": "a"}, {"message": "b"}]}},
+    ).body
 
     assert pr_bot.COMMENT_MARKER in body
-    assert "Policy gate: `fail` (2 violation(s))" in body
+    assert "Policy gate: `fail` (1 of 1 checked file(s) failed)" in body
+    assert "Policy: `fail` (2 violation(s))" in body
     assert "### `model.ifc`" in body
     assert "No semantic entity changes." in body
     assert "File added (`A`)." in body
     assert seen == [("a" * 40, "b" * 40, "model.ifc", "model.ifc", "/tmp/cache")]
-
-
 
 
 def test_persistent_cache_reuses_blob_key(tmp_path, monkeypatch):

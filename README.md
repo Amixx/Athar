@@ -279,9 +279,23 @@ athar git pr-comment \
 ```
 
 Use `--dry-run` to print the Markdown comment body without calling GitHub.
-When `--policy-result athar-check.json` is supplied, the comment includes a
-pass/fail summary from an `athar check` result, but policy enforcement remains
-separate.
+
+`--policy-result IFC_PATH=RESULT_JSON` attaches an `athar check` JSON result
+to the section of one changed file; repeat it once per file. Each such file
+shows its pass/fail verdict and violation messages, and a pass/fail count
+heads the comment. A result for a path the pull request does not change is an
+error. Policy enforcement stays with `athar check`:
+
+```bash
+athar check base/model.ifc models/model.ifc --policy no-deletions > model.check.json
+athar git pr-comment --base "$BASE_SHA" --head "$HEAD_SHA" \
+  --policy-result models/model.ifc=model.check.json
+```
+
+The comment stays under 60,000 characters: per-entity detail rows, then
+modified entities, placement-cohort lines and added/deleted entities are cut
+in that order, each cut list ending in a "not shown" line, while totals,
+per-file count tables and policy verdicts are always kept.
 
 To run it in another repository, add `.github/workflows/athar-ifc-diff.yml`.
 It installs the published wheel, comments on pull requests from the same

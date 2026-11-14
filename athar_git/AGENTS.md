@@ -78,11 +78,38 @@ core engine, but `athar/` must never depend on `athar_git/`.
   attributes file). Reinstall after moving or recreating the venv.
 - The `-merge` marker is intentional. Git text merge can silently corrupt IFC
   STEP exports; semantic merge is out of scope.
-- `pr_bot.py` discovers changed `.ifc` files from
-  `git diff --name-status -z base...head`, diffs modified/renamed pairs through
-  the cached path, renders Markdown, and creates or updates one stable GitHub
-  issue comment identified by an HTML sentinel.
-
+- `pr_bot.py` resolves `git merge-base base head` once and uses it both to
+  list changed `.ifc` files (`git diff --name-status -z <merge-base> head`) and
+  as the old side of every pair, so a base branch that moved on after the fork
+  does not leak its own edits into the comment. Modified/renamed pairs are
+  diffed through the cached path, rendered as Markdown, and posted as one
+  stable GitHub issue comment identified by an HTML sentinel.
+- The PR comment stays within 60,000 characters (GitHub rejects bodies over
+  65,536). It is re-rendered at progressively more compact levels: per-entity
+  detail rows go first, then modified rows, then placement-cohort lines, then
+  deleted and added rows, each cut list ending in a "not shown" line. Totals,
+  per-file count tables and policy verdicts are never cut; a header that is
+  over budget by itself (policy verdict lines of hidden files) is an error
+  asking for fewer `--policy-result` files, and a comment still over budget
+  is an error naming the file whose section alone cannot fit, or, when every
+  section fits alone, the largest section with advice to lower `--max-files`.
+- `--policy-result IFC_PATH=RESULT_JSON` (repeatable) attaches an `athar check`
+  verdict and its violation messages to that file's section, with a one-line
+  pass/fail count above the files. Files skipped by `--max-files` keep their
+  verdict and violation count in a list above the file sections. A result for
+  a path that did not change is an error, and so is a result without a boolean
+  `ok`, a `violations` list, or a string `message` per violation.
+- A 403 on a comment write whose API message is "Resource not accessible by
+  integration" (fork pull requests get a read-only token) with
+  `GITHUB_STEP_SUMMARY` set appends the rendered comment to the job summary,
+  prints a one-line notice and exits with the diff status. Without a job
+  summary, or for any other 403 (secondary rate limits answer 403 too), the
+  command fails with the API's message.
+- PR-bot file contents come from `git show`, so LFS-tracked files arrive as
+  pointers and resolve through `load_or_build_bundle`. A file that cannot be
+  diffed (for example an LFS object that cannot be fetched) gets a failure
+  block naming the path and revision, and the command exits 1 after the
+  comment is printed or posted.
 - The comment upsert pages through every issue comment (`Link: rel="next"`)
   and only considers sentinel comments authored by the token's own login,
   resolved once via `GET /user`. Installation tokens cannot read `/user`; inside

@@ -14,13 +14,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from athar.bottom.types import SignatureBundle
 from athar.engine import diff_bundles
 
 from .cache import load_or_build_bundle
-from .render import DEFAULT_MAX_ITEMS, render_markdown_report
+from .render import DEFAULT_MAX_ITEMS, clip, markdown_block, markdown_code, render_markdown_report
 
 COMMENT_MARKER = "<!-- athar-pr-comment -->"
 DEFAULT_MAX_FILES = 20
+COMMENT_BUDGET = 60_000
 
 
 @dataclass(frozen=True)
@@ -30,13 +32,19 @@ class IfcChange:
     new_path: str | None
 
 
+@dataclass(frozen=True)
+class RenderedComment:
+    body: str
+    failures: list[str]
+
+
 def add_pr_comment_parser(git_sub: argparse._SubParsersAction) -> None:
     parser = git_sub.add_parser(
         "pr-comment",
         help="Post or update a GitHub PR comment with semantic IFC diff summaries",
     )
-    parser.add_argument("--base", help="Base git ref/sha for the PR diff")
-    parser.add_argument("--head", help="Head git ref/sha for the PR diff")
+    parser.add_argument("--base", required=True, help="Base git ref/sha for the PR diff")
+    parser.add_argument("--head", required=True, help="Head git ref/sha for the PR diff")
     parser.add_argument("--repo", help="GitHub repository in owner/name form")
     parser.add_argument("--pr", type=int, help="Pull request number")
     parser.add_argument("--token", help="GitHub token; defaults to GITHUB_TOKEN")
@@ -45,7 +53,9 @@ def add_pr_comment_parser(git_sub: argparse._SubParsersAction) -> None:
     parser.add_argument("--max-items", type=int, default=DEFAULT_MAX_ITEMS, help="Maximum changed entities per file")
     parser.add_argument(
         "--policy-result",
-        help="Optional athar check JSON result to summarize in the comment",
+        action="append",
+        metavar="IFC_PATH=RESULT_JSON",
+        help="athar check JSON result for one changed IFC path, shown in that file's section; repeatable",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print the comment body without calling GitHub")
     parser.set_defaults(func=cmd_pr_comment)
@@ -60,29 +70,26 @@ def cmd_pr_comment(args: argparse.Namespace) -> int:
 
 
 def _cmd_pr_comment(args: argparse.Namespace) -> int:
-    base = args.base or _env("GITHUB_BASE_REF_SHA", "GITHUB_BASE_SHA")
-    head = args.head or _env("GITHUB_HEAD_REF_SHA", "GITHUB_SHA")
-    repo = args.repo or os.environ.get("GITHUB_REPOSITORY")
-    pr_number = args.pr or _event_pr_number()
-    token = args.token or os.environ.get("GITHUB_TOKEN")
-
-    if not base or not head:
-        raise ValueError("pr-comment requires --base/--head or GitHub Actions base/head environment values")
-    changes = discover_ifc_changes(base, head)
-    body = render_pr_comment(
+    policy_results = _load_policy_results(args.policy_result)
+    merge_base = _git_text(["merge-base", args.base, args.head]).strip()
+    changes = discover_ifc_changes(merge_base, args.head)
+    comment = render_pr_comment(
         changes,
-        base=base,
-        head=head,
+        base=merge_base,
+        head=args.head,
         cache_dir=args.cache_dir,
         max_files=args.max_files,
         max_items=args.max_items,
-        policy_result_path=args.policy_result,
+        policy_results=policy_results,
     )
 
     if args.dry_run:
-        print(body)
-        return 0
+        print(comment.body)
+        return _report_failures(comment.failures)
 
+    repo = args.repo or os.environ.get("GITHUB_REPOSITORY")
+    pr_number = args.pr or _event_pr_number()
+    token = args.token or os.environ.get("GITHUB_TOKEN")
     if not repo:
         raise ValueError("pr-comment requires --repo or GITHUB_REPOSITORY")
     if pr_number is None:
@@ -91,13 +98,29 @@ def _cmd_pr_comment(args: argparse.Namespace) -> int:
         raise ValueError("pr-comment requires --token or GITHUB_TOKEN")
 
     client = GitHubClient(repo=repo, token=token)
-    client.upsert_issue_comment(pr_number, body)
+    try:
+        client.upsert_issue_comment(pr_number, comment.body)
+    except GitHubAPIError as exc:
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if not exc.integration_forbidden or exc.method == "GET" or not summary_path:
+            raise
+        notice = "The token cannot write PR comments (fork pull request?); the Athar diff is in the job summary."
+        with open(summary_path, "a", encoding="utf-8") as summary:
+            summary.write(f"{notice}\n\n{comment.body}")
+        print(f"::notice::{notice}")
+        return _report_failures(comment.failures)
     print(f"Updated Athar PR comment for {repo}#{pr_number}")
-    return 0
+    return _report_failures(comment.failures)
+
+
+def _report_failures(failures: list[str]) -> int:
+    for failure in failures:
+        print(f"Error: {failure}", file=sys.stderr)
+    return 1 if failures else 0
 
 
 def discover_ifc_changes(base: str, head: str) -> list[IfcChange]:
-    output = _git(["diff", "--name-status", "-z", f"{base}...{head}"])
+    output = _git(["diff", "--name-status", "-z", base, head])
     tokens = output.decode("utf-8", errors="replace").split("\0")
     changes: list[IfcChange] = []
     index = 0
@@ -133,63 +156,129 @@ def render_pr_comment(
     cache_dir: str | os.PathLike[str] | None,
     max_files: int,
     max_items: int,
-    policy_result_path: str | None = None,
-) -> str:
+    policy_results: dict[str, dict] | None = None,
+) -> RenderedComment:
+    policy_results = policy_results or {}
     max_files = max(0, int(max_files))
     shown = changes[:max_files]
     hidden = max(0, len(changes) - len(shown))
-    lines = [
+    paths = {change.new_path or change.old_path for change in changes}
+    unmatched = sorted(set(policy_results) - paths)
+    if unmatched:
+        raise ValueError(f"--policy-result names files that did not change: {', '.join(unmatched)}")
+
+    header = [
         COMMENT_MARKER,
         "## Athar IFC Diff",
         "",
-        f"Compared `{_short_ref(base)}` to `{_short_ref(head)}`.",
+        f"Compared {markdown_code(_short_ref(base))} to {markdown_code(_short_ref(head))}.",
     ]
-
-    policy_line = _policy_summary(policy_result_path)
-    if policy_line:
-        lines.extend(["", policy_line])
+    if policy_results:
+        failed = sum(1 for result in policy_results.values() if not result["ok"])
+        verdict = "fail" if failed else "pass"
+        header.extend(
+            ["", f"Policy gate: {markdown_code(verdict)} ({failed} of {len(policy_results)} checked file(s) failed)"]
+        )
 
     if not changes:
-        lines.extend(["", "No `.ifc` files changed in this PR."])
-        return "\n".join(lines) + "\n"
+        header.extend(["", "No `.ifc` files changed in this PR."])
+        return RenderedComment(body="\n".join(header) + "\n", failures=[])
 
-    lines.extend(["", f"Found {len(changes)} changed IFC file(s)."])
+    header.extend(["", f"Found {len(changes)} changed IFC file(s)."])
+    hidden_policy: list[tuple[str, dict]] = []
     if hidden:
-        lines.append(f"Showing the first {len(shown)}; {hidden} more skipped.")
+        header.append(f"Showing the first {len(shown)}; {hidden} more skipped.")
+        hidden_policy = [
+            (path, policy_results[path])
+            for change in changes[len(shown):]
+            if (path := change.new_path or change.old_path) in policy_results
+        ]
+        if hidden_policy:
+            header.extend(["", "Policy results for skipped files:"])
+            header.extend(f"- {markdown_code(path)}: {_policy_verdict(result)}" for path, result in hidden_policy)
 
+    header_length = len("\n".join(header)) + 1
+    if header_length > COMMENT_BUDGET:
+        raise RuntimeError(
+            f"the comment header alone is {header_length:,} characters, over the {COMMENT_BUDGET:,}-character "
+            f"PR comment budget: it lists policy verdicts for {len(hidden_policy)} files skipped by --max-files; "
+            "pass fewer --policy-result files"
+        )
+    failures: list[str] = []
+    sections: list[tuple[str, list[str], dict | None]] = []
     for change in shown:
-        path = change.new_path or change.old_path or "unknown.ifc"
-        lines.extend(["", f"### `{path}`"])
+        path = change.new_path or change.old_path
+        lines = ["", f"### {markdown_code(path)}"]
+        if path in policy_results:
+            lines.extend(_policy_lines(policy_results[path]))
+        report = None
         if change.old_path is None:
             lines.append(f"File added (`{change.status}`). Semantic pair diff requires both old and new IFC files.")
-            continue
-        if change.new_path is None:
+        elif change.new_path is None:
             lines.append(f"File deleted (`{change.status}`). Semantic pair diff requires both old and new IFC files.")
-            continue
-        try:
-            report = _diff_git_paths(
-                base,
-                head,
-                old_path=change.old_path,
-                new_path=change.new_path,
-                cache_dir=cache_dir,
-            )
-        except Exception as exc:
-            lines.extend(
-                [
-                    "<details open>",
-                    "<summary>Diff failed</summary>",
-                    "",
-                    "```text",
-                    str(exc),
-                    "```",
-                    "</details>",
-                ]
-            )
-            continue
-        lines.append(render_markdown_report(report, max_items=max_items).rstrip())
+        else:
+            try:
+                report = _diff_git_paths(
+                    base,
+                    head,
+                    old_path=change.old_path,
+                    new_path=change.new_path,
+                    cache_dir=cache_dir,
+                )
+            except Exception as exc:
+                failures.append(str(exc))
+                lines.extend(
+                    [
+                        "<details open>",
+                        "<summary>Diff failed</summary>",
+                        "",
+                        markdown_block(str(exc)),
+                        "</details>",
+                    ]
+                )
+        sections.append((path, lines, report))
 
-    return "\n".join(lines) + "\n"
+    head = "\n".join(header) + "\n"
+    for max_listed, max_modified, max_cohorts, details in _budget_levels(max(0, int(max_items))):
+        rendered_sections = []
+        for path, section_lines, report in sections:
+            lines = list(section_lines)
+            if report is not None:
+                rendered = render_markdown_report(
+                    report, max_items=max_listed, max_modified=max_modified, max_cohorts=max_cohorts, details=details
+                )
+                lines.append(rendered.rstrip())
+            rendered_sections.append((path, "\n".join(lines) + "\n"))
+        body = head + "".join(text for _, text in rendered_sections)
+        if len(body) <= COMMENT_BUDGET:
+            return RenderedComment(body=body, failures=failures)
+    path, largest = max(rendered_sections, key=lambda pair: len(pair[1]))
+    if len(head) + len(largest) > COMMENT_BUDGET:
+        raise RuntimeError(
+            f"the section for {path} alone is {len(largest):,} characters without entity lists, "
+            f"over the {COMMENT_BUDGET:,}-character PR comment budget"
+        )
+    raise RuntimeError(
+        f"the PR comment for {len(sections)} files exceeds {COMMENT_BUDGET:,} characters without entity lists "
+        f"(largest section: {path}, {len(largest):,} characters); lower --max-files"
+    )
+
+
+def _budget_levels(max_items: int) -> list[tuple[int, int, int, bool]]:
+    """(deleted/added cap, modified cap, cohort cap, detail rows) from fullest to most compact."""
+
+    def halvings(start: int) -> list[int]:
+        steps = []
+        while start > 0:
+            start //= 2
+            steps.append(start)
+        return steps
+
+    levels = [(max_items, max_items, max_items, True), (max_items, max_items, max_items, False)]
+    levels.extend((max_items, cap, max_items, False) for cap in halvings(max_items))
+    levels.extend((max_items, 0, cap, False) for cap in halvings(max_items))
+    levels.extend((cap, 0, 0, False) for cap in halvings(max_items))
+    return levels
 
 
 def _diff_git_paths(
@@ -200,50 +289,72 @@ def _diff_git_paths(
     new_path: str,
     cache_dir: str | os.PathLike[str] | None,
 ) -> dict:
-    old_oid = _git_text(["rev-parse", f"{base}:{old_path}"]).strip()
-    new_oid = _git_text(["rev-parse", f"{head}:{new_path}"]).strip()
     with tempfile.TemporaryDirectory(prefix="athar-pr-") as tmp:
-        old_file = Path(tmp) / "old.ifc"
-        new_file = Path(tmp) / "new.ifc"
-        old_file.write_bytes(_git(["show", f"{base}:{old_path}"]))
-        new_file.write_bytes(_git(["show", f"{head}:{new_path}"]))
-        old_result = load_or_build_bundle(old_file, key=old_oid, cache_dir=cache_dir)
-        new_result = load_or_build_bundle(new_file, key=new_oid, cache_dir=cache_dir)
-        return diff_bundles(old_result.bundle, new_result.bundle)
+        old_bundle = _load_git_bundle(base, old_path, Path(tmp) / "old.ifc", cache_dir)
+        new_bundle = _load_git_bundle(head, new_path, Path(tmp) / "new.ifc", cache_dir)
+        return diff_bundles(old_bundle, new_bundle)
 
 
-def _policy_summary(path: str | None) -> str | None:
-    if not path:
-        return None
+def _load_git_bundle(
+    ref: str, path: str, scratch: Path, cache_dir: str | os.PathLike[str] | None
+) -> SignatureBundle:
     try:
-        result = json.loads(Path(path).read_text(encoding="utf-8"))
+        oid = _git_text(["rev-parse", f"{ref}:{path}"]).strip()
+        scratch.write_bytes(_git(["show", f"{ref}:{path}"]))
+        return load_or_build_bundle(scratch, key=oid, cache_dir=cache_dir).bundle
+    except subprocess.CalledProcessError as exc:
+        detail = exc.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"{path} at {_short_ref(ref)}: {detail}") from exc
     except Exception as exc:
-        return f"Policy gate: `unknown` (could not read `{path}`: {exc})"
-    ok = bool(result.get("ok"))
-    violations = result.get("violations") or []
-    if ok:
-        return "Policy gate: `pass`"
-    return f"Policy gate: `fail` ({len(violations)} violation(s))"
+        raise RuntimeError(f"{path} at {_short_ref(ref)}: {exc}") from exc
+
+
+def _policy_lines(result: dict) -> list[str]:
+    lines = [_policy_verdict(result)]
+    lines.extend(f"- {markdown_code(clip(violation['message']))}" for violation in result["violations"])
+    return lines
+
+
+def _policy_verdict(result: dict) -> str:
+    verdict = "pass" if result["ok"] else "fail"
+    return f"Policy: {markdown_code(verdict)} ({len(result['violations'])} violation(s))"
+
+
+def _load_policy_results(specs: list[str] | None) -> dict[str, dict]:
+    results: dict[str, dict] = {}
+    for spec in specs or []:
+        path, separator, result_path = spec.partition("=")
+        if not separator or not path or not result_path:
+            raise ValueError(f"--policy-result expects IFC_PATH=RESULT_JSON, got {spec!r}")
+        if path in results:
+            raise ValueError(f"--policy-result given twice for {path}")
+        results[path] = _policy_result(Path(result_path))
+    return results
+
+
+def _policy_result(path: Path) -> dict:
+    try:
+        result = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise ValueError(f"--policy-result {path} is not JSON: {exc}") from exc
+    if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
+        raise ValueError(f"--policy-result {path} has no boolean 'ok' field; expected an athar check JSON result")
+    violations = result.get("violations")
+    if not isinstance(violations, list):
+        raise ValueError(f"--policy-result {path} has no 'violations' list; expected an athar check JSON result")
+    for index, violation in enumerate(violations):
+        if not isinstance(violation, dict) or not isinstance(violation.get("message"), str):
+            raise ValueError(f"--policy-result {path} violation {index} has no string 'message' field")
+    return result
 
 
 def _event_pr_number() -> int | None:
     event_path = os.environ.get("GITHUB_EVENT_PATH")
     if not event_path:
         return None
-    try:
-        event = json.loads(Path(event_path).read_text(encoding="utf-8"))
-    except Exception:
-        return None
+    event = json.loads(Path(event_path).read_text(encoding="utf-8"))
     number = (event.get("pull_request") or {}).get("number") or event.get("number")
     return int(number) if number is not None else None
-
-
-def _env(*names: str) -> str | None:
-    for name in names:
-        value = os.environ.get(name)
-        if value:
-            return value
-    return None
 
 
 def _is_ifc_path(path: str | None) -> bool:
@@ -261,6 +372,18 @@ def _git(args: list[str]) -> bytes:
 
 def _git_text(args: list[str]) -> str:
     return _git(args).decode("utf-8", errors="replace")
+
+
+class GitHubAPIError(RuntimeError):
+    def __init__(self, method: str, url: str, status: int, detail: str) -> None:
+        super().__init__(f"GitHub API {method} {url} failed: HTTP {status}: {detail}")
+        self.method = method
+        self.status = status
+        try:
+            message = json.loads(detail).get("message")
+        except (ValueError, AttributeError):
+            message = None
+        self.integration_forbidden = status == 403 and message == "Resource not accessible by integration"
 
 
 GITHUB_ACTIONS_LOGIN = "github-actions[bot]"
@@ -370,22 +493,9 @@ class GitHubClient:
         return (json.loads(body.decode("utf-8")) if body else None), headers
 
 
-class GitHubAPIError(RuntimeError):
-    def __init__(self, method: str, url: str, status: int, detail: str) -> None:
-        super().__init__(f"GitHub API {method} {url} failed: HTTP {status}: {detail}")
-        self.method = method
-        self.status = status
-        try:
-            message = json.loads(detail).get("message")
-        except (ValueError, AttributeError):
-            message = None
-        self.integration_forbidden = status == 403 and message == "Resource not accessible by integration"
-
-
 def _next_link(header: str | None) -> str | None:
     for part in (header or "").split(","):
         target, _, params = part.partition(";")
         if 'rel="next"' in params:
             return target.strip().strip("<>")
     return None
-
