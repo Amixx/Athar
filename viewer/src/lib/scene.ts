@@ -6,13 +6,6 @@
  * (per-entity colors are uniform within a bucket), so a slider drag updates a
  * handful of materials instead of touching entities. Per-entity identity is
  * kept as index ranges into the merged buffers for picking and highlighting.
- *
- * Renderer note: the plan's primary was @ifc-lite/renderer, but its per-entity
- * color override path (`Scene.setColorOverrides`) is internal plumbing that
- * needs GPU device/pipeline handles, and its federation registry assumes one
- * model namespace while we overlay two files with colliding STEP ids. ifc-lite
- * still does all parsing/tessellation; meshes are fed to three.js exactly as
- * the spec's sanctioned fallback. This class is the only module that knows.
  */
 
 import * as THREE from 'three'

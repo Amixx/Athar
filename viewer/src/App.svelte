@@ -266,8 +266,7 @@
         report.stats.placement_cohorts ?? [],
       )
 
-      // Pure counts first, so headless environments without WebGL still get
-      // deterministic state for the smoke test.
+      // Computed before the scene exists so they are published even without WebGL.
       const bucketEntityCounts = countBucketEntities(
         oldGeometry.byEntity.keys(),
         newGeometry.byEntity.keys(),

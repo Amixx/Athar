@@ -1,5 +1,5 @@
 /**
- * Pure report → render-state mapping. No three.js, no DOM — unit-tested.
+ * Pure report → render-state mapping; no three.js, no DOM.
  *
  * Entities are grouped into a small set of visual buckets; the whole bucket
  * shares one color/opacity, so the old↔new slider only touches per-bucket
@@ -12,15 +12,12 @@
  *                actually differs between the two sides)
  * - modifiedNew  new side, blue, fades in (counterpart of modifiedOld)
  * - modifiedStatic  new side, blue, constant — modified pairs whose geometry
- *                and placement are both unchanged (data/topology-only edits);
- *                old+new meshes would be coincident and crossfading two
- *                identical transparent meshes just z-fights.
+ *                and placement are both unchanged (data/topology-only edits),
+ *                drawn once because coincident crossfading meshes z-fight.
  * - transitive   new side, bronze, constant + semi-transparent — modified pairs
  *                with change_scope 'transitive', i.e. flagged only because a
- *                dependency changed (no intrinsic edit). Kept visually
- *                subordinate (and separately toggleable) so a diff doesn't read
- *                as "everything changed" when one source edit propagates outward.
- *                Surfaced to users as "Indirect".
+ *                dependency changed (no intrinsic edit). Separately
+ *                toggleable; labelled "Indirect" in the UI.
  * - unchanged    new side only (old copy is geometrically identical), gray,
  *                ghosted, constant across the slider
  * - extra        new-side meshes with no report record (e.g. products the
@@ -73,13 +70,12 @@ export const BUCKET_COLORS: Record<Bucket, string> = {
   modifiedOld: '#3e63dd',
   modifiedNew: '#3e63dd',
   modifiedStatic: '#3e63dd',
-  // Transitive (indirect) changes: warm bronze, distinct from the blue of direct edits.
   transitive: '#a87a3c',
   unchanged: '#8b8d98',
   extra: '#d6409f',
 }
 
-/** Slider snap points (Onshape-style old → new sweep). */
+/** Slider snap points along the old → new sweep. */
 export const SNAP = { old: 0, both: 0.5, new: 1 } as const
 
 const VISIBILITY_EPS = 0.02
@@ -106,9 +102,6 @@ export function bucketFor(side: Side, rec: EntityRecord | undefined): Bucket | n
     case 'unchanged':
       return side === 'new' ? 'unchanged' : null
     case 'modified': {
-      // Transitive-only change: the entity itself did not change; it is flagged
-      // only because something it depends on did. Render once from the new side
-      // as a subordinate bucket so demos don't read as "everything changed".
       if (rec.pair?.change_scope === 'transitive') {
         return side === 'new' ? 'transitive' : null
       }
@@ -223,11 +216,7 @@ export function placementDeltaNorm(item: MatchedItem): number | null {
   return Math.hypot(delta[0], delta[1], delta[2])
 }
 
-/**
- * Entities-per-bucket over the tessellated entity id sets. Pure counterpart
- * of the scene build — the debug hook and tests use it so headless runs
- * without WebGL still report deterministic counts.
- */
+/** Entities per bucket over the tessellated entity id sets, as the scene build assigns them. */
 export function countBucketEntities(
   oldIds: Iterable<number>,
   newIds: Iterable<number>,

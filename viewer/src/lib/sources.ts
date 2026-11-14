@@ -94,7 +94,6 @@ function parseStep(value: unknown, i: number): ParsedStep {
   }
 }
 
-/** Pure manifest validation, unit-tested without any network. */
 export function parseManifest(json: unknown): ParsedManifest {
   if (typeof json !== 'object' || json === null) {
     throw new ManifestFormatError('manifest is not a JSON object.')
