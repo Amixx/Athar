@@ -41,7 +41,9 @@ with their own toggle and legend count, since the diff makes no claim about
 them). Each bucket is one
 merged `THREE.Mesh`, so slider drags update O(buckets) materials regardless of
 entity count; per-entity index ranges drive raycast picking and a zero-copy
-highlight overlay.
+highlight overlay. Picking skips hidden buckets and, with Ghost on, the
+ghosted unchanged geometry: unchanged entities cannot be clicked while Ghost is
+on, so a click reaches the changed geometry behind them.
 
 The summary legend shows, for each row (added, deleted, direct, indirect,
 unchanged), how many entities the report lists and how many the scene draws.
