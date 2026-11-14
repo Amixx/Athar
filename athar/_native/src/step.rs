@@ -13,6 +13,9 @@
 //!     `\X\` / `\X2\` / `\X4\` / `\S\` control directives decoded), enums
 //!     (`.T.`), entity refs (`#123`), `$` (null), `*` (derived), nested lists
 //!     `( ... )`, and typed values `KEYWORD( ... )`.
+//!   * Raw 8-bit bytes inside strings: valid UTF-8 sequences decode as UTF-8,
+//!     every other byte as its Latin-1 code point, so `'H\xF6he'` and
+//!     `'H\X\F6he'` are the same string.
 //!
 //! What it does NOT do (by design — handled elsewhere or unsupported):
 //!   * `\S\` under ISO 8859 code pages other than `\PA\` (kept verbatim).
@@ -284,34 +287,27 @@ impl<'a> Parser<'a> {
         Ok(id)
     }
 
-    /// Read a `'...'` string; `''` is an escaped single quote.
+    /// Read a `'...'` string; `''` is an escaped single quote. The closing
+    /// quote is found by byte: 0x27 never occurs inside a multi-byte UTF-8
+    /// sequence, and raw 8-bit bytes need not form one.
     fn read_string(&mut self) -> Result<String, String> {
         self.pos += 1; // opening quote
-        let mut out = String::new();
+        let mut raw = Vec::new();
         loop {
-            match self.peek() {
-                None => return Err("unterminated string".to_string()),
-                Some(b'\'') => {
-                    if self.bytes.get(self.pos + 1) == Some(&b'\'') {
-                        out.push('\'');
-                        self.pos += 2;
-                    } else {
-                        self.pos += 1;
-                        break;
-                    }
-                }
-                Some(_) => {
-                    // Copy a full UTF-8 byte sequence verbatim.
-                    let ch_len = utf8_len(self.bytes[self.pos]);
-                    let end = (self.pos + ch_len).min(self.bytes.len());
-                    if let Ok(s) = std::str::from_utf8(&self.bytes[self.pos..end]) {
-                        out.push_str(s);
-                    }
-                    self.pos = end;
-                }
+            let rest = &self.bytes[self.pos..];
+            let Some(quote) = rest.iter().position(|&b| b == b'\'') else {
+                return Err("unterminated string".to_string());
+            };
+            raw.extend_from_slice(&rest[..quote]);
+            self.pos += quote + 1;
+            if self.peek() == Some(b'\'') {
+                raw.push(b'\'');
+                self.pos += 1;
+            } else {
+                break;
             }
         }
-        Ok(decode_control_directives(&out))
+        Ok(decode_control_directives(&decode_string_bytes(raw)))
     }
 
     fn read_enum(&mut self) -> String {
@@ -388,6 +384,23 @@ fn is_keyword_start(b: u8) -> bool {
 #[inline]
 fn is_keyword_char(b: u8) -> bool {
     b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'
+}
+
+/// Valid UTF-8 sequences decode as UTF-8; every other byte decodes as its
+/// Latin-1 code point.
+fn decode_string_bytes(raw: Vec<u8>) -> String {
+    match String::from_utf8(raw) {
+        Ok(text) => text,
+        Err(err) => {
+            let raw = err.into_bytes();
+            let mut out = String::with_capacity(raw.len() * 2);
+            for chunk in raw.utf8_chunks() {
+                out.push_str(chunk.valid());
+                out.extend(chunk.invalid().iter().map(|&b| char::from(b)));
+            }
+            out
+        }
+    }
 }
 
 #[inline]
@@ -569,11 +582,54 @@ END-ISO-10303-21;
 
     #[test]
     fn parsed_strings_have_one_form_per_character() {
-        let src = b"DATA;\n#1=IFCLABEL('st\\X2\\00E5\\X0\\l');\n#2=IFCLABEL('st\\X\\E5l');\n#3=IFCLABEL('st\xc3\xa5l');\nENDSEC;";
+        let src = b"DATA;\n#1=IFCLABEL('st\\X2\\00E5\\X0\\l');\n#2=IFCLABEL('st\\X\\E5l');\n#3=IFCLABEL('st\xc3\xa5l');\n#4=IFCLABEL('st\xe5l');\nENDSEC;";
         let recs = Parser::new(src).parse().expect("ok");
+        assert_eq!(recs.len(), 4);
         for rec in &recs {
             assert_eq!(rec.attrs[0], Token::Str("st\u{e5}l".to_string()));
         }
+    }
+
+    fn strings(src: &[u8]) -> Vec<Token> {
+        Parser::new(src).parse().expect("ok").into_iter().map(|rec| rec.attrs[0].clone()).collect()
+    }
+
+    #[test]
+    fn raw_latin1_bytes_decode_like_their_escapes() {
+        let src = b"DATA;\n#1=IFCLABEL('m\xb2');\n#2=IFCLABEL('m\\X\\B2');\n#3=IFCLABEL('m\xb3');\n\
+#4=IFCLABEL('H\xf6he');\n#5=IFCLABEL('H\\X\\F6he');\nENDSEC;";
+        let got = strings(src);
+        assert_eq!(got[0], Token::Str("m\u{b2}".to_string()));
+        assert_eq!(got[0], got[1]);
+        assert_eq!(got[2], Token::Str("m\u{b3}".to_string()));
+        assert_eq!(got[3], Token::Str("H\u{f6}he".to_string()));
+        assert_eq!(got[3], got[4]);
+    }
+
+    #[test]
+    fn cp1252_byte_0x80_decodes_as_its_latin1_code_point() {
+        let got = strings(b"DATA;\n#1=IFCLABEL('a\x80b');\n#2=IFCLABEL('a\\X\\80b');\nENDSEC;");
+        assert_eq!(got[0], Token::Str("a\u{80}b".to_string()));
+        assert_eq!(got[0], got[1]);
+    }
+
+    #[test]
+    fn lone_lead_byte_before_closing_quote_keeps_the_quote() {
+        let got = strings(b"DATA;\n#1=IFCLABEL('ab\xc3');\n#2=IFCLABEL('\xe2\x82');\n#3=IFCLABEL('z');\nENDSEC;");
+        assert_eq!(
+            got,
+            vec![
+                Token::Str("ab\u{c3}".to_string()),
+                Token::Str("\u{e2}\u{82}".to_string()),
+                Token::Str("z".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn valid_utf8_is_untouched() {
+        let got = strings("DATA;\n#1=IFCLABEL('Höhe \u{1f600} 漢');\nENDSEC;".as_bytes());
+        assert_eq!(got[0], Token::Str("Höhe \u{1f600} 漢".to_string()));
     }
 
     #[test]
