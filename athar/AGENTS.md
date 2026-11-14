@@ -27,17 +27,22 @@ GitHub comments, and other presentation concerns.
   policy signals only. Exit `2` is policy violation; exit `1` is execution or
   configuration error. Policy normalization rejects unknown keys, malformed
   values and unknown IFC classes before diffing; class rules include subtypes.
-  Property-level gates (`forbid_property_removal`,
+  `forbid_aspect_changes` takes the aspects `geometry`, `data`, `topology`,
+  `placement`, `relations` and `class`. Property-level gates
+  (`forbid_property_removal`,
   `forbid_property_value_change`, `forbid_property_addition`) require the
   report's `property_deltas` on data-changed entities. Absence is ambiguous
   (comparison unavailable or no property changes) and raises an error.
-  Property deltas are keyed by (pset, property name, inherited); type-level
-  values are `inherited: true` entries beside the occurrence's own values.
+  Each `property_deltas` entry carries `pset`, `name` and `inherited` (the
+  origin of the effective value).
   `forbid_property_value_change` keys are property names and match that name
   in every pset and origin; each violating entity lists all matching
   `changes` (pset, inherited, old/new value). Removed values and remove/add
   pairs with different values violate the rule; equal-value moves do not.
-  `count_changed` entries for duplicate property keys fail closed.
+  `origin_changed` and `overridden_changed` entries leave the effective value
+  as it was and do not violate it. A `count_changed` entry violates it only
+  when a count is above 1 (a duplicated key); a count between 0 and 1 is an
+  override added or removed, which the `changed` entry already judges.
   `property_removed` lists removed properties with their pset and origin.
   `max_placement_cohort_share` fails when one report placement cohort exceeds
   the configured share of matched products. Schema mismatch is a policy

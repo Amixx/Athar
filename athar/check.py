@@ -14,7 +14,7 @@ from athar.bottom.constants import SUPPORTED_SCHEMAS
 from athar.bottom.schema_dict import canonical_class_name
 
 
-ASPECTS = ("geometry", "data", "topology", "placement")
+ASPECTS = ("geometry", "data", "topology", "placement", "relations", "class")
 CHANGE_SCOPES = ("intrinsic", "transitive", "mixed")
 AFFECTED_CAP = 50
 
@@ -341,6 +341,8 @@ _PROPERTY_DELTA_VALUES = {
     "changed": ("old_value", "new_value"),
     "added": ("new_value",),
     "removed": ("old_value",),
+    "origin_changed": ("old_origin", "new_origin"),
+    "overridden_changed": ("old_value", "new_value"),
     "count_changed": ("old_count", "new_count"),
 }
 
@@ -369,7 +371,10 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     - ``max_placement_cohort_share``: 0 to 1 — fail when one placement cohort
       (entities moved by the same translation) is more than this share of the
       matched products (modified plus unchanged)
-    - ``forbid_aspect_changes``: ``{"data": ["IfcWall"], "placement": "*"}``
+    - ``forbid_aspect_changes``: ``{"data": ["IfcWall"], "placement": "*"}``;
+      aspects are ``geometry``, ``data``, ``topology``, ``placement``,
+      ``relations`` (re-contained, re-typed, re-hosted) and ``class``
+      (reclassified)
     - ``forbid_property_removal``: ``"*"``, a class string, or a list of classes
       — fail when a matched entity drops a property/quantity value
     - ``forbid_property_value_change``: ``{"FireRating": "*", "LoadBearing":
@@ -593,14 +598,15 @@ def _check_property_removal(report: dict[str, Any], policy: dict[str, Any], viol
 def _check_property_value_changes(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
     """Fail when a protected property's value on a matched entity may differ.
 
-    Reads each modified entity's ``property_deltas``, keyed by (pset, name,
-    inherited-from-type). A protected name violates the rule when an entry is
+    Reads each modified entity's ``property_deltas``, keyed by (pset, name) on
+    the effective value. A protected name violates the rule when an entry is
     ``changed``; when it is ``removed`` and no ``added`` entry of that name on
-    the same entity carries an equal value (a move between psets, or between
-    the occurrence and its type, with the value kept is not a change); or when
-    it is in ``count_changed``. The report keeps one value per key, so for a
-    key that occurs more than once on an entity a count difference is the only
-    signal, and the rule fails on it without knowing which copy changed.
+    the same entity carries an equal value (a key moved between psets with its
+    value kept is not a change); or when a ``count_changed`` entry has a count
+    above 1, which is a duplicated key whose copies differ in number. An
+    ``origin_changed`` entry (the effective value moved between occurrence and
+    type) and an ``overridden_changed`` entry (the type's value changed under
+    an occurrence override) leave the effective value as it was.
     """
     for prop_name, classes in policy.get("forbid_property_value_change", {}).items():
         affected: list[dict[str, Any]] = []
@@ -665,7 +671,7 @@ def _property_value_changes(deltas: dict[str, list[dict[str, Any]]], prop_name: 
     changes += [
         {"kind": "count_changed", **_property_value(entry, "old_count", "new_count")}
         for entry in deltas.get("count_changed", [])
-        if entry["name"] == prop_name
+        if entry["name"] == prop_name and max(entry["old_count"], entry["new_count"]) > 1
     ]
     return changes
 

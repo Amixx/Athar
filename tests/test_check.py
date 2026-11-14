@@ -11,6 +11,7 @@ import pytest
 import athar.__main__ as main_mod
 from athar.engine import diff_files
 from athar.check import builtin_policy_packs, evaluate_report, normalize_policy, resolve_policy
+from tests.test_report_semantics import diff, reclassify
 
 
 def test_check_passes_when_report_stays_within_policy():
@@ -195,6 +196,8 @@ _UNCHANGED_ASPECTS = {
     "geometry": "unchanged",
     "data": "unchanged",
     "topology": "unchanged",
+    "relations": "unchanged",
+    "class": "unchanged",
     "placement": "unchanged",
     "placement_delta_mm": None,
 }
@@ -216,6 +219,8 @@ def _report() -> dict:
                     "geometry": "unchanged",
                     "data": "changed",
                     "topology": "changed",
+                    "relations": "unchanged",
+                    "class": "unchanged",
                     "placement": "unchanged",
                     "placement_delta_mm": [0.0, 0.0, 0.0],
                 },
@@ -230,6 +235,8 @@ def _report() -> dict:
                     "geometry": "unchanged",
                     "data": "unchanged",
                     "topology": "unchanged",
+                    "relations": "unchanged",
+                    "class": "unchanged",
                     "placement": "changed",
                     "placement_delta_mm": [150.0, 200.0, 0.0],
                 },
@@ -415,6 +422,8 @@ def _guid(label: str) -> str:
 def _write_ifc(path, *, walls, site="site", site_x=0.0, schema="IFC4") -> str:
     """Write a site holding walls; each wall is ``{"id", "x", "psets", "type_psets"}``.
 
+    A pset's properties are a dict, or a list of (name, value) pairs when a name repeats.
+
     Every GlobalId derives from a label, so two calls with the same arguments
     write semantically identical files.
     """
@@ -429,7 +438,7 @@ def _write_ifc(path, *, walls, site="site", site_x=0.0, schema="IFC4") -> str:
     def pset(label, name, props):
         values = [
             f.create_entity("IfcPropertySingleValue", Name=key, NominalValue=f.create_entity("IfcLabel", value))
-            for key, value in props.items()
+            for key, value in (props.items() if isinstance(props, dict) else props)
         ]
         return f.create_entity("IfcPropertySet", GlobalId=_guid(label), Name=name, HasProperties=values)
 
@@ -630,10 +639,7 @@ def test_property_moved_from_occurrence_to_type_with_a_new_value_is_a_value_chan
     verdict = _property_verdict(tmp_path, {"psets": _fire("REI90")}, {"type_psets": _fire("REI60")}, _PROTECT_FIRE)
 
     [violation] = verdict["violations"]
-    assert [(c["kind"], c["inherited"]) for c in violation["affected"][0]["changes"]] == [
-        ("removed", False),
-        ("added", True),
-    ]
+    assert [(c["kind"], c["inherited"]) for c in violation["affected"][0]["changes"]] == [("changed", True)]
 
 
 def test_property_moved_with_its_value_kept_is_not_a_value_change(tmp_path):
@@ -666,6 +672,42 @@ def test_property_addition_fails_only_when_the_policy_asks(tmp_path):
     [violation] = verdict["violations"]
     assert violation["code"] == "property_added"
     assert violation["affected"][0]["added"] == [{"pset": "Pset_WallCommon", "inherited": False, "new_value": "REI60"}]
+
+
+def test_occurrence_override_with_a_different_value_is_a_value_change(tmp_path):
+    verdict = _property_verdict(
+        tmp_path, {"type_psets": _fire("REI90")}, {"type_psets": _fire("REI90"), "psets": _fire("REI60")}, _PROTECT_FIRE
+    )
+
+    [violation] = verdict["violations"]
+    assert [c["kind"] for c in violation["affected"][0]["changes"]] == ["changed"]
+
+
+def test_occurrence_override_with_the_type_value_is_not_a_value_change(tmp_path):
+    verdict = _property_verdict(
+        tmp_path, {"type_psets": _fire("REI90")}, {"type_psets": _fire("REI90"), "psets": _fire("REI90")}, _PROTECT_FIRE
+    )
+
+    assert verdict["violations"] == []
+
+
+def test_type_value_changed_under_an_occurrence_override_is_not_a_value_change(tmp_path):
+    verdict = _property_verdict(
+        tmp_path,
+        {"type_psets": _fire("REI90"), "psets": _fire("REI60")},
+        {"type_psets": _fire("REI30"), "psets": _fire("REI60")},
+        _PROTECT_FIRE,
+    )
+
+    assert verdict["violations"] == []
+
+
+def test_duplicated_property_losing_a_copy_is_a_value_change(tmp_path):
+    twice = {"Pset_WallCommon": [("FireRating", "REI90"), ("FireRating", "REI60")]}
+    verdict = _property_verdict(tmp_path, {"psets": twice}, {"psets": _fire("REI90")}, _PROTECT_FIRE)
+
+    [violation] = verdict["violations"]
+    assert {c["kind"] for c in violation["affected"][0]["changes"]} == {"changed", "count_changed"}
 
 
 def test_duplicate_property_count_change_fails_closed():
@@ -745,3 +787,32 @@ def test_scope_limit_violation_names_the_entities():
     [violation] = verdict["violations"]
     assert [ref["guid"] for ref in violation["affected"]] == ["WALL"]
     assert violation["truncated"] == 0
+
+
+def test_policy_forbidding_relations_fails_on_a_recontained_wall(tmp_path):
+    def move(model):
+        w1 = model["W1"]
+        model.containment["L1"].RelatedElements = [model["W2"]]
+        model.containment["L2"].RelatedElements = [model["W3"], w1]
+
+    report = diff(tmp_path, move)
+
+    result = evaluate_report(report, {"forbid_aspect_changes": {"relations": ["IfcWall"]}})
+
+    assert result["ok"] is False
+    [violation] = result["violations"]
+    assert violation["aspect"] == "relations"
+    assert [ref["class"] for ref in violation["affected"]] == ["IfcWall"]
+    assert evaluate_report(report, {"forbid_aspect_changes": {"class": "*"}})["ok"] is True
+
+
+def test_policy_forbidding_class_fails_on_a_reclassified_element(tmp_path):
+    report = diff(tmp_path, lambda model: reclassify(model, "W1", "IfcBuildingElementProxy"))
+
+    result = evaluate_report(report, {"forbid_aspect_changes": {"class": "*"}})
+
+    assert result["ok"] is False
+    [violation] = result["violations"]
+    assert violation["aspect"] == "class"
+    assert [ref["class"] for ref in violation["affected"]] == ["IfcBuildingElementProxy"]
+    assert evaluate_report(report, {"forbid_aspect_changes": {"relations": "*"}})["ok"] is True

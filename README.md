@@ -225,11 +225,14 @@ diff different schemas; `forbid_schema_change` is not a policy key.
 
 `forbid_property_value_change` maps property names to `"*"`, a class, or a list
 of classes. It checks matched entities across all psets and occurrence/type
-origins. Changed values, removals, and remove/add pairs with different values
-violate it; equal-value moves are allowed. Added values alone are checked only
-by `forbid_property_addition` (the same shape). Duplicate keys are collapsed to
-one value in the report; a reported `count_changed` fails closed. Changes to
-an unreported duplicate copy cannot be reconstructed from the report. Property
+origins, on the effective value of each key (the occurrence's when it defines
+the key, the type's otherwise). Changed effective values, removals, and
+remove/add pairs with different values violate it; equal-value moves are
+allowed, and so are a value moving between occurrence and type unchanged and a
+type value changing under an occurrence override. A duplicated key's effective
+value is the sorted list of its distinct values, and a duplicated key that
+gains or loses a copy fails closed. Added values alone are checked only by
+`forbid_property_addition` (the same shape). Property
 rules require `property_deltas` on data-changed entities: the engine can omit
 it both when comparison is unavailable and when no property changed, so these
 ambiguous reports produce exit `1`. No engine changes are implied by this gate.
@@ -244,6 +247,10 @@ The `georeferencing` pack forbids site placement/data changes, added/deleted
 sites, replaced site GUIDs on matched sites, and translation cohorts covering
 more than half the matched products. Its project-data ban applies only if a
 report contains `IfcProject`; it does not cover map conversions.
+
+`forbid_aspect_changes` takes the aspects `geometry`, `data`, `topology`,
+`placement`, `relations` (re-contained, re-typed, re-hosted) and `class`
+(reclassified).
 
 Use `--policy PACK --explain` to print the normalized policy without diffing;
 `--list-packs` prints shipped pack descriptions. `--format text` renders a
