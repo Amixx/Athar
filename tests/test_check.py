@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import copy
 import json
+import uuid
 
+import ifcopenshell
+import ifcopenshell.guid
 import pytest
 
 import athar.__main__ as main_mod
+from athar.engine import diff_files
 from athar.check import builtin_policy_packs, evaluate_report, normalize_policy, resolve_policy
 
 
@@ -152,10 +157,24 @@ def test_normalized_policy_is_a_fixed_point():
     assert normalize_policy(policy) == policy
 
 
+_HEADER = {
+    "engine": "athar",
+    "canon_version": "athar-canon-v9",
+    "audit": {"report_schema_version": 1},
+    "schemas": {"old": "IFC4", "new": "IFC4"},
+}
+_UNCHANGED_ASPECTS = {
+    "geometry": "unchanged",
+    "data": "unchanged",
+    "topology": "unchanged",
+    "placement": "unchanged",
+    "placement_delta_mm": None,
+}
+
+
 def _report() -> dict:
     return {
-        "engine": "athar",
-        "schemas": {"old": "IFC4", "new": "IFC4"},
+        **copy.deepcopy(_HEADER),
         "stats": {"added": 0, "deleted": 1, "modified": 2, "unchanged": 3},
         "added": [],
         "deleted": [
@@ -173,6 +192,7 @@ def _report() -> dict:
                     "placement_delta_mm": [0.0, 0.0, 0.0],
                 },
                 "change_scope": "mixed",
+                "data_delta": [{"path": "IfcWall.Description", "old": "a", "new": "b"}],
             },
             {
                 "old": {"class": "IfcSite", "step_id": 12, "guid": "SITE", "name": "Site"},
@@ -193,7 +213,7 @@ def _report() -> dict:
 
 def _report_with_property_deltas() -> dict:
     return {
-        "schemas": {"old": "IFC4", "new": "IFC4"},
+        **copy.deepcopy(_HEADER),
         "stats": {"added": 0, "deleted": 0, "modified": 2, "unchanged": 0},
         "added": [],
         "deleted": [],
@@ -201,8 +221,9 @@ def _report_with_property_deltas() -> dict:
             {
                 "old": {"class": "IfcWall", "step_id": 11, "guid": "WALL", "name": "Wall"},
                 "new": {"class": "IfcWall", "step_id": 21, "guid": "WALL", "name": "Wall"},
-                "aspects": {"data": "changed"},
+                "aspects": {**_UNCHANGED_ASPECTS, "data": "changed"},
                 "change_scope": "intrinsic",
+                "data_delta": [],
                 "property_deltas": {
                     "changed": [
                         {"pset": "Custom", "name": "FireRating", "inherited": False, "old_value": "REI90", "new_value": "REI60"},
@@ -215,8 +236,9 @@ def _report_with_property_deltas() -> dict:
             {
                 "old": {"class": "IfcDoor", "step_id": 12, "guid": "DOOR", "name": "Door"},
                 "new": {"class": "IfcDoor", "step_id": 22, "guid": "DOOR", "name": "Door"},
-                "aspects": {"data": "changed"},
+                "aspects": {**_UNCHANGED_ASPECTS, "data": "changed"},
                 "change_scope": "intrinsic",
+                "data_delta": [],
                 "property_deltas": {
                     "changed": [{"pset": "Pset_DoorCommon", "name": "Width", "inherited": False, "old_value": 900, "new_value": 1000}],
                 },
@@ -348,3 +370,156 @@ def test_nearest_class_placement_limit_wins():
     assert evaluate_report(report, policy)["ok"] is True
     policy["max_placement_delta_mm_by_class"]["IfcSite"] = 100
     assert evaluate_report(report, policy)["ok"] is False
+
+
+def _guid(label: str) -> str:
+    return ifcopenshell.guid.compress(uuid.uuid5(uuid.NAMESPACE_URL, label).hex)
+
+
+def _write_ifc(path, *, walls, site="site", site_x=0.0, schema="IFC4") -> str:
+    """Write a site holding walls; each wall is ``{"id", "x", "psets", "type_psets"}``.
+
+    Every GlobalId derives from a label, so two calls with the same arguments
+    write semantically identical files.
+    """
+    f = ifcopenshell.file(schema=schema)
+
+    def placement(x):
+        point = f.create_entity("IfcCartesianPoint", Coordinates=(float(x), 0.0, 0.0))
+        return f.create_entity(
+            "IfcLocalPlacement", RelativePlacement=f.create_entity("IfcAxis2Placement3D", Location=point)
+        )
+
+    def pset(label, name, props):
+        values = [
+            f.create_entity("IfcPropertySingleValue", Name=key, NominalValue=f.create_entity("IfcLabel", value))
+            for key, value in props.items()
+        ]
+        return f.create_entity("IfcPropertySet", GlobalId=_guid(label), Name=name, HasProperties=values)
+
+    units = f.create_entity(
+        "IfcUnitAssignment", Units=[f.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE")]
+    )
+    project = f.create_entity("IfcProject", GlobalId=_guid("project"), Name="P", UnitsInContext=units)
+    site_entity = f.create_entity("IfcSite", GlobalId=_guid(site), Name="Site", ObjectPlacement=placement(site_x))
+    f.create_entity("IfcRelAggregates", GlobalId=_guid("agg"), RelatingObject=project, RelatedObjects=[site_entity])
+    elements = []
+    for wall in walls:
+        wid = wall["id"]
+        element = f.create_entity("IfcWall", GlobalId=_guid(wid), Name=wid, ObjectPlacement=placement(wall.get("x", 0.0)))
+        elements.append(element)
+        for name, props in wall.get("psets", {}).items():
+            f.create_entity(
+                "IfcRelDefinesByProperties",
+                GlobalId=_guid(f"{wid}/{name}/rel"),
+                RelatedObjects=[element],
+                RelatingPropertyDefinition=pset(f"{wid}/{name}", name, props),
+            )
+        if "type_psets" in wall:
+            wall_type = f.create_entity(
+                "IfcWallType",
+                GlobalId=_guid(f"{wid}/type"),
+                Name=f"{wid}-type",
+                PredefinedType="STANDARD",
+                HasPropertySets=[pset(f"{wid}/type/{name}", name, props) for name, props in wall["type_psets"].items()],
+            )
+            f.create_entity(
+                "IfcRelDefinesByType", GlobalId=_guid(f"{wid}/type/rel"), RelatedObjects=[element], RelatingType=wall_type
+            )
+    f.create_entity(
+        "IfcRelContainedInSpatialStructure",
+        GlobalId=_guid("contained"),
+        RelatingStructure=site_entity,
+        RelatedElements=elements,
+    )
+    f.write(str(path))
+    return str(path)
+
+
+def _diff(tmp_path, old_kwargs, new_kwargs) -> dict:
+    return diff_files(_write_ifc(tmp_path / "old.ifc", **old_kwargs), _write_ifc(tmp_path / "new.ifc", **new_kwargs))
+
+
+def _write_json(path, value) -> str:
+    path.write_text(json.dumps(value), encoding="utf-8")
+    return str(path)
+
+
+_WALLS = [{"id": "w1", "x": 0.0}, {"id": "w2", "x": 1.0}, {"id": "w3", "x": 2.0}]
+
+
+def test_empty_report_is_an_error():
+    with pytest.raises(ValueError, match="not an Athar report"):
+        evaluate_report({}, {})
+
+
+def test_cli_empty_report_is_an_error_not_a_pass(tmp_path, capsys):
+    report = _write_json(tmp_path / "report.json", {})
+    policy = _write_json(tmp_path / "policy.json", {"max_deleted": 0})
+
+    code = main_mod._run_check(["--report", report, "--policy", policy])
+
+    assert code == 1
+    assert "not an Athar report" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (lambda r: r.pop("canon_version"), "canon_version"),
+        (lambda r: r.pop("audit"), "report_schema_version"),
+        (lambda r: r["schemas"].pop("new"), "schemas"),
+        (lambda r: r.pop("deleted"), "'deleted' section"),
+        (lambda r: r["stats"].update(deleted=0), "stats.deleted"),
+        (lambda r: r["deleted"][0].pop("guid"), "deleted\\[0\\]"),
+        (lambda r: r["modified"][0]["aspects"].pop("topology"), "modified\\[0\\].aspects"),
+        (lambda r: r["modified"][0]["aspects"].pop("placement_delta_mm"), "placement_delta_mm"),
+    ],
+)
+def test_incomplete_report_is_an_error(edit, message):
+    report = _report()
+    edit(report)
+
+    with pytest.raises(ValueError, match=message):
+        evaluate_report(report, {})
+
+
+def test_report_without_detail_a_rule_needs_names_the_rule():
+    report = _report()
+    del report["modified"][0]["data_delta"]
+    assert evaluate_report(report, {"max_deleted": 5})["ok"] is True
+
+    with pytest.raises(ValueError, match="forbid_property_value_change needs .*'modified\\[0\\]' has no 'data_delta'"):
+        evaluate_report(report, {"forbid_property_value_change": {"FireRating": "*"}})
+
+    report = _report()
+    del report["modified"][1]["change_scope"]
+    with pytest.raises(ValueError, match="max_modified_change_scope needs 'modified\\[1\\].change_scope'"):
+        evaluate_report(report, {"max_modified_change_scope": {"mixed": 0}})
+
+
+def test_cli_check_existing_engine_report(tmp_path, capsys):
+    report = _diff(tmp_path, {"walls": _WALLS}, {"walls": _WALLS[:2]})
+    report_path = _write_json(tmp_path / "report.json", report)
+
+    passing = main_mod._run_check(["--report", report_path, "--policy", _write_json(tmp_path / "p1.json", {"max_deleted": 1})])
+    assert passing == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+
+    failing = main_mod._run_check(["--report", report_path, "--policy", _write_json(tmp_path / "p2.json", {"max_deleted": 0})])
+    out = json.loads(capsys.readouterr().out)
+    assert failing == 2
+    assert [v["code"] for v in out["violations"]] == ["deleted_limit"]
+
+
+def test_cli_check_diffs_ifc_files(tmp_path, capsys):
+    old = _write_ifc(tmp_path / "old.ifc", walls=_WALLS)
+    new = _write_ifc(tmp_path / "new.ifc", walls=_WALLS[:2])
+    policy = _write_json(tmp_path / "policy.json", {"max_deleted_by_class": {"IfcBuildingElement": 0}})
+
+    code = main_mod._run_check([old, new, "--policy", policy])
+
+    out = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert out["violations"][0]["actual"] == 1
+    assert out["summary"]["deleted"] == 1

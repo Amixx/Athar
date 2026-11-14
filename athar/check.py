@@ -203,13 +203,115 @@ def resolve_policy(name_or_path: str | Path) -> dict[str, Any]:
     )
 
 
-def load_report(path: str | Path) -> dict[str, Any]:
-    """Load an Athar JSON report."""
+def load_report(path: str | Path) -> Any:
+    """Load an Athar JSON report; :func:`evaluate_report` validates it."""
     with open(path, encoding="utf-8") as fh:
-        report = json.load(fh)
+        return json.load(fh)
+
+
+_REPORT_SCHEMA_VERSION = 1
+_SECTIONS = ("added", "deleted", "modified", "unchanged")
+_ASPECT_STATES = ("changed", "unchanged")
+_ENTITY_KEYS = ("class", "step_id", "guid", "name")
+
+
+def _validate_report(report: Any, policy: dict[str, Any]) -> None:
+    """Raise ``ValueError`` unless ``report`` carries everything ``policy`` reads."""
     if not isinstance(report, dict):
         raise ValueError("Report must be a JSON object")
-    return report
+    if report.get("engine") != "athar":
+        raise ValueError("Report is not an Athar report: 'engine' must be \"athar\"")
+    if not isinstance(report.get("canon_version"), str):
+        raise ValueError("Report lacks 'canon_version'")
+    audit = report.get("audit")
+    if not isinstance(audit, dict) or audit.get("report_schema_version") != _REPORT_SCHEMA_VERSION:
+        raise ValueError(f"Report 'audit.report_schema_version' must be {_REPORT_SCHEMA_VERSION}")
+    schemas = report.get("schemas")
+    if not isinstance(schemas, dict) or any(schemas.get(side) not in SUPPORTED_SCHEMAS for side in ("old", "new")):
+        raise ValueError(f"Report 'schemas.old' and 'schemas.new' must each be one of {', '.join(SUPPORTED_SCHEMAS)}")
+    stats = report.get("stats")
+    if not isinstance(stats, dict):
+        raise ValueError("Report lacks 'stats'")
+    for section in _SECTIONS:
+        rows = report.get(section)
+        if not isinstance(rows, list):
+            raise ValueError(f"Report lacks the '{section}' section")
+        count = stats.get(section)
+        if isinstance(count, bool) or not isinstance(count, int) or count != len(rows):
+            raise ValueError(f"Report 'stats.{section}' must equal the {len(rows)} entries in '{section}'")
+    for section in ("added", "deleted"):
+        for index, item in enumerate(report[section]):
+            _validate_entity(item, f"{section}[{index}]")
+    for index, item in enumerate(report["modified"]):
+        where = f"modified[{index}]"
+        if not isinstance(item, dict):
+            raise ValueError(f"Report '{where}' must be an object")
+        _validate_entity(item.get("old"), f"{where}.old")
+        _validate_entity(item.get("new"), f"{where}.new")
+        aspects = item.get("aspects")
+        if not isinstance(aspects, dict) or any(aspects.get(aspect) not in _ASPECT_STATES for aspect in ASPECTS):
+            raise ValueError(f"Report '{where}.aspects' must give each of {', '.join(ASPECTS)} as changed or unchanged")
+        delta = aspects.get("placement_delta_mm", "missing")
+        if delta is not None and not _is_vector(delta):
+            raise ValueError(f"Report '{where}.aspects.placement_delta_mm' must be null or three numbers")
+        _validate_rule_detail(item, where, policy)
+
+
+def _validate_entity(entity: Any, where: str) -> None:
+    if not isinstance(entity, dict) or any(key not in entity for key in _ENTITY_KEYS):
+        raise ValueError(f"Report '{where}' must be an entity with {', '.join(_ENTITY_KEYS)}")
+    if not isinstance(entity["class"], str):
+        raise ValueError(f"Report '{where}.class' must be a string")
+
+
+def _validate_rule_detail(item: dict[str, Any], where: str, policy: dict[str, Any]) -> None:
+    if "max_modified_change_scope" in policy and item.get("change_scope") not in CHANGE_SCOPES:
+        raise ValueError(f"Policy rule max_modified_change_scope needs '{where}.change_scope', which the report lacks")
+    property_rules = [key for key in _PROPERTY_RULES if key in policy]
+    if not property_rules or item["aspects"]["data"] != "changed":
+        return
+    rule = property_rules[0]
+    if not isinstance(item.get("data_delta"), list):
+        raise ValueError(
+            f"Policy rule {rule} needs the property detail of data-changed entities; "
+            f"report '{where}' has no 'data_delta'"
+        )
+    deltas = item.get("property_deltas", {})
+    if not isinstance(deltas, dict):
+        raise ValueError(f"Policy rule {rule} needs '{where}.property_deltas' to be an object")
+    for change, entries in deltas.items():
+        value_keys = _PROPERTY_DELTA_VALUES.get(change)
+        if value_keys is None or not isinstance(entries, list):
+            raise ValueError(f"Policy rule {rule} cannot read '{where}.property_deltas.{change}'")
+        for entry in entries:
+            if (
+                not isinstance(entry, dict)
+                or not isinstance(entry.get("pset"), str)
+                or not isinstance(entry.get("name"), str)
+                or not isinstance(entry.get("inherited"), bool)
+                or any(key not in entry for key in value_keys)
+            ):
+                raise ValueError(
+                    f"Policy rule {rule} needs pset, name, inherited and {', '.join(value_keys)} "
+                    f"on every '{where}.property_deltas.{change}' entry"
+                )
+
+
+_PROPERTY_RULES = ("forbid_property_removal", "forbid_property_value_change")
+_PROPERTY_DELTA_VALUES = {
+    "changed": ("old_value", "new_value"),
+    "added": ("new_value",),
+    "removed": ("old_value",),
+    "count_changed": ("old_count", "new_count"),
+}
+
+
+def _is_vector(value: Any) -> bool:
+    return (
+        isinstance(value, (list, tuple))
+        and len(value) == 3
+        and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value)
+    )
 
 
 def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
@@ -236,6 +338,7 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     """
 
     policy = normalize_policy(policy)
+    _validate_report(report, policy)
     violations: list[dict[str, Any]] = []
     _check_schema(report, policy, violations)
     _check_section_limits(report, policy, violations)
@@ -293,7 +396,7 @@ def _check_class_limits(report: dict[str, Any], policy: dict[str, Any], violatio
         if key not in policy:
             continue
         schema = _report_schema(report)
-        classes = [_item_class(item, section) for item in report.get(section, [])]
+        classes = [_item_class(item, section) for item in report[section]]
         for class_name, limit in policy[key].items():
             actual = sum(1 for item_class in classes if class_name in _lineage(schema, item_class))
             if actual > limit:
@@ -312,7 +415,7 @@ def _check_scope_limits(report: dict[str, Any], policy: dict[str, Any], violatio
     key = "max_modified_change_scope"
     if key not in policy:
         return
-    counts = Counter(item.get("change_scope") for item in report.get("modified", []))
+    counts = Counter(item["change_scope"] for item in report["modified"])
     for scope, limit in policy[key].items():
         actual = counts.get(scope, 0)
         if actual > limit:
@@ -332,8 +435,8 @@ def _check_site_placement(report: dict[str, Any], policy: dict[str, Any], violat
         return
     affected = [
         _modified_entity_ref(item)
-        for item in report.get("modified", [])
-        if _modified_class(item) == "IfcSite" and item.get("aspects", {}).get("placement") == "changed"
+        for item in report["modified"]
+        if _modified_class(item) == "IfcSite" and item["aspects"]["placement"] == "changed"
     ]
     if affected:
         violations.append(
@@ -354,11 +457,11 @@ def _check_placement_limits(report: dict[str, Any], policy: dict[str, Any], viol
 
     schema = _report_schema(report)
     offenders: list[dict[str, Any]] = []
-    for item in report.get("modified", []):
-        delta = item.get("aspects", {}).get("placement_delta_mm")
-        norm = _placement_norm(delta)
-        if norm is None:
+    for item in report["modified"]:
+        delta = item["aspects"]["placement_delta_mm"]
+        if delta is None:
             continue
+        norm = math.hypot(*delta)
         lineage = _lineage(schema, _modified_class(item))
         limit = next((class_limits[name] for name in lineage if name in class_limits), global_limit)
         if limit is None:
@@ -383,8 +486,8 @@ def _check_aspect_bans(report: dict[str, Any], policy: dict[str, Any], violation
     for aspect, classes in policy.get("forbid_aspect_changes", {}).items():
         affected = [
             _modified_entity_ref(item)
-            for item in report.get("modified", [])
-            if item.get("aspects", {}).get(aspect) == "changed" and _class_matches(classes, report, item)
+            for item in report["modified"]
+            if item["aspects"][aspect] == "changed" and _class_matches(classes, report, item)
         ]
         if affected:
             violations.append(
@@ -403,7 +506,7 @@ def _check_property_removal(report: dict[str, Any], policy: dict[str, Any], viol
     if classes is None:
         return
     affected: list[dict[str, Any]] = []
-    for item in report.get("modified", []):
+    for item in report["modified"]:
         if not _class_matches(classes, report, item):
             continue
         removed = (item.get("property_deltas") or {}).get("removed") or []
@@ -429,7 +532,7 @@ def _check_property_removal(report: dict[str, Any], policy: dict[str, Any], viol
 def _check_property_value_changes(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
     for prop_name, classes in policy.get("forbid_property_value_change", {}).items():
         affected: list[dict[str, Any]] = []
-        for item in report.get("modified", []):
+        for item in report["modified"]:
             if not _class_matches(classes, report, item):
                 continue
             changed = (item.get("property_deltas") or {}).get("changed") or []
@@ -461,47 +564,23 @@ def _check_property_value_changes(report: dict[str, Any], policy: dict[str, Any]
 
 
 def _section_count(report: dict[str, Any], section: str) -> int:
-    stats = report.get("stats") or {}
-    value = stats.get(section)
-    if isinstance(value, int):
-        return value
-    rows = report.get(section, [])
-    return len(rows) if isinstance(rows, list) else 0
+    return report["stats"][section]
 
 
 def _item_class(item: dict[str, Any], section: str) -> str:
-    return _modified_class(item) if section == "modified" else item.get("class")
+    return _modified_class(item) if section == "modified" else item["class"]
 
 
 def _report_schema(report: dict[str, Any]) -> str:
-    return (report.get("schemas") or {}).get("new")
+    return report["schemas"]["new"]
 
 
-def _modified_class(item: dict[str, Any]) -> str | None:
-    new = item.get("new") or {}
-    old = item.get("old") or {}
-    return new.get("class") or old.get("class")
+def _modified_class(item: dict[str, Any]) -> str:
+    return item["new"]["class"]
 
 
 def _modified_entity_ref(item: dict[str, Any]) -> dict[str, Any]:
-    new = item.get("new") or {}
-    old = item.get("old") or {}
-    entity = new or old
-    return {
-        "class": entity.get("class"),
-        "step_id": entity.get("step_id"),
-        "guid": entity.get("guid"),
-        "name": entity.get("name"),
-    }
-
-
-def _placement_norm(delta: Any) -> float | None:
-    if not isinstance(delta, (list, tuple)) or len(delta) != 3:
-        return None
-    try:
-        return math.sqrt(sum(float(value) ** 2 for value in delta))
-    except (TypeError, ValueError):
-        return None
+    return {key: item["new"][key] for key in _ENTITY_KEYS}
 
 
 def _class_matches(classes: str | list[str], report: dict[str, Any], item: dict[str, Any]) -> bool:
