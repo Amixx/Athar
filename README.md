@@ -281,8 +281,71 @@ athar git pr-comment \
 Use `--dry-run` to print the Markdown comment body without calling GitHub.
 When `--policy-result athar-check.json` is supplied, the comment includes a
 pass/fail summary from an `athar check` result, but policy enforcement remains
-separate. The checked-in `.github/workflows/athar-pr-diff.yml` workflow shows
-the default pull-request setup using `GITHUB_TOKEN`.
+separate.
+
+To run it in another repository, add `.github/workflows/athar-ifc-diff.yml`.
+It installs the published wheel, comments on pull requests from the same
+repository, and writes the comment to the job summary for fork and Dependabot
+pull requests, whose token cannot comment:
+
+```yaml
+name: Athar IFC PR Diff
+
+on:
+  pull_request:
+    paths: ["**.ifc", "**.IFC"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: athar-ifc-diff-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  athar-ifc-diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - run: python -I -m pip install athar-ifc
+
+      - name: Post IFC diff comment
+        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          athar git pr-comment
+          --base "$BASE_SHA" --head "$HEAD_SHA" --repo "$REPOSITORY" --pr "$PR_NUMBER"
+
+      - name: Write IFC diff to the job summary
+        if: github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]'
+        run: >-
+          athar git pr-comment --dry-run
+          --base "$BASE_SHA" --head "$HEAD_SHA" --repo "$REPOSITORY" --pr "$PR_NUMBER"
+          >> "$GITHUB_STEP_SUMMARY"
+```
+
+`python -I` keeps the checked-out pull request's files off `sys.path`, so a
+`pip/` directory in the pull request cannot replace pip; the `athar` console
+script never imports from the current directory.
+
+This repository's own `.github/workflows/athar-pr-diff.yml` runs the same
+steps against an editable install of the checkout, with pip and cargo caches.
 
 ### Visual 3D Diff Viewer
 
