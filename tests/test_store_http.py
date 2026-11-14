@@ -37,8 +37,10 @@ def server(seeded):
     srv.server_close()
 
 
-def _post_status(server, path: str, data: bytes) -> tuple[int, dict]:
-    request = urllib.request.Request(f"{server.origin}{path}", data=data, method="POST")
+def _post_status(server, path: str, data: bytes, content_type: str = "application/x-step") -> tuple[int, dict]:
+    request = urllib.request.Request(
+        f"{server.origin}{path}", data=data, method="POST", headers={"Content-Type": content_type}
+    )
     try:
         with urllib.request.urlopen(request) as response:
             return response.status, json.loads(response.read())
@@ -48,7 +50,7 @@ def _post_status(server, path: str, data: bytes) -> tuple[int, dict]:
 
 def _decide(server, action: str, review_id: str, actor: str | None = "carol") -> tuple[int, dict]:
     body = json.dumps({"review_id": review_id, "actor": actor}).encode()
-    return _post_status(server, f"/api/projects/acme/models/architecture/{action}", body)
+    return _post_status(server, f"/api/projects/acme/models/architecture/{action}", body, "application/json")
 
 
 def test_decision_on_decided_review_is_409(server, seeded):
@@ -58,7 +60,8 @@ def test_decision_on_decided_review_is_409(server, seeded):
 
     status, body = _decide(server, "reject", review_id)
     assert status == 409
-    assert body["error"] == f"Review {review_id} is already approved by event {approval['id']}."
+    assert body["error"]["code"] == "review_approved"
+    assert body["error"]["message"] == f"Review {review_id} is already approved by event {approval['id']}."
 
 
 def test_missing_or_blank_actor_is_400(server, seeded):
@@ -66,14 +69,14 @@ def test_missing_or_blank_actor_is_400(server, seeded):
     for actor in (None, "  "):
         status, body = _decide(server, "approve", review_id, actor=actor)
         assert status == 400
-        assert "actor is required" in body["error"]
+        assert body["error"]["code"] == "actor_required"
     status, body = _post_status(
         server,
         "/api/projects/acme/models/architecture/review?filename=c.ifc",
         seeded["candidate"].read_bytes(),
     )
     assert status == 400
-    assert "actor is required" in body["error"]
+    assert body["error"]["code"] == "actor_required"
     assert [e["event"] for e in seeded["store"].history("acme")] == ["baseline_set", "review"]
 
 
@@ -91,14 +94,14 @@ def test_engine_refusal_is_422(server, seeded, tmp_path):
             body,
         )
         assert status == 422
-        assert "candidate could not be compared" in payload["error"]
+        assert "candidate could not be compared" in payload["error"]["message"]
     status, payload = _post_status(
         server,
         "/api/projects/acme/models/structure/baseline?actor=dave&filename=s.ifc",
         b"not an IFC file",
     )
     assert status == 422
-    assert "Cannot parse IFC file" in payload["error"]
+    assert "Cannot parse IFC file" in payload["error"]["message"]
     assert [e["event"] for e in seeded["store"].history("acme")] == ["baseline_set", "review"]
 
 
@@ -110,8 +113,10 @@ def test_unreadable_pack_metadata_is_a_store_error(server, seeded, capsys):
     sidecar.write_text(json.dumps({**meta, "format": 99}))
     with pytest.raises(urllib.error.HTTPError) as err:
         urllib.request.urlopen(f"{server.origin}/api/projects/acme/artifacts/{sha}.ifc")
-    assert err.value.code == 400
-    assert "pack format 99" in json.loads(err.value.read())["error"]
+    assert err.value.code == 500
+    error = json.loads(err.value.read())["error"]
+    assert error["code"] == "store_error"
+    assert "pack format 99" in error["message"]
     args = build_store_parser().parse_args(["--root", str(store.root), "stats", "acme"])
     assert run_store(args) == 1
     assert "pack format 99" in capsys.readouterr().err
@@ -121,7 +126,7 @@ def test_report_of_a_non_review_event_is_404(server, seeded):
     with pytest.raises(urllib.error.HTTPError) as err:
         urllib.request.urlopen(f"{server.origin}/api/projects/acme/reviews/evt-000001")
     assert err.value.code == 404
-    assert "not a review" in json.loads(err.value.read())["error"]
+    assert "not a review" in json.loads(err.value.read())["error"]["message"]
 
 
 def test_missing_or_blank_filename_is_400(server, seeded):
@@ -132,5 +137,5 @@ def test_missing_or_blank_filename_is_400(server, seeded):
                 server, f"/api/projects/acme/models/structure/{action}?{query}", body
             )
             assert status == 400
-            assert "filename is required" in payload["error"]
+            assert payload["error"]["code"] == "filename_required"
     assert [e["event"] for e in seeded["store"].history("acme")] == ["baseline_set", "review"]
