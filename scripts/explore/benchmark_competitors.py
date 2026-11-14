@@ -909,7 +909,8 @@ def _run_subprocess(argv: list[str], timeout_s: int) -> dict:
     Peak RSS is the kernel's ``ru_maxrss`` from ``wait4``, which covers the
     process and the descendants it waited for. GB-seconds integrate the summed
     RSS of every live process in the tool's process group (the tool and the
-    descendants that stay in the group it starts), sampled with ``ps``.
+    descendants that stay in the group it starts), sampled with ``ps``. Once the
+    tool is reaped, whatever remains of its group is killed.
     """
     with tempfile.TemporaryFile("w+") as stdout, tempfile.TemporaryFile("w+") as stderr:
         try:
@@ -917,20 +918,20 @@ def _run_subprocess(argv: list[str], timeout_s: int) -> dict:
         except OSError as exc:
             return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
         deadline = time.perf_counter() + timeout_s
-        with _RssTimeSampler(proc.pid) as sampler:
-            while True:
-                pid, wait_status, rusage = os.wait4(proc.pid, os.WNOHANG)
-                if pid:
-                    break
-                if time.perf_counter() > deadline:
-                    try:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    os.wait4(proc.pid, 0)
-                    proc.returncode = -9
-                    return {"status": "timeout", "seconds": timeout_s}
-                time.sleep(0.005)
+        try:
+            with _RssTimeSampler(proc.pid) as sampler:
+                while True:
+                    pid, wait_status, rusage = os.wait4(proc.pid, os.WNOHANG)
+                    if pid:
+                        break
+                    if time.perf_counter() > deadline:
+                        _kill_group(proc.pid)
+                        os.wait4(proc.pid, 0)
+                        proc.returncode = -9
+                        return {"status": "timeout", "seconds": timeout_s}
+                    time.sleep(0.005)
+        finally:
+            _kill_group(proc.pid)
         proc.returncode = os.waitstatus_to_exitcode(wait_status)
         stdout.seek(0)
         stderr.seek(0)
@@ -942,6 +943,13 @@ def _run_subprocess(argv: list[str], timeout_s: int) -> dict:
             "peak_rss_mb": _maxrss_mb(rusage.ru_maxrss),
             "gb_seconds": sampler.gb_seconds(),
         }
+
+
+def _kill_group(pgid: int) -> None:
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 def _maxrss_mb(ru_maxrss: int) -> float:

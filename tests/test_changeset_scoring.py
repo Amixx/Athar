@@ -278,6 +278,26 @@ def test_timeout_kills_the_tools_descendants(tmp_path):
             os.kill(grandchild, 9)
 
 
+def test_descendants_left_after_a_normal_exit_are_killed(tmp_path):
+    pid_file = tmp_path / "grandchild.pid"
+    script = (
+        "import subprocess, sys\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'])\n"
+        f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
+    )
+    completed = bench._run_subprocess([sys.executable, "-c", script], timeout_s=60)
+    assert completed["returncode"] == 0
+    leftover = int(pid_file.read_text())
+    try:
+        deadline = time.monotonic() + 5
+        while _pid_alive(leftover) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _pid_alive(leftover)
+    finally:
+        if _pid_alive(leftover):
+            os.kill(leftover, 9)
+
+
 def test_same_file_pairs_diff_a_copy_at_a_second_path(tmp_path):
     pair = next(pair for pair in bench.BENCHMARK_PAIRS if pair.kind == "same_file")
     old, new, _ = pair.builder(tmp_path)

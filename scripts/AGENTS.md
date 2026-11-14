@@ -48,8 +48,9 @@ Scripts are for inspection and repeatable investigation.
       subprocess through `_run_subprocess`: wall time includes interpreter
       start and imports, peak RSS is `ru_maxrss` from `wait4` (process plus
       waited-for descendants), GB-seconds integrate the sampled summed RSS of
-      the tool's process group. Each tool runs in its own session and a
-      timeout kills the whole group. Same-file
+      the tool's process group. Each tool runs in its own session; after the
+      tool is reaped (normal exit, error exit or timeout) whatever remains of
+      its process group is killed. Same-file
       pairs diff a byte-identical copy at a second path, since
       `diff_files` parses once when both arguments name one file.
     - Run statuses: `ok`, `refused` (Athar's schema refusal), `error`,
