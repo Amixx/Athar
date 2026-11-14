@@ -82,15 +82,15 @@ test('start over loads changed contents under the same file names', async ({ pag
   await page.getByRole('button', { name: 'Start over', exact: true }).click()
   await expect(page.locator('h1')).toContainText('semantic IFC diff viewer')
   const changed = Buffer.from(newBytes.toString().replace('#10=IFCCARTESIANPOINT((0.,0.,0.));', '#10=IFCCARTESIANPOINT((10.,0.,0.));'))
-  const updated = {
-    ...audited,
-    audit: { inputs: { old: { sha256: sha256(oldBytes) }, new: { sha256: sha256(changed) } } },
-  }
+  const updated = structuredClone(audited) as any
+  updated.audit.inputs.new.sha256 = sha256(changed)
+  updated.unchanged[0].new.name = 'Site v2'
   await page.setInputFiles('[data-testid=input-ifc]', [ifc('old.ifc', oldBytes), ifc('new.ifc', changed)])
   await page.setInputFiles('[data-testid=input-report]', json('report.json', updated))
   await waitPhase(page, 'ready')
   const after = await page.evaluate(() => (window as any).__athar_viewer.entityBounds('new', 53))
   expect(after.min[0] - before.min[0]).toBeCloseTo(10, 3)
+  await expect(page.getByTestId('undrawn')).toContainText('Site v2')
 })
 
 async function canvasShot(page: Page): Promise<Buffer> {

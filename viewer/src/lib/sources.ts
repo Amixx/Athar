@@ -273,19 +273,14 @@ export function assignRoles<T extends { file: { name: string }; sha256: string }
   return { verified: false, reason: `${a.file.name} and ${b.file.name} both match the same input of the report.` }
 }
 
-export function chainFromFiles(
-  oldFile: HashedFile,
-  newFile: HashedFile,
-  report: AtharReport,
-  reportHash: string,
-): LoadedChain {
+export function chainFromFiles(oldFile: HashedFile, newFile: HashedFile, report: AtharReport): LoadedChain {
   const step: StepSource = {
     label: `${oldFile.file.name} → ${newFile.file.name}`,
     oldName: oldFile.file.name,
     newName: newFile.file.name,
-    oldKey: `sha256:${oldFile.sha256}`,
-    newKey: `sha256:${newFile.sha256}`,
-    reportKey: `sha256:${reportHash}`,
+    oldKey: 'dropped:old',
+    newKey: 'dropped:new',
+    reportKey: 'dropped:report',
     fetchOldBytes: () => oldFile.file.arrayBuffer(),
     fetchNewBytes: () => newFile.file.arrayBuffer(),
     fetchReport: () => Promise.resolve(report),
@@ -293,14 +288,13 @@ export function chainFromFiles(
   return { steps: [step], activeStep: 0 }
 }
 
-/** Read a dropped report file once: its SHA-256 and the validated report, failing with a message that names it. */
-export async function readReportFile(file: File): Promise<{ report: AtharReport; sha256: string }> {
-  const bytes = await file.arrayBuffer()
+/** Read and validate a dropped report file, failing with a message that names it. */
+export async function readReportFile(file: File): Promise<AtharReport> {
   let json: unknown
   try {
-    json = JSON.parse(new TextDecoder().decode(bytes))
+    json = JSON.parse(await file.text())
   } catch {
     throw new Error(`${file.name} is not valid JSON.`)
   }
-  return { report: parseReport(json), sha256: await sha256Hex(bytes) }
+  return parseReport(json)
 }

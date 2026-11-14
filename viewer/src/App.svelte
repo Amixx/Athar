@@ -44,7 +44,6 @@
   interface UnverifiedPair {
     files: [HashedFile, HashedFile]
     report: AtharReport
-    reportHash: string
     reason: string
     oldIndex: 0 | 1 | null
   }
@@ -138,12 +137,12 @@
     publishDebug({ phase: 'loading' })
     try {
       const [a, b] = await Promise.all(dropped.ifcs.map(hashFile))
-      const { report, sha256: reportHash } = await readReportFile(dropped.reportFile!)
+      const report = await readReportFile(dropped.reportFile!)
       const roles = assignRoles([a, b], reportInputHashes(report))
       if (roles.verified) {
-        startDropped(roles.old, roles.new, report, reportHash)
+        startDropped(roles.old, roles.new, report)
       } else {
-        unverified = { files: [a, b], report, reportHash, reason: roles.reason, oldIndex: null }
+        unverified = { files: [a, b], report, reason: roles.reason, oldIndex: null }
         phase = 'confirm'
         publishDebug({ phase: 'confirm' })
       }
@@ -152,9 +151,9 @@
     }
   }
 
-  function startDropped(oldFile: HashedFile, newFile: HashedFile, report: AtharReport, reportHash: string): void {
+  function startDropped(oldFile: HashedFile, newFile: HashedFile, report: AtharReport): void {
     unverified = null
-    const chain = chainFromFiles(oldFile, newFile, report, reportHash)
+    const chain = chainFromFiles(oldFile, newFile, report)
     steps = chain.steps
     void loadStep(chain.activeStep)
   }
@@ -163,7 +162,7 @@
     if (!unverified || unverified.oldIndex === null) return
     const oldFile = unverified.files[unverified.oldIndex]
     const newFile = unverified.files[1 - unverified.oldIndex]
-    startDropped(oldFile, newFile, unverified.report, unverified.reportHash)
+    startDropped(oldFile, newFile, unverified.report)
   }
 
   function startOver(): void {

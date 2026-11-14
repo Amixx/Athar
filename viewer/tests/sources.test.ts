@@ -116,16 +116,13 @@ describe('addDroppedFiles', () => {
 })
 
 describe('chainFromFiles', () => {
-  it('keys models and reports by content, not file names or the model pair', async () => {
+  it('serves each dropped file under its own role', async () => {
     const a = await hashFile(new File(['first'], 'same.ifc'))
     const b = await hashFile(new File(['second'], 'same.ifc'))
-    const copy = await hashFile(new File(['first'], 'renamed.ifc'))
-    const first = chainFromFiles(a, b, {} as AtharReport, 'report-a').steps[0]
-    const second = chainFromFiles(copy, b, {} as AtharReport, 'report-b').steps[0]
-    expect(first.oldKey).not.toBe(first.newKey)
-    expect(first.oldKey).toBe(second.oldKey)
-    expect(first.reportKey).not.toBe(second.reportKey)
-    expect(await first.fetchOldBytes()).toEqual(await a.file.arrayBuffer())
+    const step = chainFromFiles(a, b, {} as AtharReport).steps[0]
+    expect(step.oldKey).not.toBe(step.newKey)
+    expect(await step.fetchOldBytes()).toEqual(await a.file.arrayBuffer())
+    expect(await step.fetchNewBytes()).toEqual(await b.file.arrayBuffer())
   })
 })
 
@@ -219,11 +216,9 @@ describe('dataUrl', () => {
 describe('readReportFile', () => {
   const minimal = { engine: 'athar', schemas: { old: 'IFC4', new: 'IFC4' }, added: [], deleted: [], modified: [], unchanged: [] }
 
-  it('returns the parsed report and the hash of the bytes it parsed', async () => {
-    const bytes = new TextEncoder().encode(JSON.stringify(minimal))
-    const read = await readReportFile(new File([bytes], 'report.json'))
-    expect(read.report.engine).toBe('athar')
-    expect(read.sha256).toBe(await sha256Hex(bytes.buffer as ArrayBuffer))
+  it('returns the validated report', async () => {
+    const read = await readReportFile(new File([JSON.stringify(minimal)], 'report.json'))
+    expect(read.engine).toBe('athar')
   })
 
   it('names the file when it is not JSON and rejects a JSON file that is not a report', async () => {
