@@ -88,6 +88,10 @@ describe('parseManifest', () => {
     expect(() => parseManifest(missingUrl)).toThrow()
   })
 
+  it('rejects a protocol-relative file url', () => {
+    expect(() => parseManifest({ ...singlePair, old: { url: '//elsewhere.example/x.ifc' } })).toThrow('protocol-relative')
+  })
+
   it('rejects a single-pair manifest missing a section', () => {
     expect(() => parseManifest({ athar_viewer_manifest: 1, old: { url: '/o' } })).toThrow()
   })

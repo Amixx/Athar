@@ -60,7 +60,9 @@ objects) are listed under it and open in the inspector when clicked.
    both caches and the scene.
 2. **`?src=<origin>`**: fetches `<origin>/manifest.json`
    (`athar_viewer_manifest: 1`, `schema_version` handshake) and the files it
-   points at. This is what `athar view` (in `athar_view/`) serves. `src` may
+   points at. This is what `athar view` (in `athar_view/`) serves. `src` is the
+   url of the directory that contains `manifest.json`, not of the file itself.
+   A protocol-relative manifest file url (`//host/...`) is a load error. `src` may
    carry a path prefix and query (for example an access token): every data
    url, manifest file urls with a leading slash included, resolves under the
    src path and carries the src's query parameters, plus the page's when the

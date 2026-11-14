@@ -3,7 +3,8 @@
  * `?src=<origin>` manifest fetch used by the `athar view` CLI hand-off.
  * Manifest file urls resolve under the src path (see `dataUrl`).
  *
- * Manifest contract (served by athar_view at <src>/manifest.json):
+ * Manifest contract (served by athar_view at <src>/manifest.json, so `src`
+ * is the url of the directory that contains manifest.json, not of the file):
  *
  * Schema 1 — single pair:
  * {
@@ -23,6 +24,9 @@
  *      "old": {...}, "new": {...}, "report": {...}}, ...],
  *   "active_step": 0
  * }
+ *
+ * A file url is absolute or resolves under the src path; a protocol-relative
+ * url (`//host/...`) makes the manifest invalid.
  *
  * Adjacent steps share a file (rN is new-side of one step, old-side of the
  * next); the server gives that file one stable url, so a per-url mesh cache in
@@ -79,6 +83,9 @@ function parseFile(value: unknown, ctx: string): ManifestFile {
     throw new ManifestFormatError(`manifest ${ctx} is missing a url.`)
   }
   const file = value as Record<string, unknown>
+  if ((file.url as string).startsWith('//')) {
+    throw new ManifestFormatError(`manifest ${ctx} url ${JSON.stringify(file.url)} is protocol-relative.`)
+  }
   return { url: file.url as string, name: typeof file.name === 'string' ? file.name : undefined }
 }
 
