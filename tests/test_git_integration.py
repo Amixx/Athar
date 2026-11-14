@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import re
 import shlex
 import shutil
 import stat
@@ -19,6 +20,7 @@ import athar_git.pr_bot as pr_bot
 from athar.bottom.constants import CANON_VERSION
 from athar.bottom.types import Coverage, ParseDiagnostics, SignatureBundle
 from athar_git.render import render_markdown_report, render_text_report
+from tests.test_report_semantics import diff, guid, raise_building, reclassify
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TINY_IFC = REPO_ROOT / "tests" / "fixtures" / "tiny_no_products.ifc"
@@ -82,6 +84,106 @@ def test_render_text_report_summarizes_counts_classes_and_modified_details():
     assert "data: IfcPropertySingleValue[FireRating].NominalValue: IfcLabel: 90 -> IfcLabel: 60" in rendered
     assert '+ IfcDoor "D-1" #20' in rendered
     assert "- IfcWindow #30" in rendered
+
+
+def _recontain_w1(model):
+    w1 = model["W1"]
+    model.containment["L1"].RelatedElements = [model["W2"]]
+    model.containment["L2"].RelatedElements = [model["W3"], w1]
+
+
+def _item_block(text: str, header: str) -> list[str]:
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(header))
+    block = [lines[start]]
+    for line in lines[start + 1 :]:
+        if not line.startswith("  "):
+            break
+        block.append(line)
+    return block
+
+
+def test_render_text_report_shows_a_recontained_element(tmp_path):
+    text = render_text_report(diff(tmp_path, _recontain_w1))
+
+    block = _item_block(text, '~ IfcWall "W1"')
+    assert block[0].endswith("[relations]")
+    [line] = [line for line in block if line.startswith("  relation:")]
+    assert re.fullmatch(
+        r"  relation: IfcRelContainedInSpatialStructure RelatingStructure: "
+        r'IfcBuildingStorey "L1" #\d+ -> IfcBuildingStorey "L2" #\d+',
+        line,
+    )
+
+
+def test_render_text_report_shows_a_reclassified_element(tmp_path):
+    text = render_text_report(diff(tmp_path, lambda model: reclassify(model, "W1", "IfcBuildingElementProxy")))
+
+    block = _item_block(text, '~ IfcBuildingElementProxy "W1"')
+    assert "class" in block[0]
+    assert "  class: IfcWall -> IfcBuildingElementProxy" in block
+
+
+def test_render_text_report_names_the_ancestor_a_placement_moved_with(tmp_path):
+    text = render_text_report(diff(tmp_path, raise_building))
+
+    assert '6 elements moved by (0, 0, 0.5) m' in text
+    assert '~ IfcWall "W1"' not in text
+
+    def move_and_edit(model):
+        raise_building(model)
+        model["W1"].Description = "edited"
+
+    text = render_text_report(diff(tmp_path, move_and_edit))
+    block = _item_block(text, '~ IfcWall "W1"')
+    assert '  moved with: IfcBuilding "B" #' in "\n".join(block)
+    assert not any(line.startswith('~ IfcBuilding "B"') for line in text.splitlines())
+
+
+def test_render_text_report_shows_regenerated_global_ids(tmp_path):
+    def regenerate_and_move(model):
+        model["W3"].GlobalId = guid("W3 again")
+        _recontain_w1(model)
+        model["W1"].GlobalId = guid("W1 again")
+
+    text = render_text_report(diff(tmp_path, regenerate_and_move))
+
+    assert "Regenerated GlobalIds: 2" in text.splitlines()
+    block = _item_block(text, '~ IfcWall "W1"')
+    assert f"  GlobalId: {guid('W1')} -> {guid('W1 again')}" in block
+
+
+def test_render_text_report_omits_the_regenerated_line_when_no_id_changed(tmp_path):
+    text = render_text_report(diff(tmp_path, lambda model: None))
+
+    assert "Regenerated GlobalIds" not in text
+
+
+def test_render_text_report_does_not_say_no_changes_when_only_ids_were_regenerated(tmp_path):
+    def regenerate(model):
+        model["W3"].GlobalId = guid("W3 again")
+
+    text = render_text_report(diff(tmp_path, regenerate))
+
+    assert "Regenerated GlobalIds: 1" in text.splitlines()
+    assert "No semantic entity changes." not in text
+
+
+def test_render_markdown_report_states_regenerated_global_ids_without_other_changes(tmp_path):
+    def regenerate(model):
+        model["W3"].GlobalId = guid("W3 again")
+
+    markdown = render_markdown_report(diff(tmp_path, regenerate))
+
+    assert "Regenerated GlobalIds: 1" in markdown.splitlines()
+    assert "No semantic entity changes." not in markdown
+
+
+def test_render_markdown_report_says_no_changes_when_no_id_changed(tmp_path):
+    markdown = render_markdown_report(diff(tmp_path, lambda model: None))
+
+    assert "No semantic entity changes." in markdown
+    assert "Regenerated GlobalIds" not in markdown
 
 
 def test_render_text_report_caps_changed_items():
@@ -247,6 +349,24 @@ def test_cache_refuses_a_directory_others_can_write_before_unpickling(tmp_path, 
     with pytest.raises(PermissionError, match="writable by group or others"):
         cache_mod.load_or_build_bundle(TINY_IFC, cache_dir=cache_dir)
     assert not marker.exists()
+
+
+def test_cache_rejects_a_directory_naming_the_path(tmp_path):
+    with pytest.raises(OSError) as raised:
+        cache_mod.load_or_build_bundle(tmp_path, cache_dir=tmp_path / "cache")
+
+    assert str(tmp_path) in str(raised.value)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="os.mkfifo is unavailable")
+def test_cache_rejects_a_fifo_without_blocking(tmp_path):
+    fifo = tmp_path / "pipe.ifc"
+    os.mkfifo(fifo)
+
+    with pytest.raises(OSError) as raised:
+        cache_mod.load_or_build_bundle(fifo, cache_dir=tmp_path / "cache")
+
+    assert str(fifo) in str(raised.value)
 
 
 def test_git_diff_external_mode_uses_blob_cache_keys(tmp_path, monkeypatch, capsys):
@@ -672,22 +792,3 @@ def test_lfs_pointer_miss_smudges_and_verifies(tmp_path, monkeypatch):
     assert result.hit is False
     assert result.key == f"sha256-{oid}"
     assert built == [content]
-
-
-def test_cache_rejects_a_directory_naming_the_path(tmp_path):
-    with pytest.raises(OSError) as raised:
-        cache_mod.load_or_build_bundle(tmp_path, cache_dir=tmp_path / "cache")
-
-    assert str(tmp_path) in str(raised.value)
-
-
-@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="os.mkfifo is unavailable")
-def test_cache_rejects_a_fifo_without_blocking(tmp_path):
-    fifo = tmp_path / "pipe.ifc"
-    os.mkfifo(fifo)
-
-    with pytest.raises(OSError) as raised:
-        cache_mod.load_or_build_bundle(fifo, cache_dir=tmp_path / "cache")
-
-    assert str(fifo) in str(raised.value)
-

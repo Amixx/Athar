@@ -18,11 +18,21 @@ export interface Aspects {
   data: AspectState
   topology: AspectState
   placement: AspectState
+  relations: AspectState
+  class: AspectState
   /** Translation delta (dx, dy, dz) in millimetres, or null when either side lacks a placement. */
   placement_delta_mm: [number, number, number] | null
 }
 
 export type ChangeScope = 'intrinsic' | 'transitive' | 'mixed' | 'none'
+
+/** One relationship whose target differs: the entities only the old or only the new side names. */
+export interface RelationChange {
+  relation: string
+  role: string
+  old: EntitySummary[]
+  new: EntitySummary[]
+}
 
 export interface MatchedItem {
   old: EntitySummary
@@ -31,6 +41,12 @@ export interface MatchedItem {
   aspects: Aspects
   data_hash: { old: string; new: string }
   change_scope: ChangeScope
+  relations?: RelationChange[]
+  class?: { old_class: string; new_class: string }
+  /** Nearest ancestor whose own placement change this entity's placement change follows. */
+  moved_with?: EntitySummary
+  /** Present when the pair matched by content and its GlobalId was regenerated. */
+  identity?: { guid_changed: boolean; old_guid: string; new_guid: string }
 }
 
 /**

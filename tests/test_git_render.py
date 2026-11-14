@@ -87,6 +87,13 @@ def test_render_text_orders_sections_and_summarizes_placement_cohort():
     assert 'IfcWall #14 [data]' in body and 'P.Rating: A -> B' in body
     assert body.count('placement vector:') == 1
     assert 'placement vector: (-1, 2.5, 0) m' in body
+    member = report['modified'][0]
+    for aspect in ('relations', 'class'):
+        member['aspects'][aspect] = 'changed'
+        assert f'IfcWall #13 [{aspect}]' in render_text_report(report)
+        del member['aspects'][aspect]
+    member['identity'] = {'guid_changed': True, 'old_guid': 'old', 'new_guid': 'new'}
+    assert '  GlobalId: old -> new' in render_text_report(report)
 
 
 def test_render_text_only_explains_non_guid_matches():
