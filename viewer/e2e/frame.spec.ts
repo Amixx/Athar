@@ -3,7 +3,8 @@
  * world coordinate. The tessellator subtracts a different RTC offset from each
  * file (the two models have different extents), so the viewer must translate
  * one model into the other's frame. Bounds come from the
- * `window.__athar_viewer.entityBounds` probe, so no pixels are read.
+ * `window.__athar_viewer.entityBounds` and `drawnBounds` probes, so no pixels
+ * are read.
  */
 
 import { createServer, type Server } from 'node:http'
@@ -75,6 +76,10 @@ test('models with different RTC offsets share one frame', async ({ page }) => {
         translations: state.frameTranslations,
         wallA: { old: state.entityBounds('old', wallA), new: state.entityBounds('new', wallA) },
         wallB: { old: state.entityBounds('old', wallB), new: state.entityBounds('new', wallB) },
+        drawn: {
+          wallA: state.drawnBounds('new', wallA),
+          wallB: { old: state.drawnBounds('old', wallB), new: state.drawnBounds('new', wallB) },
+        },
       }
     },
     [WALL_A, WALL_B],
@@ -90,4 +95,16 @@ test('models with different RTC offsets share one frame', async ({ page }) => {
   // WallB moved +1 m along IFC x, which is scene x.
   expect(probe.wallB.new.min[0] - probe.wallB.old.min[0]).toBeCloseTo(1, 3)
   expect(probe.wallB.new.min[2]).toBeCloseTo(probe.wallB.old.min[2], 3)
+
+  // The scene draws each mesh where the frame probe puts it.
+  const drawnPairs = [
+    [probe.drawn.wallA, probe.wallA.new],
+    [probe.drawn.wallB.old, probe.wallB.old],
+    [probe.drawn.wallB.new, probe.wallB.new],
+  ]
+  for (const [drawn, expected] of drawnPairs) {
+    for (const corner of ['min', 'max'] as const) {
+      for (let axis = 0; axis < 3; axis++) expect(drawn[corner][axis]).toBeCloseTo(expected[corner][axis], 3)
+    }
+  }
 })

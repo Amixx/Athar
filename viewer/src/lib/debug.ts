@@ -31,6 +31,8 @@ export interface ViewerDebugState {
   frameTranslations?: Record<Side, Vec3>
   /** Scene-space bounds of one entity's meshes as drawn, whether or not its bucket renders that side. */
   entityBounds?: (side: Side, stepId: number) => Bounds | null
+  /** Scene-space bounds of one entity as the scene built it, or null when that side is not drawn. */
+  drawnBounds?: (side: Side, stepId: number) => Bounds | null
 }
 
 declare global {

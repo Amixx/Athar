@@ -324,6 +324,10 @@
           const meshes = geometries[side].byEntity.get(stepId)
           return meshes ? entityBounds(meshes, translations[side]) : null
         },
+        drawnBounds: (side: Side, stepId: number) => {
+          const box = scene?.entityBox(side, stepId)
+          return box ? { min: box.min.toArray(), max: box.max.toArray() } : null
+        },
       })
     } catch (cause) {
       if (token === loadSeq) fail(cause)
