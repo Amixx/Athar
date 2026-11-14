@@ -21,6 +21,7 @@ import json
 import os
 import platform
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -911,7 +912,7 @@ def _run_subprocess(argv: list[str], timeout_s: int) -> dict:
     """
     with tempfile.TemporaryFile("w+") as stdout, tempfile.TemporaryFile("w+") as stderr:
         try:
-            proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr, text=True)
+            proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr, text=True, start_new_session=True)
         except OSError as exc:
             return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
         deadline = time.perf_counter() + timeout_s
@@ -921,7 +922,10 @@ def _run_subprocess(argv: list[str], timeout_s: int) -> dict:
                 if pid:
                     break
                 if time.perf_counter() > deadline:
-                    proc.kill()
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                     os.wait4(proc.pid, 0)
                     proc.returncode = -9
                     return {"status": "timeout", "seconds": timeout_s}

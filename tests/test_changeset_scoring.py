@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -233,6 +235,35 @@ def test_peak_rss_covers_descendant_processes():
     completed = bench._run_subprocess([sys.executable, "-c", spawn], timeout_s=60)
     assert completed["returncode"] == 0
     assert completed["peak_rss_mb"] >= 200
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_timeout_kills_the_tools_descendants(tmp_path):
+    pid_file = tmp_path / "grandchild.pid"
+    script = (
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'])\n"
+        f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
+        "time.sleep(300)\n"
+    )
+    completed = bench._run_subprocess([sys.executable, "-c", script], timeout_s=2)
+    assert completed["status"] == "timeout"
+    grandchild = int(pid_file.read_text())
+    try:
+        deadline = time.monotonic() + 5
+        while _pid_alive(grandchild) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _pid_alive(grandchild)
+    finally:
+        if _pid_alive(grandchild):
+            os.kill(grandchild, 9)
 
 
 def test_same_file_pairs_diff_a_copy_at_a_second_path(tmp_path):
