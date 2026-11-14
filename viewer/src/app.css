@@ -16,6 +16,7 @@
   --c-mod: #5472e4;
   --c-transitive: #a87a3c;
   --c-unch: #8b8d98;
+  --c-extra: #d6409f;
 
   --sans: -apple-system, 'Segoe UI', 'Inter', Roboto, sans-serif;
   --mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
@@ -194,6 +195,7 @@ button.active {
 .dot.mod { background: var(--c-mod); }
 .dot.transitive { background: var(--c-transitive); opacity: 0.6; }
 .dot.unch { background: var(--c-unch); opacity: 0.55; }
+.dot.extra { background: var(--c-extra); }
 
 /* ---------- slider bar ---------- */
 
@@ -338,6 +340,20 @@ button.active {
 .classrow .nums .d { color: var(--c-del); }
 .classrow .nums .m { color: var(--c-mod); }
 
+.legendrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.legendrow > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .footnote {
   color: var(--text-faint);
   font-size: 11.5px;
@@ -389,6 +405,7 @@ button.active {
 .badge.added { background: rgba(48, 164, 108, 0.18); color: var(--c-add); }
 .badge.modified { background: rgba(84, 114, 228, 0.2); color: #8da4f0; }
 .badge.unchanged { background: rgba(139, 141, 152, 0.16); color: var(--c-unch); }
+.badge.extra { background: rgba(214, 64, 159, 0.18); color: var(--c-extra); }
 
 .kv {
   display: grid;

@@ -24,7 +24,8 @@
  * - unchanged    new side only (old copy is geometrically identical), gray,
  *                ghosted, constant across the slider
  * - extra        new-side meshes with no report record (e.g. products the
- *                engine doesn't signature) — treated like unchanged.
+ *                engine doesn't signature), magenta and separately toggleable:
+ *                the report makes no claim about them.
  *
  * Old-side meshes for unchanged/extra entities are not rendered at all to
  * avoid duplicate coincident geometry.
@@ -75,7 +76,7 @@ export const BUCKET_COLORS: Record<Bucket, string> = {
   // Transitive (indirect) changes: warm bronze, distinct from the blue of direct edits.
   transitive: '#a87a3c',
   unchanged: '#8b8d98',
-  extra: '#8b8d98',
+  extra: '#d6409f',
 }
 
 /** Slider snap points (Onshape-style old → new sweep). */
@@ -92,9 +93,9 @@ export const TRANSITIVE_OPACITY = 0.5
  */
 export function bucketFor(side: Side, rec: EntityRecord | undefined): Bucket | null {
   if (rec === undefined) {
-    // Mesh without a report record: render the new-side copy as uncategorized
-    // gray; skip the old-side copy (it would coincide when nothing changed,
-    // and we have no identity evidence to do better).
+    // Mesh without a report record: render the new-side copy only; the old-side
+    // copy would coincide when nothing changed, and there is no identity
+    // evidence to pair them.
     return side === 'new' ? 'extra' : null
   }
   switch (rec.section) {
@@ -131,6 +132,7 @@ export interface Toggles {
   unchanged: boolean
   /** Ghost (translucent) unchanged geometry instead of solid gray. */
   ghostUnchanged: boolean
+  extra: boolean
 }
 
 export const DEFAULT_TOGGLES: Toggles = {
@@ -140,6 +142,7 @@ export const DEFAULT_TOGGLES: Toggles = {
   transitive: true,
   unchanged: true,
   ghostUnchanged: false,
+  extra: true,
 }
 
 export interface Appearance {
@@ -170,7 +173,7 @@ export function computeAppearances(t: number, toggles: Toggles): Record<Bucket, 
     modifiedStatic: appearance('modifiedStatic', toggles.modified, 1),
     transitive: appearance('transitive', toggles.transitive, TRANSITIVE_OPACITY),
     unchanged: appearance('unchanged', toggles.unchanged, ghost),
-    extra: appearance('extra', toggles.unchanged, ghost),
+    extra: appearance('extra', toggles.extra, 1),
   }
 }
 

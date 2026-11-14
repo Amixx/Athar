@@ -61,6 +61,7 @@
   let dragging = $state(false)
   let selection = $state<PickHit | null>(null)
   let meshless = $state(0)
+  let extraCount = $state(0)
 
   let index = $state<DiffIndex | null>(null)
   let scene: DiffScene | null = null
@@ -170,6 +171,7 @@
     reportCache.clear()
     steps = []
     index = null
+    extraCount = 0
     drops = NO_DROPS
     unverified = null
     publishDebug({ phase: 'empty', error: undefined })
@@ -259,6 +261,7 @@
         newGeometry.byEntity.keys(),
         bucketOfFn,
       )
+      extraCount = bucketEntityCounts.extra ?? 0
       const meshlessBySection = countMeshless(
         report,
         (id) => oldGeometry.byEntity.has(id),
@@ -347,7 +350,7 @@
 
   function sectionOf(record: EntityRecord | null, hit: PickHit | null): string {
     if (record) return record.section
-    if (hit?.bucket === 'extra') return 'unchanged'
+    if (hit?.bucket === 'extra') return 'extra'
     return ''
   }
 
@@ -492,6 +495,11 @@
           {/each}
         </div>
       {/if}
+      <div class="legendrow" data-testid="legend-extra">
+        <span><i class="dot extra"></i>Extra</span>
+        <span class="mono">{extraCount} drawn</span>
+      </div>
+      <div class="footnote">Extra: drawn in the new model, but the report has no record of it.</div>
       {#if meshless > 0}
         <div class="footnote">{meshless} report entit{meshless === 1 ? 'y has' : 'ies have'} no 3D geometry (spatial containers etc.) — counted above, not drawn.</div>
       {/if}
@@ -554,7 +562,7 @@
             </dl>
           {/if}
         {:else if !selectedRecord}
-          <p class="footnote">Not in the report — the engine does not signature this entity (no identity evidence). Shown gray.</p>
+          <p class="footnote">Not in the report: the diff says nothing about this entity. Drawn in the Extra colour.</p>
         {/if}
       </aside>
     {/if}
@@ -578,6 +586,9 @@
       </button>
       <button class:off={!toggles.unchanged} onclick={() => (toggles.unchanged = !toggles.unchanged)}>
         <i class="dot unch"></i>Unchanged
+      </button>
+      <button class:off={!toggles.extra} onclick={() => (toggles.extra = !toggles.extra)}>
+        <i class="dot extra"></i>Extra
       </button>
       <div class="sep"></div>
       <button class:off={!toggles.ghostUnchanged} onclick={() => (toggles.ghostUnchanged = !toggles.ghostUnchanged)}>

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'bun:test'
 
 import { buildDiffIndex, classBreakdown, parseReport, ReportFormatError } from '../src/lib/report'
 import {
+  ALL_BUCKETS,
+  BUCKET_COLORS,
   bucketFor,
   computeAppearances,
   DEFAULT_TOGGLES,
@@ -187,6 +189,7 @@ describe('computeAppearances', () => {
       deleted: false,
       modified: false,
       unchanged: false,
+      extra: false,
     })
     expect(app.deleted.visible).toBe(false)
     expect(app.modifiedOld.visible).toBe(false)
@@ -214,13 +217,28 @@ describe('computeAppearances', () => {
   it('renders unchanged solid when ghosting is off', () => {
     const app = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, ghostUnchanged: false })
     expect(app.unchanged.opacity).toBe(1)
-    expect(app.extra.opacity).toBe(1)
   })
 
   it('ghosts unchanged only when explicitly enabled', () => {
     const app = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, ghostUnchanged: true })
     expect(app.unchanged.opacity).toBe(GHOST_OPACITY)
-    expect(app.extra.opacity).toBe(GHOST_OPACITY)
+  })
+})
+
+describe('extra bucket', () => {
+  it('has a colour of its own', () => {
+    const others = ALL_BUCKETS.filter((bucket) => bucket !== 'extra').map((bucket) => BUCKET_COLORS[bucket])
+    expect(others).not.toContain(BUCKET_COLORS.extra)
+  })
+
+  it('toggles independently of unchanged and is never ghosted', () => {
+    const hidden = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, extra: false, ghostUnchanged: true })
+    expect(hidden.extra.visible).toBe(false)
+    expect(hidden.unchanged.visible).toBe(true)
+    const shown = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, unchanged: false, ghostUnchanged: true })
+    expect(shown.extra.visible).toBe(true)
+    expect(shown.extra.opacity).toBe(1)
+    expect(shown.unchanged.visible).toBe(false)
   })
 })
 

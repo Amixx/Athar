@@ -36,7 +36,9 @@ is the only JavaScript in the repository; everything else stays Python.
 Every report entity lands in exactly one visual bucket — `deleted`, `added`,
 `modifiedOld`, `modifiedNew`, `modifiedStatic` (modified pairs with identical
 geometry+placement, rendered once to avoid z-fighting), `unchanged` (new side
-only), or `extra` (meshes the report doesn't mention). Each bucket is one
+only), or `extra` (new-side meshes the report doesn't mention, drawn magenta
+with their own toggle and legend count, since the diff makes no claim about
+them). Each bucket is one
 merged `THREE.Mesh`, so slider drags update O(buckets) materials regardless of
 entity count; per-entity index ranges drive raycast picking and a zero-copy
 highlight overlay.

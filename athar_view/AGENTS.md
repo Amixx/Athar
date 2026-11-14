@@ -5,7 +5,8 @@ bundle cache; nothing in `athar/` may depend on it.
 
 Onshape-style visual overlay diff: both models tessellated in the browser and
 rendered in one 3D scene, colored by the engine's report (green added, red
-deleted, blue modified, gray ghosted unchanged), with an old↔new crossfade
+deleted, blue modified, gray unchanged, magenta `extra` for meshes the report
+has no record of), with an old↔new crossfade
 slider, amber displacement arrows for placement moves (each engine
 `placement_cohort` — a group move — collapses to one averaged arrow, and the
 summary panel lists cohorts as "N moved together, Δ x m"), a summary panel,
