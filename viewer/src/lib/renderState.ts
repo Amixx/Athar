@@ -32,7 +32,7 @@
  */
 
 import type { EntityRecord } from './report'
-import type { AtharReport, MatchedItem, PlacementCohort, Section, Side } from './types'
+import type { AtharReport, EntitySummary, MatchedItem, PlacementCohort, Side } from './types'
 
 export type Bucket =
   | 'deleted'
@@ -246,22 +246,62 @@ export function countBucketEntities(
   return counts
 }
 
+/** Legend rows that count report entities; `extra` meshes have no report record. */
+export type ReportKey = 'added' | 'deleted' | 'modified' | 'transitive' | 'unchanged'
+
+export const REPORT_KEYS: ReportKey[] = ['added', 'deleted', 'modified', 'transitive', 'unchanged']
+
+export interface UndrawnEntity {
+  key: ReportKey
+  side: Side
+  stepId: number
+  name: string | null
+  klass: string
+}
+
+export interface ReportCoverage {
+  inReport: Record<ReportKey, number>
+  drawn: Record<ReportKey, number>
+  /** Report entities none of whose meshes the scene renders, in report order. */
+  undrawn: UndrawnEntity[]
+}
+
 /**
- * Report entities per section whose rendering side produced no meshes
- * (spatial containers, products without Body representation, …). These are
- * still listed in panels; they just cannot be colored in 3D.
+ * Report entities per legend row, and which of them the scene draws: an entity
+ * is drawn when one of its sides has meshes and that side maps to a bucket.
  */
-export function countMeshless(
+export function reportCoverage(
   report: AtharReport,
-  oldHas: (stepId: number) => boolean,
-  newHas: (stepId: number) => boolean,
-): Record<Section, number> {
-  const counts: Record<Section, number> = { added: 0, deleted: 0, modified: 0, unchanged: 0 }
-  for (const summary of report.added) if (!newHas(summary.step_id)) counts.added += 1
-  for (const summary of report.deleted) if (!oldHas(summary.step_id)) counts.deleted += 1
-  for (const item of report.modified) {
-    if (!newHas(item.new.step_id) && !oldHas(item.old.step_id)) counts.modified += 1
+  hasMeshes: (side: Side, stepId: number) => boolean,
+  bucketOfFn: (side: Side, stepId: number) => Bucket | null,
+): ReportCoverage {
+  const zero = (): Record<ReportKey, number> => ({ added: 0, deleted: 0, modified: 0, transitive: 0, unchanged: 0 })
+  const coverage: ReportCoverage = { inReport: zero(), drawn: zero(), undrawn: [] }
+  const visit = (key: ReportKey, sides: Array<[Side, EntitySummary]>) => {
+    coverage.inReport[key] += 1
+    const drawn = sides.some(
+      ([side, summary]) => hasMeshes(side, summary.step_id) && bucketOfFn(side, summary.step_id) !== null,
+    )
+    if (drawn) {
+      coverage.drawn[key] += 1
+      return
+    }
+    const [side, summary] = sides[sides.length - 1]
+    coverage.undrawn.push({ key, side, stepId: summary.step_id, name: summary.name, klass: summary.class })
   }
-  for (const item of report.unchanged) if (!newHas(item.new.step_id)) counts.unchanged += 1
-  return counts
+  for (const summary of report.added) visit('added', [['new', summary]])
+  for (const summary of report.deleted) visit('deleted', [['old', summary]])
+  for (const item of report.modified) {
+    visit(item.change_scope === 'transitive' ? 'transitive' : 'modified', [
+      ['old', item.old],
+      ['new', item.new],
+    ])
+  }
+  for (const item of report.unchanged) {
+    visit('unchanged', [
+      ['old', item.old],
+      ['new', item.new],
+    ])
+  }
+  return coverage
 }

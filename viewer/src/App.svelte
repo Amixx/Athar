@@ -14,14 +14,17 @@
     bucketFor,
     computeAppearances,
     countBucketEntities,
-    countMeshless,
+    REPORT_KEYS,
+    reportCoverage,
     DEFAULT_TOGGLES,
     groupDisplacements,
     isPlacementOnly,
     SNAP,
+    type ReportCoverage,
+    type ReportKey,
     type Toggles,
   } from './lib/renderState'
-  import { DiffScene, type PickHit } from './lib/scene'
+  import { DiffScene } from './lib/scene'
   import {
     addDroppedFiles,
     assignRoles,
@@ -59,9 +62,17 @@
   let toggles = $state<Toggles>({ ...DEFAULT_TOGGLES })
   let showLines = $state(true)
   let dragging = $state(false)
-  let selection = $state<PickHit | null>(null)
-  let meshless = $state(0)
+  let selection = $state<{ side: Side; stepId: number } | null>(null)
+  let coverage = $state<ReportCoverage | null>(null)
   let extraCount = $state(0)
+
+  const REPORT_KEY_LEGEND: Record<ReportKey, { label: string; dot: string }> = {
+    added: { label: 'Added', dot: 'add' },
+    deleted: { label: 'Deleted', dot: 'del' },
+    modified: { label: 'Direct', dot: 'mod' },
+    transitive: { label: 'Indirect', dot: 'transitive' },
+    unchanged: { label: 'Unchanged', dot: 'unch' },
+  }
 
   let index = $state<DiffIndex | null>(null)
   let scene: DiffScene | null = null
@@ -171,6 +182,7 @@
     reportCache.clear()
     steps = []
     index = null
+    coverage = null
     extraCount = 0
     drops = NO_DROPS
     unverified = null
@@ -262,12 +274,7 @@
         bucketOfFn,
       )
       extraCount = bucketEntityCounts.extra ?? 0
-      const meshlessBySection = countMeshless(
-        report,
-        (id) => oldGeometry.byEntity.has(id),
-        (id) => newGeometry.byEntity.has(id),
-      )
-      meshless = Object.values(meshlessBySection).reduce((a, b) => a + b, 0)
+      coverage = reportCoverage(report, (side, stepId) => geometries[side].byEntity.has(stepId), bucketOfFn)
 
       if (!scene) {
         try {
@@ -298,7 +305,7 @@
         rendererReady,
         warning,
         bucketEntityCounts,
-        meshlessBySection,
+        reportCoverage: coverage,
         reportStats: report.stats as Record<string, unknown>,
         displacementLines,
         selection: null,
@@ -341,17 +348,11 @@
     select(scene.pick(event.clientX, event.clientY))
   }
 
-  function select(hit: PickHit | null): void {
-    selection = hit
-    scene?.setHighlight(hit ? { side: hit.side, stepId: hit.stepId } : null)
-    publishDebug({ selection: hit ? { side: hit.side, stepId: hit.stepId } : null })
+  function select(target: { side: Side; stepId: number } | null): void {
+    selection = target
+    scene?.setHighlight(target)
+    publishDebug({ selection: target })
     requestAnimationFrame(() => publishDebug({ rendererMemory: scene?.memoryInfo() }))
-  }
-
-  function sectionOf(record: EntityRecord | null, hit: PickHit | null): string {
-    if (record) return record.section
-    if (hit?.bucket === 'extra') return 'extra'
-    return ''
   }
 
   function fmtDelta(mm: [number, number, number] | null): string {
@@ -495,13 +496,33 @@
           {/each}
         </div>
       {/if}
-      <div class="legendrow" data-testid="legend-extra">
-        <span><i class="dot extra"></i>Extra</span>
-        <span class="mono">{extraCount} drawn</span>
+      <span class="microlabel">legend</span>
+      <div class="legendrows">
+        {#if coverage}
+          {#each REPORT_KEYS as key (key)}
+            <div class="legendrow" data-testid="legend-{key}">
+              <span><i class="dot {REPORT_KEY_LEGEND[key].dot}"></i>{REPORT_KEY_LEGEND[key].label}</span>
+              <span class="mono">{coverage.inReport[key]} in report, {coverage.drawn[key]} drawn</span>
+            </div>
+          {/each}
+        {/if}
+        <div class="legendrow" data-testid="legend-extra">
+          <span><i class="dot extra"></i>Extra</span>
+          <span class="mono">{extraCount} drawn</span>
+        </div>
       </div>
       <div class="footnote">Extra: drawn in the new model, but the report has no record of it.</div>
-      {#if meshless > 0}
-        <div class="footnote">{meshless} report entit{meshless === 1 ? 'y has' : 'ies have'} no 3D geometry (spatial containers etc.) — counted above, not drawn.</div>
+      {#if coverage && coverage.undrawn.length > 0}
+        <span class="microlabel">not drawn ({coverage.undrawn.length})</span>
+        <div class="footnote">In the report, but no 3D geometry is drawn for them (spatial containers, property-only objects).</div>
+        <div class="undrawn" data-testid="undrawn">
+          {#each coverage.undrawn as entity (entity.side + entity.stepId)}
+            <button class="classrow" onclick={() => select({ side: entity.side, stepId: entity.stepId })}>
+              <span class="cls"><i class="dot {REPORT_KEY_LEGEND[entity.key].dot}"></i>{entity.name ?? `#${entity.stepId}`}</span>
+              <span class="nums mono">{entity.klass}</span>
+            </button>
+          {/each}
+        </div>
       {/if}
       {#if cohorts.length > 0 || index.placementPairs.filter(isPlacementOnly).length > 0}
         <div class="footnote">
@@ -518,7 +539,7 @@
         <span class="microlabel">entity</span>
         <div class="title">{selectedRecord?.name ?? `#${selection.stepId}`}</div>
         <div>
-          <span class="badge {sectionOf(selectedRecord, selection)}">{sectionOf(selectedRecord, selection) || 'unlisted'}</span>
+          <span class="badge {selectedRecord?.section ?? 'extra'}">{selectedRecord?.section ?? 'extra'}</span>
         </div>
         <dl class="kv">
           <dt>Class</dt>

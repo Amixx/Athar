@@ -43,6 +43,11 @@ merged `THREE.Mesh`, so slider drags update O(buckets) materials regardless of
 entity count; per-entity index ranges drive raycast picking and a zero-copy
 highlight overlay.
 
+The summary legend shows, for each row (added, deleted, direct, indirect,
+unchanged), how many entities the report lists and how many the scene draws.
+Report entities with no drawn geometry (spatial containers, property-only
+objects) are listed under it and open in the inspector when clicked.
+
 ## Inputs
 
 1. **Drag-drop / file pickers**: two IFC files and the report JSON
@@ -89,8 +94,11 @@ before building the Python distribution.
 - `e2e/smoke.spec.ts` — headless playwright against the committed fixture
   pair in `e2e/fixtures/` (regenerate with
   `python scripts/make_viewer_fixture.py` from the repo root). Asserts bucket
-  and meshless counts through `window.__athar_viewer` instead of pixels, and
-  covers the `?src=` path, slider snaps, toggles, and click selection.
+  counts and report coverage through `window.__athar_viewer` instead of
+  pixels, and covers the `?src=` path, the legend and undrawn list, slider
+  snaps, toggles, and click selection.
+- `e2e/extra.spec.ts` — a report that omits one wall: the wall's mesh is
+  counted, drawn and toggled as `extra`.
 - `e2e/drop.spec.ts` — dropped files: roles assigned by report hash despite
   misleading names, and the confirm step for an unverifiable report.
 - `e2e/frame.spec.ts` — the fixture pair moved to a large world coordinate so
@@ -104,7 +112,7 @@ before building the Python distribution.
   ```
 
 The app publishes its state to `window.__athar_viewer` (phase, bucket entity
-counts, meshless counts per section, appearances, slider position, selection,
+counts, report coverage per legend row, appearances, slider position, selection,
 `rendererReady`). WebGL failure degrades gracefully — panels and counts still
 work with `rendererReady: false` — which keeps every assertion runnable in
 headless environments.

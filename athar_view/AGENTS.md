@@ -55,7 +55,8 @@ so parser and renderer can be swapped independently.
   and validated reports use content-hash keys. Start over clears both caches
   and disposes the scene.
 - `src/lib/debug.ts` — `window.__athar_viewer` state mirror (phase, bucket
-  counts, meshless counts, appearances, selection) so headless tests assert
+  counts, report coverage per legend row, appearances, selection) so headless
+  tests assert
   state, not pixels; the app stays usable without WebGL (panels work, canvas
   degrades).
 - `viewer/dist/` is generated and ignored. Use `make viewer-build` for local
@@ -105,10 +106,11 @@ cache; nothing depends on it.
 Viewer tests live in `viewer/`. `bun test tests` unit-tests the pure
 report→render-state mapping (parsing, bucket assignment, crossfade appearances)
 and manifest parsing (`sources.test.ts`: v1 accepted, v2 chain parsed,
-`active_step` honored, out-of-range `active_step` and malformed chain rejected). `bunx playwright test` runs a
-headless smoke against the committed fixture pair in `viewer/e2e/fixtures/`
-(regenerate with `scripts/make_viewer_fixture.py`), asserting bucket/meshless
-counts through the `window.__athar_viewer` debug state rather than pixels — it
+`active_step` honored, out-of-range `active_step` and malformed chain
+rejected). `bunx playwright test` runs a headless smoke against the committed
+fixture pair in `viewer/e2e/fixtures/` (regenerate with
+`scripts/make_viewer_fixture.py`), asserting bucket counts and report coverage
+through the `window.__athar_viewer` debug state rather than pixels — it
 covers the `?src=` handoff path, the file-input path, slider snaps/toggles, and
 click selection. `chain.spec.ts` synthesizes a 2-step v2 manifest over the same
 fixtures and asserts prev/next + `[`/`]` navigation swaps the step

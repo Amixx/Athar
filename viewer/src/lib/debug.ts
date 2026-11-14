@@ -5,8 +5,8 @@
  */
 
 import type { Bounds, Vec3 } from './frame'
-import type { Bucket, Appearance } from './renderState'
-import type { Section, Side } from './types'
+import type { Appearance, Bucket, ReportCoverage } from './renderState'
+import type { Side } from './types'
 
 export interface ViewerDebugState {
   phase: 'empty' | 'confirm' | 'loading' | 'ready' | 'error'
@@ -16,8 +16,7 @@ export interface ViewerDebugState {
   sliderT?: number
   /** Entities per visual bucket that actually have meshes. */
   bucketEntityCounts?: Partial<Record<Bucket, number>>
-  /** Report entities per section that have no tessellated geometry. */
-  meshlessBySection?: Partial<Record<Section, number>>
+  reportCoverage?: ReportCoverage | null
   reportStats?: Record<string, unknown>
   appearances?: Record<Bucket, Appearance>
   displacementLines?: number

@@ -6,8 +6,8 @@
  *   ATHAR_E2E_SRC=http://127.0.0.1:4799 bunx playwright test corpus
  *
  * Verifies the served manifest/report against what the app actually
- * bucketed: every report entity is either bucketed or counted meshless,
- * per section. Saves a screenshot to test-results/corpus.png.
+ * bucketed: every report entity, whatever its change scope, is either drawn
+ * or listed as undrawn under its legend row. Saves a screenshot to test-results/corpus.png.
  */
 
 import { expect, test } from '@playwright/test'
@@ -34,15 +34,33 @@ test('athar view serves a corpus pair the app can bucket completely', async ({ p
   expect(state.phase).toBe('ready')
 
   const buckets = state.bucketEntityCounts as Record<string, number>
-  const meshless = state.meshlessBySection as Record<string, number>
+  const coverage = state.reportCoverage as {
+    inReport: Record<string, number>
+    drawn: Record<string, number>
+    undrawn: Array<{ key: string }>
+  }
 
-  // Section accounting: bucketed + meshless covers every report entity.
-  expect((buckets.added ?? 0) + meshless.added).toBe(report.stats.added)
-  expect((buckets.deleted ?? 0) + meshless.deleted).toBe(report.stats.deleted)
-  expect(
-    (buckets.modifiedNew ?? 0) + (buckets.modifiedStatic ?? 0) + meshless.modified,
-  ).toBe(report.stats.modified)
-  expect((buckets.unchanged ?? 0) + meshless.unchanged).toBe(report.stats.unchanged)
+  // Every change scope the report has lands in exactly one legend row.
+  const scopes = report.modified.reduce((counts: Record<string, number>, item: any) => {
+    counts[item.change_scope] = (counts[item.change_scope] ?? 0) + 1
+    return counts
+  }, {})
+  const { transitive = 0, ...direct } = scopes
+  expect(coverage.inReport.transitive).toBe(transitive)
+  expect(coverage.inReport.modified).toBe(Object.values(direct).reduce((a: number, b) => a + (b as number), 0))
+  expect(coverage.inReport.modified + coverage.inReport.transitive).toBe(report.stats.modified)
+  expect(coverage.inReport.added).toBe(report.stats.added)
+  expect(coverage.inReport.deleted).toBe(report.stats.deleted)
+  expect(coverage.inReport.unchanged).toBe(report.stats.unchanged)
+
+  // Drawn plus listed-undrawn covers every report entity, per legend row.
+  for (const key of Object.keys(coverage.inReport)) {
+    const undrawn = coverage.undrawn.filter((entity) => entity.key === key).length
+    expect(coverage.drawn[key] + undrawn).toBe(coverage.inReport[key])
+  }
+  for (const key of ['added', 'deleted', 'transitive', 'unchanged']) {
+    expect(coverage.drawn[key]).toBe(buckets[key] ?? 0)
+  }
   // Crossfade pairs are symmetric.
   expect(buckets.modifiedOld ?? 0).toBe(buckets.modifiedNew ?? 0)
 

@@ -340,6 +340,34 @@ button.active {
 .classrow .nums .d { color: var(--c-del); }
 .classrow .nums .m { color: var(--c-mod); }
 
+.legendrows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.undrawn {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.undrawn button.classrow {
+  border: none;
+  border-radius: 5px;
+  padding: 3px 2px;
+  text-align: left;
+  width: 100%;
+}
+
+.undrawn .cls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .legendrow {
   display: flex;
   justify-content: space-between;
