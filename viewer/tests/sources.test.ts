@@ -4,6 +4,7 @@ import {
   addDroppedFiles,
   assignRoles,
   chainFromFiles,
+  dataUrl,
   hashFile,
   MANIFEST_SCHEMA_VERSION,
   NO_DROPS,
@@ -167,5 +168,37 @@ describe('assignRoles', () => {
     expect(reportInputHashes(report('AAA', 'bbb'))).toEqual({ old: 'aaa', new: 'bbb' })
     expect(reportInputHashes({})).toBeNull()
     expect(reportInputHashes(report('aaa', undefined))).toBeNull()
+  })
+})
+
+describe('dataUrl', () => {
+  const page = 'https://viewer.example/app/?src=http%3A%2F%2F127.0.0.1%3A4799'
+
+  it('resolves manifest file urls against the src origin', () => {
+    expect(dataUrl(page, 'http://127.0.0.1:4799', '/files/old.ifc')).toBe('http://127.0.0.1:4799/files/old.ifc')
+    expect(dataUrl(page, 'http://127.0.0.1:4799/', 'manifest.json')).toBe('http://127.0.0.1:4799/manifest.json')
+  })
+
+  it('keeps a path prefix in the src', () => {
+    expect(dataUrl(page, 'http://127.0.0.1:4799/s/tok', '/files/report/0.json')).toBe(
+      'http://127.0.0.1:4799/s/tok/files/report/0.json',
+    )
+  })
+
+  it('carries a token in the src query', () => {
+    expect(dataUrl(page, 'http://127.0.0.1:4799/?token=abc', 'manifest.json')).toBe(
+      'http://127.0.0.1:4799/manifest.json?token=abc',
+    )
+  })
+
+  it('carries the page query, except src, and resolves a relative src against the page', () => {
+    const served = 'http://127.0.0.1:4799/?token=abc&src=.'
+    expect(dataUrl(served, '.', '/files/new.ifc')).toBe('http://127.0.0.1:4799/files/new.ifc?token=abc')
+  })
+
+  it('does not carry the query to another origin', () => {
+    expect(dataUrl(page, 'http://127.0.0.1:4799/?token=abc', 'https://elsewhere.example/x.ifc')).toBe(
+      'https://elsewhere.example/x.ifc',
+    )
   })
 })

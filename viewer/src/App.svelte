@@ -124,7 +124,7 @@
       phase = 'loading'
       progress = { stage: `Fetching from ${src}`, count: 0 }
       publishDebug({ phase: 'loading' })
-      loadChainFromSrc(src).then((chain) => {
+      loadChainFromSrc(src, location.href).then((chain) => {
         steps = chain.steps
         warning = chain.warning ?? ''
         return loadStep(chain.activeStep)

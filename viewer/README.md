@@ -60,7 +60,10 @@ objects) are listed under it and open in the inspector when clicked.
    both caches and the scene.
 2. **`?src=<origin>`**: fetches `<origin>/manifest.json`
    (`athar_viewer_manifest: 1`, `schema_version` handshake) and the files it
-   points at. This is what `athar view` (in `athar_view/`) serves.
+   points at. This is what `athar view` (in `athar_view/`) serves. `src` may
+   carry a path prefix and query (for example an access token): every data
+   url, manifest file urls with a leading slash included, resolves under the
+   src path and carries the src's and the page's query parameters.
 
    The manifest has two forms. **v1** is a single pair (`old`, `new`, `report`
    at the top level). **v2** is a revision chain: `steps: [{label, old, new,

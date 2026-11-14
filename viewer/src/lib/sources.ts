@@ -1,6 +1,7 @@
 /**
  * Input acquisition: drag-drop/file-picker classification and the
  * `?src=<origin>` manifest fetch used by the `athar view` CLI hand-off.
+ * Manifest file urls resolve under the src path (see `dataUrl`).
  *
  * Manifest contract (served by athar_view at <src>/manifest.json):
  *
@@ -145,16 +146,36 @@ async function fetchOk(url: string): Promise<Response> {
   return response
 }
 
-export async function loadChainFromSrc(src: string): Promise<LoadedChain> {
-  const base = src.replace(/\/+$/, '')
-  const json = await (await fetchOk(`${base}/manifest.json`)).json()
+/**
+ * URL of a file the `src` server serves. `path` resolves under the src path,
+ * a leading slash included, and the query parameters of the src and of the
+ * page (except `src`) are carried to same-origin URLs, so an access token in
+ * either survives.
+ */
+export function dataUrl(pageUrl: string, src: string, path: string): string {
+  const base = new URL(src, pageUrl)
+  if (!base.pathname.endsWith('/')) base.pathname += '/'
+  const url = new URL(path.replace(/^\/+/, ''), base)
+  if (url.origin !== base.origin) return url.toString()
+  const carried = new URLSearchParams(new URL(pageUrl).search)
+  carried.delete('src')
+  for (const [key, value] of base.searchParams) carried.set(key, value)
+  for (const [key, value] of carried) {
+    if (!url.searchParams.has(key)) url.searchParams.set(key, value)
+  }
+  return url.toString()
+}
+
+export async function loadChainFromSrc(src: string, pageUrl: string): Promise<LoadedChain> {
+  const manifestUrl = dataUrl(pageUrl, src, 'manifest.json')
+  const json = await (await fetchOk(manifestUrl)).json()
   let parsed: ParsedManifest
   try {
     parsed = parseManifest(json)
   } catch (error) {
-    throw new Error(`${base}/manifest.json is invalid: ${error instanceof Error ? error.message : error}`)
+    throw new Error(`${manifestUrl} is invalid: ${error instanceof Error ? error.message : error}`)
   }
-  const resolve = (file: ManifestFile) => new URL(file.url, `${base}/`).toString()
+  const resolve = (file: ManifestFile) => dataUrl(pageUrl, src, file.url)
   const steps: StepSource[] = parsed.steps.map((step) => {
     const oldUrl = resolve(step.old)
     const newUrl = resolve(step.new)

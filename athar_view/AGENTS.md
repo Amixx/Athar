@@ -45,7 +45,10 @@ so parser and renderer can be swapped independently.
 - `src/lib/sources.ts` — both input paths: drag-drop (two IFC files +
   report.json; `assignRoles` takes old/new from the report's
   `audit.inputs.*.sha256`, and an unverifiable pair goes to an explicit
-  confirm step, never name order) and `?src=<origin>` manifest handoff. `parseManifest` is a pure,
+  confirm step, never name order) and `?src=<origin>` manifest handoff.
+  `dataUrl` resolves every fetched url under the src path and carries the
+  src's and the page's query, so a launch token in either reaches the server.
+  `parseManifest` is a pure,
   unit-tested function that normalizes v1 single-pair and v2 chain manifests
   into one `steps[]` shape (a v1 manifest is one step); each `StepSource`
   carries display names, per-file cache keys, and lazy byte/report resolvers so
