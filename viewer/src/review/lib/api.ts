@@ -1,6 +1,6 @@
 /**
  * Typed fetch client for the athar_review localhost API. Same-origin only;
- * every helper throws with the server's error message on non-2xx.
+ * every helper throws an ApiError carrying the server's error code on non-2xx.
  */
 
 export interface Artifact {
@@ -33,6 +33,11 @@ export interface ProjectSummary {
   models: ModelSummary[]
 }
 
+export interface Overview {
+  projects: ProjectSummary[]
+  max_upload_bytes: number
+}
+
 export interface Conflict {
   review_id: string
   actor?: string
@@ -46,6 +51,9 @@ export interface StoreEvent {
   at: string
   actor: string
   model_key: string
+  source_name?: string | null
+  athar_version?: string
+  canon_version?: string
   verdict?: 'pass' | 'fail'
   has_policy?: boolean
   note?: string | null
@@ -65,6 +73,25 @@ export interface ReportEntity {
   name?: string | null
 }
 
+export type PropertyValue = string | number | boolean | null | PropertyValue[]
+
+export interface PropertyDelta {
+  pset: string
+  name: string
+  inherited?: boolean
+  old_value?: PropertyValue
+  new_value?: PropertyValue
+  old_count?: number
+  new_count?: number
+}
+
+export interface PropertyDeltas {
+  added?: PropertyDelta[]
+  removed?: PropertyDelta[]
+  changed?: PropertyDelta[]
+  count_changed?: PropertyDelta[]
+}
+
 export interface ModifiedEntry {
   old: ReportEntity
   new: ReportEntity
@@ -72,52 +99,75 @@ export interface ModifiedEntry {
   aspects?: Record<string, unknown>
   match?: { reason?: string; score?: number }
   data_delta?: { path: string; old: string | null; new: string | null }[]
+  property_deltas?: PropertyDeltas
+}
+
+export interface PlacementCohort {
+  delta_mm: [number, number, number]
+  count: number
+  members: number[]
 }
 
 export interface Report {
   schemas?: { old?: string; new?: string }
-  stats: Record<string, unknown>
+  stats: Record<string, unknown> & { placement_cohorts?: PlacementCohort[] }
   added: ReportEntity[]
   deleted: ReportEntity[]
   modified: ModifiedEntry[]
 }
 
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly detail: Record<string, unknown> = {},
+  ) {
+    super(message)
+  }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { cache: 'no-store', ...init })
+  let response: Response
+  try {
+    response = await fetch(url, { cache: 'no-store', ...init })
+  } catch {
+    throw new ApiError(0, 'unreachable', 'The review server is not reachable. Is `athar review` still running?')
+  }
   if (!response.ok) {
-    let message = `${response.status} ${response.statusText}`
+    let body: unknown = null
     try {
-      const body = await response.json()
-      if (body?.error) message = body.error
+      body = await response.json()
     } catch {
-      /* non-JSON error body; keep the status line */
+      body = null
     }
-    throw new Error(message)
+    const error = (body as { error?: { code?: unknown; message?: unknown } } | null)?.error
+    if (error && typeof error.code === 'string' && typeof error.message === 'string') {
+      const { code, message, ...detail } = error as Record<string, unknown>
+      throw new ApiError(response.status, code as string, message as string, detail)
+    }
+    throw new ApiError(response.status, 'http_error', `The server answered ${response.status} ${response.statusText}.`)
   }
   return (await response.json()) as T
 }
 
+const segment = encodeURIComponent
+
 export const api = {
-  overview: () => request<{ projects: ProjectSummary[] }>('/api/overview'),
+  overview: () => request<Overview>('/api/overview'),
 
   events: (projectId: string, modelKey?: string) =>
     request<{ events: StoreEvent[] }>(
-      `/api/projects/${projectId}/events${modelKey ? `?model_key=${encodeURIComponent(modelKey)}` : ''}`,
+      `/api/projects/${segment(projectId)}/events${modelKey ? `?model_key=${segment(modelKey)}` : ''}`,
     ),
 
   report: (projectId: string, reviewId: string) =>
-    request<Report>(`/api/projects/${projectId}/reviews/${reviewId}`),
+    request<Report>(`/api/projects/${segment(projectId)}/reviews/${segment(reviewId)}`),
 
-  uploadCandidate: (
-    projectId: string,
-    modelKey: string,
-    kind: 'review' | 'baseline',
-    file: File,
-    actor: string,
-  ) =>
+  upload: (projectId: string, modelKey: string, kind: 'review' | 'baseline', file: File, actor: string) =>
     request<StoreEvent>(
-      `/api/projects/${projectId}/models/${modelKey}/${kind}` +
-        `?actor=${encodeURIComponent(actor)}&filename=${encodeURIComponent(file.name)}`,
+      `/api/projects/${segment(projectId)}/models/${segment(modelKey)}/${kind}` +
+        `?actor=${segment(actor)}&filename=${segment(file.name)}`,
       { method: 'POST', body: file, headers: { 'Content-Type': 'application/x-step' } },
     ),
 
@@ -129,7 +179,7 @@ export const api = {
     actor: string,
     note?: string,
   ) =>
-    request<StoreEvent>(`/api/projects/${projectId}/models/${modelKey}/${action}`, {
+    request<StoreEvent>(`/api/projects/${segment(projectId)}/models/${segment(modelKey)}/${action}`, {
       method: 'POST',
       body: JSON.stringify({ review_id: reviewId, actor, note }),
       headers: { 'Content-Type': 'application/json' },

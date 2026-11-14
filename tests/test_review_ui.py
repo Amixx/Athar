@@ -18,6 +18,56 @@ from athar_review.server import make_server
 from athar_store import BaselineStore
 from tests.test_store import _GUID_A, _GUID_B, _fixed_clock, _write_model
 
+DEMO_MOVED_DOORS = 40
+
+
+def write_review_demo_pair(old_path, new_path) -> None:
+    """Write a baseline and a revised delivery of a small door schedule.
+
+    The revision moves DEMO_MOVED_DOORS doors by one translation, edits and adds
+    door properties, deletes one door and adds one wall. The Playwright review
+    spec generates its fixtures with this function.
+    """
+    import ifcopenshell.api
+    import ifcopenshell.api.project
+    import numpy as np
+
+    def model(path, revised: bool) -> None:
+        f = ifcopenshell.api.project.create_file(version="IFC4")
+        project = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcProject", name="Riverside Tower")
+        project.GlobalId = "0RiversideTower00000001"
+        ifcopenshell.api.run("unit.assign_unit", f)
+        storey = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcBuildingStorey", name="Level 1")
+        storey.GlobalId = "0RiversideLevel10000001"
+        ifcopenshell.api.run("aggregate.assign_object", f, relating_object=project, products=[storey])
+        for index in range(DEMO_MOVED_DOORS + 6):
+            if revised and index == DEMO_MOVED_DOORS + 5:
+                continue
+            door = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcDoor", name=f"D-{101 + index}")
+            door.GlobalId = f"0RiversideDoor{index:08d}"
+            matrix = np.eye(4)
+            matrix[0][3] = index * 1.5
+            if revised and index < DEMO_MOVED_DOORS:
+                matrix[0][3] += 1.2
+                matrix[1][3] -= 0.35
+            ifcopenshell.api.run("geometry.edit_object_placement", f, product=door, matrix=matrix)
+            ifcopenshell.api.run("spatial.assign_container", f, relating_structure=storey, products=[door])
+            pset = ifcopenshell.api.run("pset.add_pset", f, product=door, name="Pset_DoorCommon")
+            pset.GlobalId = f"0RiversidePset{index:08d}"
+            properties = {"FireRating": "EI30", "HeadHeight": 2.1}
+            if revised and index == DEMO_MOVED_DOORS:
+                properties = {"FireRating": "EI60", "HeadHeight": 2.4}
+            if revised and index == DEMO_MOVED_DOORS + 1:
+                properties["AcousticRating"] = "Rw 32 dB"
+            ifcopenshell.api.run("pset.edit_pset", f, pset=pset, properties=properties)
+        if revised:
+            wall = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcWall", name="W-201")
+            wall.GlobalId = "0RiversideWall000000001"
+            ifcopenshell.api.run("spatial.assign_container", f, relating_structure=storey, products=[wall])
+        f.write(str(path))
+
+    model(old_path, revised=False)
+    model(new_path, revised=True)
 
 
 @pytest.fixture
@@ -644,3 +694,21 @@ def test_review_prints_its_url_when_stdout_is_a_pipe(tmp_path):
         process.wait(timeout=30)
 
 
+def test_demo_pair_carries_property_deltas_and_a_cohort(server, tmp_path):
+    old, new = tmp_path / "riverside-A.ifc", tmp_path / "riverside-B.ifc"
+    write_review_demo_pair(old, new)
+    status, _, _ = _upload(server, "/api/projects/riverside/models/arch/baseline?actor=a&filename=A.ifc", old.read_bytes())
+    assert status == 200
+    status, _, body = _upload(server, "/api/projects/riverside/models/arch/review?actor=b&filename=B.ifc", new.read_bytes())
+    assert status == 200, body
+    review_id = json.loads(body)["id"]
+    report = _get_json(server, f"/api/projects/riverside/reviews/{review_id}")
+    (cohort,) = report["stats"]["placement_cohorts"]
+    assert (cohort["count"], cohort["delta_mm"]) == (DEMO_MOVED_DOORS, [1200.0, -350.0, 0.0])
+    changed = {
+        (delta["pset"], delta["name"]): (delta["old_value"], delta["new_value"])
+        for item in report["modified"]
+        for delta in (item.get("property_deltas") or {}).get("changed", [])
+    }
+    assert changed == {("Pset_DoorCommon", "FireRating"): ("EI30", "EI60"), ("Pset_DoorCommon", "HeadHeight"): (2.1, 2.4)}
+    assert (report["stats"]["added"], report["stats"]["deleted"]) == (1, 1)

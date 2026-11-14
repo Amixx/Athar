@@ -1,20 +1,46 @@
 <script lang="ts">
+  import { formatBytes } from '../lib/format'
+
   let {
     label,
-    busy,
+    busyLabel,
+    busyFile,
+    disabledReason,
+    maxBytes,
     onupload,
+    onrefuse,
   }: {
     label: string
-    busy: boolean
+    busyLabel: string
+    busyFile: File | null
+    disabledReason: string | null
+    maxBytes: number | null
     onupload: (file: File) => void
+    onrefuse: (message: string) => void
   } = $props()
 
+  const uid = $props.id()
+  const hintId = `${uid}-hint`
   let dragging = $state(false)
   let input: HTMLInputElement
+  const busy = $derived(busyFile !== null)
+  const inert = $derived(busy || disabledReason !== null)
 
   function pick(files: FileList | null | undefined) {
     const file = files?.[0]
-    if (file) onupload(file)
+    if (!file || inert) return
+    if (maxBytes !== null && file.size > maxBytes) {
+      onrefuse(
+        `${file.name} is ${formatBytes(file.size)}, larger than this server's upload limit of ` +
+          `${formatBytes(maxBytes)}. Restart athar review with a higher --max-upload-mb to accept it.`,
+      )
+      return
+    }
+    onupload(file)
+  }
+
+  function browse() {
+    if (!inert) input.click()
   }
 </script>
 
@@ -22,12 +48,15 @@
   class="zone"
   class:dragging
   class:busy
+  class:inert
   role="button"
   tabindex="0"
   aria-label={label}
+  aria-disabled={inert}
+  aria-describedby={hintId}
   ondragover={(e) => {
     e.preventDefault()
-    dragging = true
+    dragging = !inert
   }}
   ondragleave={() => (dragging = false)}
   ondrop={(e) => {
@@ -35,14 +64,24 @@
     dragging = false
     pick(e.dataTransfer?.files)
   }}
-  onclick={() => !busy && input.click()}
-  onkeydown={(e) => e.key === 'Enter' && !busy && input.click()}
+  onclick={browse}
+  onkeydown={(e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      browse()
+    }
+  }}
 >
-  {#if busy}
-    <span class="working">Reviewing candidate — diffing against the baseline…</span>
+  {#if busyFile}
+    <span class="working" role="status">{busyLabel}</span>
+    <span class="hint" id={hintId}>
+      {busyFile.name}, {formatBytes(busyFile.size)}. Large models can take a few minutes.
+    </span>
   {:else}
     <span>{label}</span>
-    <span class="hint">drop an .ifc here or click to browse</span>
+    <span class="hint" id={hintId}>
+      {disabledReason ?? 'Drop an .ifc file here, or press Enter to choose one'}
+    </span>
   {/if}
 </div>
 <input
@@ -68,18 +107,27 @@
     color: var(--ink-dim);
     background: var(--surface);
     text-align: center;
+    cursor: pointer;
   }
 
-  .zone:hover,
+  .zone:hover:not(.inert),
   .zone.dragging {
     border-color: var(--stamp);
     color: var(--stamp);
     background: var(--stamp-soft);
   }
 
-  .zone.busy {
+  .zone.inert {
     cursor: default;
+  }
+
+  .zone.inert:not(.busy) {
+    opacity: 0.6;
+  }
+
+  .zone.busy {
     border-style: solid;
+    border-color: var(--stamp);
   }
 
   .hint {

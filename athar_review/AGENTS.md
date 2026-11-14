@@ -74,14 +74,37 @@ rules, checking-stamp blue; ACCEPTED/REJECTED rendered as tilted control
 stamps; revisions lettered A, B, C on accepted events), deliberately the paper
 counterpart to the viewer's dark model space; the four diff hues match the
 viewer. `lib/format.ts` and `lib/api.ts` are pure and covered by
-`viewer/tests/review-format.test.ts` (bun). Pending-ness in the UI mirrors
-`BaselineStore.pending_reviews`: unresolved reviews whose baseline is still
-current.
+`viewer/tests/review-*.test.ts` (bun).
+
+- Routes are hash routes: `#/new[/project]` starts a lineage with a baseline
+  upload, `#/p/{p}/m/{m}` is a lineage's register, `.../r/{review}` a review.
+- The reviewer name is asked once per browser session (`sessionStorage`) and
+  sent as typed; uploads and decisions are disabled while it is blank. There
+  is no default name.
+- Review states (`reviewStates`) mirror the store's `_review_blocker`:
+  pending, approved, rejected, or stale (a later baseline_set or approval).
+  A refused decision (409) shows the server's reason and reloads the history,
+  so the review shows its real state.
+- Decisions go through a confirm dialog that names the delivery file.
+- The detail view shows provenance (file name, sha256, reviewer, local time,
+  Athar and canon versions), then bulk moves (`stats.placement_cohorts`, one
+  row per cohort, members on demand), then per-class groups ordered deleted,
+  added, modified. Modified rows show `property_deltas` as "Pset, Name: old
+  to new" rows. Every raw `data_delta` row stays in a collapsed block below the property rows, with its row count in the heading. Cohort members whose only change is the move are listed
+  under the cohort only. Long lists and the register are paged.
+- Numbers use en-US grouping, lengths scale mm to m, sizes B to GB. No middle
+  dots anywhere under `viewer/src/review` (enforced by
+  `viewer/tests/review-text.test.ts`).
 
 ## Testing
 
 `tests/test_review_ui.py` runs the real server on an ephemeral port against a
 seeded store: overview/events/report endpoints, byte-exact artifact download,
 upload→review→approve flipping the baseline, conflict surfacing, the viewer
-manifest bridge, traversal/id guards. Frontend logic tests run with
-`bun test tests` in `viewer/`.
+manifest bridge, traversal/id guards, the request guard and error mapping,
+and the CLI. `write_review_demo_pair` there generates the model pair that
+`viewer/e2e/review.spec.ts` uses: that spec starts the real `athar review`
+on a fresh store per test (needs the repo `.venv` and a built `viewer/dist`).
+`ATHAR_REVIEW_EVIDENCE=<dir>` makes it record the main flow as a video and
+save screenshots. Frontend logic tests run with `bun test tests` in
+`viewer/`.

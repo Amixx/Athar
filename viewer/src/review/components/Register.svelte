@@ -1,20 +1,25 @@
 <script lang="ts">
   import type { StoreEvent } from '../lib/api'
-  import { describeEvent, formatWhen, revisionLetters } from '../lib/format'
+  import type { ReviewState } from '../lib/format'
+  import { describeEvent, formatCount, formatWhen, revisionLetters } from '../lib/format'
   import StatChips from './StatChips.svelte'
+
+  const PAGE = 25
 
   let {
     events,
-    pendingIds,
-    onopen,
+    states,
+    reviewHref,
   }: {
     events: StoreEvent[]
-    pendingIds: Set<string>
-    onopen: (reviewId: string) => void
+    states: Map<string, ReviewState>
+    reviewHref: (reviewId: string) => string
   } = $props()
 
+  let shown = $state(PAGE)
   const letters = $derived(revisionLetters(events))
   const newestFirst = $derived([...events].reverse())
+  const visible = $derived(newestFirst.slice(0, shown))
 </script>
 
 <table aria-label="Review register">
@@ -29,18 +34,23 @@
     </tr>
   </thead>
   <tbody>
-    {#each newestFirst as event (event.id)}
-      <tr
-        class:openable={event.event === 'review'}
-        onclick={() => event.event === 'review' && onopen(event.id)}
-      >
+    {#each visible as event (event.id)}
+      {@const state = states.get(event.id)}
+      <tr class:openable={event.event === 'review'}>
         <td class="rev mono">{letters.get(event.id) ?? ''}</td>
         <td class="what">
-          <div>{describeEvent(event)}</div>
-          <div class="sub mono">{event.id}</div>
+          {#if event.event === 'review'}
+            <a class="open" href={reviewHref(event.id)}>{describeEvent(event)}</a>
+          {:else}
+            <div>{describeEvent(event)}</div>
+          {/if}
+          <div class="sub">
+            <span class="mono">{event.id}</span>
+            {#if event.source_name}<span class="file">{event.source_name}</span>{/if}
+          </div>
           {#if event.event === 'review' && (event.conflicts?.length ?? 0) > 0}
             <div class="conflict">
-              ⚠ overlaps {event.conflicts!.map((c) => c.review_id).join(', ')}
+              Overlaps {event.conflicts!.map((c) => c.review_id).join(', ')}
             </div>
           {/if}
           {#if event.note}
@@ -59,9 +69,16 @@
             <span class="stamp">Accepted</span>
           {:else if event.event === 'rejection'}
             <span class="stamp rejected">Rejected</span>
-          {:else if event.event === 'review' && pendingIds.has(event.id)}
+          {:else if state?.state === 'pending'}
             <span class="chip pend">awaiting decision</span>
-          {:else if event.event === 'review' && event.has_policy}
+          {:else if state?.state === 'stale'}
+            <span class="chip clean" title="The baseline changed after this review">superseded</span>
+          {:else if state?.state === 'approved'}
+            <span class="chip add">accepted</span>
+          {:else if state?.state === 'rejected'}
+            <span class="chip del">rejected</span>
+          {/if}
+          {#if event.event === 'review' && event.has_policy}
             <span class="chip" class:add={event.verdict === 'pass'} class:del={event.verdict === 'fail'}>
               policy {event.verdict}
             </span>
@@ -73,6 +90,12 @@
     {/each}
   </tbody>
 </table>
+{#if newestFirst.length > shown}
+  <div class="pager">
+    <span>Showing the newest {formatCount(shown)} of {formatCount(newestFirst.length)} records.</span>
+    <button class="btn" onclick={() => (shown += PAGE)}>Show {PAGE} older</button>
+  </div>
+{/if}
 
 <style>
   table {
@@ -102,12 +125,17 @@
     border-bottom: none;
   }
 
-  tr.openable {
-    cursor: pointer;
-  }
-
   tr.openable:hover td {
     background: var(--stamp-soft);
+  }
+
+  .open {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  .open:hover {
+    color: var(--stamp);
   }
 
   .rev {
@@ -120,9 +148,17 @@
   }
 
   .sub {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
     color: var(--ink-faint);
     font-size: 11.5px;
     margin-top: 2px;
+  }
+
+  .file {
+    color: var(--ink-dim);
+    overflow-wrap: anywhere;
   }
 
   .conflict {
@@ -140,9 +176,22 @@
     white-space: nowrap;
   }
 
+  .status .chip + .chip {
+    margin-left: 4px;
+  }
+
   .empty {
     color: var(--ink-dim);
     text-align: center;
     padding: 28px;
+  }
+
+  .pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--ink-dim);
+    font-size: 13px;
   }
 </style>
