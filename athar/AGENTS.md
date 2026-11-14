@@ -25,9 +25,12 @@ GitHub comments, and other presentation concerns.
   aspect states, placement deltas, data hashes, change scope, and stats.
 - `check.py` evaluates JSON reports or fresh diffs against report-visible
   policy signals only. Exit `2` is policy violation; exit `1` is execution or
-  configuration error. Property-level gates (`forbid_property_removal`,
-  `forbid_property_value_change`) read the report's `property_deltas`, so they
-  only fire when `delta/report.py` emitted them (a `property_index` was present).
+  configuration error. Policy normalization rejects unknown keys, malformed
+  values and unknown IFC classes before diffing; class rules include subtypes.
+  Property-level gates (`forbid_property_removal`,
+  `forbid_property_value_change`, `forbid_property_addition`) require the
+  report's `property_deltas` on data-changed entities. Absence is ambiguous
+  (comparison unavailable or no property changes) and raises an error.
   Property deltas are keyed by (pset, property name, inherited); type-level
   values are `inherited: true` entries beside the occurrence's own values.
   `forbid_property_value_change` keys are property names and match that name

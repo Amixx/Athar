@@ -1,5 +1,5 @@
 {
-  "description": "Safety-critical attributes: fire ratings and load-bearing flags must not change or disappear.",
+  "description": "Safety-critical attributes: no property values removed from matched entities; FireRating and LoadBearing values must not change.",
   "forbid_property_removal": "*",
   "forbid_property_value_change": {
     "FireRating": "*",

@@ -221,6 +221,7 @@ def _report() -> dict:
                 },
                 "change_scope": "mixed",
                 "data_delta": [{"path": "IfcWall.Description", "old": "a", "new": "b"}],
+                "property_deltas": {},
             },
             {
                 "old": {"class": "IfcSite", "step_id": 12, "guid": "SITE", "name": "Site"},
@@ -235,7 +236,14 @@ def _report() -> dict:
                 "change_scope": "intrinsic",
             },
         ],
-        "unchanged": [{}, {}, {}],
+        "unchanged": [
+            {
+                "old": {"class": "IfcWall", "step_id": i, "guid": f"STABLE_{i}", "name": "Stable wall"},
+                "new": {"class": "IfcWall", "step_id": i, "guid": f"STABLE_{i}", "name": "Stable wall"},
+                "aspects": dict(_UNCHANGED_ASPECTS),
+            }
+            for i in range(30, 33)
+        ],
     }
 
 
@@ -524,6 +532,35 @@ def test_report_without_detail_a_rule_needs_names_the_rule():
     del report["modified"][1]["change_scope"]
     with pytest.raises(ValueError, match="max_modified_change_scope needs 'modified\\[1\\].change_scope'"):
         evaluate_report(report, {"max_modified_change_scope": {"mixed": 0}})
+
+
+@pytest.mark.parametrize("rule", ["forbid_property_removal", "forbid_property_value_change", "forbid_property_addition"])
+def test_property_rule_rejects_missing_property_detail(rule):
+    report = _report_with_property_deltas()
+    del report["modified"][0]["property_deltas"]
+    spec = "*" if rule == "forbid_property_removal" else {"FireRating": "*"}
+    with pytest.raises(ValueError, match=rf"{rule}.*property_deltas"):
+        evaluate_report(report, {rule: spec})
+
+
+@pytest.mark.parametrize("row", [None, {}, 1])
+@pytest.mark.parametrize("policy", [{"max_placement_cohort_share": 0.5}, {"forbid_site_placement_change": True}])
+def test_unchanged_rows_must_be_matched_entities(row, policy):
+    report = _report()
+    report["unchanged"][0] = row
+    with pytest.raises(ValueError, match=r"unchanged\[0\]"):
+        evaluate_report(report, policy)
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_nonfinite_placement_report_is_an_error(tmp_path, capsys, number):
+    report = _report()
+    report["modified"][1]["aspects"]["placement_delta_mm"] = [123, 0, 0]
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps(report).replace("[123, 0, 0]", f"[{number}, 0, 0]"))
+    policy = _write_json(tmp_path / "policy.json", {"max_placement_delta_mm": 1})
+    assert main_mod._run_check(["--report", str(report_path), "--policy", policy]) == 1
+    assert "finite numbers" in capsys.readouterr().err
 
 
 def test_cli_explain_prints_normalized_policy(tmp_path, capsys):

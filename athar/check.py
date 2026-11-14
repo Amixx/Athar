@@ -253,19 +253,23 @@ def _validate_report(report: Any, policy: dict[str, Any]) -> None:
     for section in ("added", "deleted"):
         for index, item in enumerate(report[section]):
             _validate_entity(item, f"{section}[{index}]")
-    for index, item in enumerate(report["modified"]):
-        where = f"modified[{index}]"
-        if not isinstance(item, dict):
-            raise ValueError(f"Report '{where}' must be an object")
-        _validate_entity(item.get("old"), f"{where}.old")
-        _validate_entity(item.get("new"), f"{where}.new")
-        aspects = item.get("aspects")
-        if not isinstance(aspects, dict) or any(aspects.get(aspect) not in _ASPECT_STATES for aspect in ASPECTS):
-            raise ValueError(f"Report '{where}.aspects' must give each of {', '.join(ASPECTS)} as changed or unchanged")
-        delta = aspects.get("placement_delta_mm", "missing")
-        if delta is not None and not _is_vector(delta):
-            raise ValueError(f"Report '{where}.aspects.placement_delta_mm' must be null or three numbers")
-        _validate_rule_detail(item, where, policy)
+    for section in ("modified", "unchanged"):
+        for index, item in enumerate(report[section]):
+            where = f"{section}[{index}]"
+            if not isinstance(item, dict):
+                raise ValueError(f"Report '{where}' must be an object")
+            _validate_entity(item.get("old"), f"{where}.old")
+            _validate_entity(item.get("new"), f"{where}.new")
+            aspects = item.get("aspects")
+            if not isinstance(aspects, dict) or any(aspects.get(aspect) not in _ASPECT_STATES for aspect in ASPECTS):
+                raise ValueError(f"Report '{where}.aspects' must give each of {', '.join(ASPECTS)} as changed or unchanged")
+            if section == "unchanged" and any(aspects[aspect] != "unchanged" for aspect in ASPECTS):
+                raise ValueError(f"Report '{where}.aspects' must be unchanged")
+            delta = aspects.get("placement_delta_mm", "missing")
+            if delta is not None and not _is_vector(delta):
+                raise ValueError(f"Report '{where}.aspects.placement_delta_mm' must be null or three finite numbers")
+            if section == "modified":
+                _validate_rule_detail(item, where, policy)
     if "max_placement_cohort_share" in policy:
         _validate_cohorts(report)
 
@@ -311,9 +315,9 @@ def _validate_rule_detail(item: dict[str, Any], where: str, policy: dict[str, An
             f"Policy rule {rule} needs the property detail of data-changed entities; "
             f"report '{where}' has no 'data_delta'"
         )
-    deltas = item.get("property_deltas", {})
+    deltas = item.get("property_deltas")
     if not isinstance(deltas, dict):
-        raise ValueError(f"Policy rule {rule} needs '{where}.property_deltas' to be an object")
+        raise ValueError(f"Policy rule {rule} needs '{where}.property_deltas' to be an object; property comparison is unavailable")
     for change, entries in deltas.items():
         value_keys = _PROPERTY_DELTA_VALUES.get(change)
         if value_keys is None or not isinstance(entries, list):
@@ -345,7 +349,7 @@ def _is_vector(value: Any) -> bool:
     return (
         isinstance(value, (list, tuple))
         and len(value) == 3
-        and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value)
+        and all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in value)
     )
 
 
@@ -460,11 +464,11 @@ def _check_site_placement(report: dict[str, Any], policy: dict[str, Any], violat
             }
         )
     recreated = [
-        {key: item["new"][key] for key in _ENTITY_KEYS}
+        _modified_entity_ref(item)
         for item in (*report["modified"], *report["unchanged"])
-        if item.get("old", {}).get("class") == "IfcSite"
-        and item.get("new", {}).get("class") == "IfcSite"
-        and item.get("old", {}).get("guid") != item.get("new", {}).get("guid")
+        if item["old"]["class"] == "IfcSite"
+        and item["new"]["class"] == "IfcSite"
+        and item["old"]["guid"] != item["new"]["guid"]
     ]
     if recreated:
         violations.append(

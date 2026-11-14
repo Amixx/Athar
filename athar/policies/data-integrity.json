@@ -1,4 +1,4 @@
 {
-  "description": "Data integrity: no schema drift and no property/quantity values dropped from any entity.",
+  "description": "Data integrity: no property or quantity values dropped from matched entities with property detail.",
   "forbid_property_removal": "*"
 }
