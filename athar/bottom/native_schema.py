@@ -141,7 +141,7 @@ def _build_descriptors(schema_name: str) -> dict:
             )
         supers = _supertype_names(decl)
         out[type_name.upper()] = {
-            "class": canonical_class_name(type_name),
+            "class": canonical_class_name(schema_name, type_name),
             "product": "IfcProduct" in supers,
             "spatial": bool(
                 supers & {"IfcSpatialElement", "IfcSpatialStructureElement"}
