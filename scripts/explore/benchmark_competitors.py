@@ -573,7 +573,11 @@ def main() -> int:
     parser.add_argument("--workdir", default="/tmp/athar_competitor_benchmark")
     parser.add_argument("--timeout-s", type=int, default=300)
     parser.add_argument("--repeats", type=int, default=3, help="runs per tool; medians are reported")
-    parser.add_argument("--large", action="store_true", help="include opt-in large corpus pairs")
+    parser.add_argument(
+        "--large",
+        action="store_true",
+        help="add the 76 MB and 180 MB same-file pairs (parse-bound time and memory stress)",
+    )
     parser.add_argument("--revit", action="store_true", help="include Revit round-trip corpus pairs")
     parser.add_argument("--only", default=None, help="run only pairs whose name contains this substring")
     parser.add_argument("--no-ifcfast", action="store_true", help="disable optional ifcfast runner even if installed")
@@ -1054,7 +1058,7 @@ def assess_run(name: str, run: dict, expected: Expected | None) -> str:
 
 
 def score_pair(entry: dict, expected: Expected | None) -> dict[str, dict]:
-    """Changeset score per tool; a tool that ran but gave no answer scores as a total miss."""
+    """Changeset score per tool; a refusal, error or timeout scores as a total miss."""
     if expected is None or expected.changed_guids is None:
         return {}
     scores = {}
@@ -1062,11 +1066,12 @@ def score_pair(entry: dict, expected: Expected | None) -> dict[str, dict]:
         status = run.get("status")
         if status == "not_installed":
             continue
-        reported = run.get("reported_guids")
-        if status == "ok" and reported is not None:
-            scores[name] = score_changeset(reported, expected.changed_guids)
+        if status == "ok":
+            if run.get("reported_guids") is None:
+                raise ValueError(f"{name}: completed run carries no reported_guids to score")
+            scores[name] = score_changeset(run["reported_guids"], expected.changed_guids)
         else:
-            scores[name] = _missed_changeset(expected.changed_guids, status or "error")
+            scores[name] = _missed_changeset(expected.changed_guids, status)
     return scores
 
 
@@ -1118,7 +1123,7 @@ def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
     for row in rows:
         if row.get("error"):
             continue
-        dataset = row.get("set") or "synthetic"
+        dataset = row["set"]
         for tool, result in row.items():
             if not isinstance(result, dict) or "status" not in result:
                 continue
@@ -1246,23 +1251,17 @@ def _environment() -> dict:
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "machine": platform.machine(),
-        "git_commit": _git_commit(),
     }
 
 
-def _git_commit() -> str | None:
-    try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=REPO_ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except Exception:
-        return None
-    return completed.stdout.strip() if completed.returncode == 0 else None
+def _git_commit() -> str:
+    """HEAD of the checkout, suffixed ``-dirty`` when tracked files differ from it."""
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=REPO_ROOT, check=True, capture_output=True, text=True).stdout.strip()
+
+    head = git("rev-parse", "HEAD")
+    return f"{head}-dirty" if git("status", "--porcelain", "--untracked-files=no") else head
 
 
 def _package_version(package: str) -> str | None:

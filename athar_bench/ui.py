@@ -482,7 +482,7 @@ def _page(data: dict[str, Any], path: Path, tabs: str) -> str:
     generated = data.get("generated_at", "unknown")
     settings = data.get("settings", {})
     tools = data.get("tools", {})
-    provenance = data.get("provenance", {})
+    provenance = data["provenance"]
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -501,9 +501,9 @@ def _page(data: dict[str, Any], path: Path, tabs: str) -> str:
       <dl class="row small mb-0">
         <dt class="col-sm-2 col-lg-1">Generated</dt><dd class="col-sm-10 col-lg-11 font-monospace">{_e(generated)}</dd>
         <dt class="col-sm-2 col-lg-1">Repeats</dt><dd class="col-sm-10 col-lg-11 font-monospace">{_e(settings.get("repeats", "—"))}</dd>
-        <dt class="col-sm-2 col-lg-1">Athar commit</dt><dd class="col-sm-10 col-lg-11 font-monospace">{_e(provenance.get("athar_commit", "unknown"))}</dd>
-        <dt class="col-sm-2 col-lg-1">Canon</dt><dd class="col-sm-10 col-lg-11 font-monospace">{_e(provenance.get("canon_version", "unknown"))}</dd>
-        <dt class="col-sm-2 col-lg-1">Run date</dt><dd class="col-sm-10 col-lg-11 font-monospace">{_e(provenance.get("run_date", generated))}</dd>
+        <dt class="col-sm-2 col-lg-1">Athar commit</dt><dd class="col-sm-10 col-lg-11 font-monospace">{_e(provenance["athar_commit"])}</dd>
+        <dt class="col-sm-2 col-lg-1">Canon</dt><dd class="col-sm-10 col-lg-11 font-monospace">{_e(provenance["canon_version"])}</dd>
+        <dt class="col-sm-2 col-lg-1">Run date</dt><dd class="col-sm-10 col-lg-11 font-monospace">{_e(provenance["run_date"])}</dd>
       </dl>
     </header>
     <section class="mb-4">{_tool_strip(tools)}</section>

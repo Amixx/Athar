@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from athar_dev.changeset_scoring import score_changeset
 
@@ -178,7 +181,8 @@ def test_dashboard_shows_coverage_and_failed_pairs():
         _scored_pair("easy", {"athar": _ok_run(modified=["M"])}, expected),
         _scored_pair("hard", {"athar": {"status": "timeout"}}, expected),
     ]
-    data = {"summary": rows, "aggregates": bench.aggregate_tools(rows), "tools": {}, "settings": {}}
+    data = {"summary": rows, "aggregates": bench.aggregate_tools(rows), "tools": {}, "settings": {},
+            "provenance": bench._provenance({})}
     page = ui._page(data, Path("bench.json"), ui._dashboard_tabs(data))
     assert "1 / 2" in page
     assert "0.50 / 0.50 / 0.50 (2p)" in page
@@ -283,3 +287,23 @@ def test_benchmark_cli_scores_derived_mutation_truth(tmp_path):
     assert "error" not in pair
     assert len(pair["expected"]["changed_guids"]["modified"]) == 1
     assert "athar" in pair["changeset_scores"]
+
+
+def test_completed_run_without_reported_guids_is_rejected():
+    expected = bench.Expected(changed_guids={"added": [], "deleted": [], "modified": ["M"]})
+    with pytest.raises(ValueError, match="reported_guids"):
+        bench.score_pair({"runs": {"athar": {"status": "ok"}}}, expected)
+
+
+def test_provenance_commit_names_head_and_marks_tracked_edits():
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=bench.REPO_ROOT, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=bench.REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert bench._provenance({})["athar_commit"] == (f"{head}-dirty" if dirty else head)

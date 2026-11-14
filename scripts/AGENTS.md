@@ -61,10 +61,15 @@ Scripts are for inspection and repeatable investigation.
     - Each `Pair` carries a `set_name` (JSON key `"set"`); the default set is
       `"synthetic"`. The `"revit"` set is 9 same-schema pairs built from the
       real Revit round-trip corpus at `corpus/roundtrip-revit-2026-07-06/`
-      (see that directory's `MANIFEST.md`/`FINDINGS.md`) — opt-in via
-      `--revit`, same pattern as `--large`. Its ground truth lives in that
-      corpus directory's `ground_truth.json` (one entry per pair name, with
-      optional `counts` and `changed_guids`); the source `.ifc` exports are
+      (see that directory's `MANIFEST.md`/`FINDINGS.md`), selected by
+      `--revit`, which `make benchmark-run` passes; `--large` adds the 76 MB
+      and 180 MB same-file stress pairs (`BENCHMARK_ARGS=--large` through
+      make). Its truth lives in that corpus directory's `ground_truth.json`
+      (one entry per pair name, with optional `counts` and `changed_guids`).
+      That file was written from an Athar report, so scoring Athar against it
+      is circular; `explore/derive_revit_truth.py` re-derives each pair's
+      change set from the IFC content with `ifcopenshell` alone, as a check
+      on it. The source `.ifc` exports are
       committed as `.zst` and the pair builder decompresses them on demand
       via `zstd -d -k` (kept, not consumed). Cross-schema pairs (original/r1
       vs r2+) are deliberately NOT benchmarked: Athar refuses them (covered
@@ -72,6 +77,10 @@ Scripts are for inspection and repeatable investigation.
       them, and there is no conclusion to draw. `_run_athar` still maps CLI
       exit 3 to `{"status": "refused", "reason": "schema_incompatible"}` so
       an unexpected refusal shows up as `"unexpected"` rather than an error.
+    - The JSON's `provenance` (shown on the dashboard) records the Athar
+      commit (`-dirty` when tracked files differ from it), `CANON_VERSION`,
+      each tool's installed version and the run date. Competitor versions are
+      pinned in the `benchmark` extra.
     - `--only SUBSTRING` restricts a run to pairs whose name contains the
       substring (combine with `--revit`/`--large` to reach one gated pair
       cheaply, e.g. `--revit --only r8_r9 --repeats 1`).
