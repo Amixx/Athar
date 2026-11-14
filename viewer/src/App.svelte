@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { publishDebug } from './lib/debug'
+  import { entityBounds, frameTranslations } from './lib/frame'
   import { tessellate, type ModelGeometry } from './lib/ifc'
   import {
     buildDiffIndex,
@@ -53,9 +54,6 @@
 
   let steps = $state<StepSource[]>([])
   let activeStep = $state(0)
-  // One RTC offset from the first file tessellated is reused for every step, so
-  // cached meshes stay in a single coordinate frame across step switches.
-  let sharedOffset: ModelGeometry['rtcOffset'] = null
   const meshCache = new Map<string, ModelGeometry>()
   const reportCache = new Map<string, unknown>()
   let loadSeq = 0
@@ -129,10 +127,8 @@
     progress = { stage: `Tessellating ${name}`, count: 0 }
     const bytes = await fetchBytes()
     const geometry = await tessellate(bytes, {
-      sharedRtcOffset: sharedOffset ?? undefined,
       onProgress: (count) => (progress = { stage: `Tessellating ${name}`, count }),
     })
-    if (!sharedOffset && geometry.rtcOffset) sharedOffset = geometry.rtcOffset
     meshCache.set(key, geometry)
     return geometry
   }
@@ -182,6 +178,8 @@
 
       index = nextIndex
       const diff = nextIndex
+      const translations = frameTranslations(oldGeometry.origin, newGeometry.origin)
+      const geometries = { old: oldGeometry, new: newGeometry }
       const bucketOfFn = (side: Side, stepId: number) =>
         bucketFor(side, side === 'old' ? diff.old.get(stepId) : diff.new.get(stepId))
       const displacementGroups = groupDisplacements(
@@ -214,7 +212,13 @@
       }
       let displacementLines = displacementGroups.length
       if (scene) {
-        const stats = scene.setModels(oldGeometry, newGeometry, bucketOfFn, displacementGroups)
+        const stats = scene.setModels(
+          oldGeometry,
+          newGeometry,
+          bucketOfFn,
+          displacementGroups,
+          translations,
+        )
         displacementLines = stats.displacementLines
         scene.applyAppearances(computeAppearances(sliderT, toggles), showLines)
       }
@@ -233,6 +237,11 @@
         stepCount: steps.length,
         activeStep: target,
         stepLabel: step.label,
+        frameTranslations: translations,
+        entityBounds: (side: Side, stepId: number) => {
+          const meshes = geometries[side].byEntity.get(stepId)
+          return meshes ? entityBounds(meshes, translations[side]) : null
+        },
       })
     } catch (cause) {
       if (token === loadSeq) fail(cause)

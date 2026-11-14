@@ -18,6 +18,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { MeshData } from '@ifc-lite/geometry'
+import type { Vec3 } from './frame'
 import type { ModelGeometry } from './ifc'
 import { BUCKET_SIDE, type Appearance, type Bucket } from './renderState'
 import type { Side } from './types'
@@ -140,12 +141,14 @@ export class DiffScene {
    * `bucketOf` decides each entity's bucket (or null = not rendered).
    * `displacementGroups` each draw one arrow: a single placement-only pair,
    * or a whole placement cohort collapsed to its averaged centroid move.
+   * `translations` are added to each side's mesh positions.
    */
   setModels(
     oldGeometry: ModelGeometry,
     newGeometry: ModelGeometry,
     bucketOf: (side: Side, stepId: number) => Bucket | null,
     displacementGroups: Array<{ pairs: Array<{ oldId: number; newId: number }> }>,
+    translations: Record<Side, Vec3>,
   ): SceneStats {
     this.clearModels()
 
@@ -164,7 +167,7 @@ export class DiffScene {
 
     const counts: Partial<Record<Bucket, number>> = {}
     for (const [bucket, entities] of grouped) {
-      const entry = this.buildBucket(bucket, entities)
+      const entry = this.buildBucket(bucket, entities, translations[BUCKET_SIDE[bucket]])
       this.buckets.set(bucket, entry)
       this.scene.add(entry.mesh)
       counts[bucket] = entities.length
@@ -185,6 +188,7 @@ export class DiffScene {
   private buildBucket(
     bucket: Bucket,
     entities: Array<{ stepId: number; meshes: MeshData[] }>,
+    translation: Vec3,
   ): BucketEntry {
     const side = BUCKET_SIDE[bucket]
     let vertexFloats = 0
@@ -207,13 +211,19 @@ export class DiffScene {
       const start = indexOffset
       const box = new THREE.Box3()
       for (const mesh of entity.meshes) {
-        positions.set(mesh.positions, vertexOffset * 3)
         normals.set(mesh.normals, vertexOffset * 3)
         for (let i = 0; i < mesh.indices.length; i++) {
           indices[indexOffset + i] = mesh.indices[i] + vertexOffset
         }
+        const base = vertexOffset * 3
         for (let i = 0; i < mesh.positions.length; i += 3) {
-          expandBox(box, mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2])
+          const x = mesh.positions[i] + translation.x
+          const y = mesh.positions[i + 1] + translation.y
+          const z = mesh.positions[i + 2] + translation.z
+          positions[base + i] = x
+          positions[base + i + 1] = y
+          positions[base + i + 2] = z
+          expandBox(box, x, y, z)
         }
         vertexOffset += mesh.positions.length / 3
         indexOffset += mesh.indices.length

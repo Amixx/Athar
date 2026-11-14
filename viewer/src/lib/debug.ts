@@ -4,8 +4,9 @@
  * reading pixels, so it stays meaningful even where WebGL is unavailable.
  */
 
+import type { Bounds, Vec3 } from './frame'
 import type { Bucket, Appearance } from './renderState'
-import type { Section } from './types'
+import type { Section, Side } from './types'
 
 export interface ViewerDebugState {
   phase: 'empty' | 'loading' | 'ready' | 'error'
@@ -25,6 +26,10 @@ export interface ViewerDebugState {
   stepCount?: number
   activeStep?: number
   stepLabel?: string
+  /** Translation added to each side's meshes to put both models in one frame. */
+  frameTranslations?: Record<Side, Vec3>
+  /** Scene-space bounds of one entity's meshes as drawn, whether or not its bucket renders that side. */
+  entityBounds?: (side: Side, stepId: number) => Bounds | null
 }
 
 declare global {

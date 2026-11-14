@@ -7,8 +7,10 @@ is the only JavaScript in the repository; everything else stays Python.
 ## Stack
 
 - Svelte 5 (runes) + Vite + TypeScript, managed with [bun](https://bun.sh).
-- `@ifc-lite/geometry` for in-browser WASM tessellation (streaming; model 1's
-  RTC offset is reused for model 2 so both share one coordinate frame).
+- `@ifc-lite/geometry` for in-browser WASM tessellation (streaming). Each
+  file is tessellated in its own local frame (the tessellator subtracts a
+  per-file RTC offset); the new model's meshes are translated by the
+  difference of the two offsets so both sit in the old model's frame.
 - three.js for rendering. `@ifc-lite/renderer` was evaluated and rejected:
   per-entity color overrides are not public API there (they require internal
   GPU device/pipeline handles), and its federation registry assumes a single
@@ -24,7 +26,8 @@ is the only JavaScript in the repository; everything else stays Python.
 | `src/lib/types.ts` | TS mirror of the engine report shape (`athar/delta/report.py`) |
 | `src/lib/report.ts` | Report validation + `DiffIndex` (side × STEP id → entity record) |
 | `src/lib/renderState.ts` | Pure core: bucket assignment, crossfade appearances, count helpers, displacement grouping |
-| `src/lib/ifc.ts` | ifc-lite tessellation (the only ifc-lite import) |
+| `src/lib/ifc.ts` | ifc-lite tessellation (the only runtime ifc-lite import) |
+| `src/lib/frame.ts` | Pure coordinate-frame arithmetic: IFC Z-up to scene Y-up, per-model origins, per-side overlay translations |
 | `src/lib/scene.ts` | three.js scene: merged per-bucket meshes, picking, highlight, displacement arrows (one averaged arrow per placement cohort), camera fits |
 | `src/lib/sources.ts` | Input paths: `?src=` manifest handoff and drag-drop classification |
 | `src/lib/debug.ts` | `window.__athar_viewer` state mirror for headless tests |
@@ -52,9 +55,8 @@ highlight overlay.
    (`athar view a.ifc b.ifc c.ifc …`). A v1 manifest is treated as a one-step
    chain, so single-pair loads are unchanged. When a chain has more than one
    step the app shows a prev/next navigator (`[` / `]`) and a `n/N: label`
-   indicator; adjacent steps share a file url, so a per-url mesh cache and one
-   chain-wide RTC offset mean switching a step re-tessellates only the new
-   revision.
+   indicator; adjacent steps share a file url, so a per-url mesh cache means
+   switching a step re-tessellates only the new revision.
 
 ## Commands
 
@@ -81,6 +83,9 @@ before building the Python distribution.
   `python scripts/make_viewer_fixture.py` from the repo root). Asserts bucket
   and meshless counts through `window.__athar_viewer` instead of pixels, and
   covers both input paths, slider snaps, toggles, and click selection.
+- `e2e/frame.spec.ts` — the fixture pair moved to a large world coordinate so
+  each file gets a different RTC offset; asserts an element's old and new
+  bounds coincide (`entityBounds` debug probe).
 - `e2e/corpus.spec.ts` — opt-in acceptance against a live launcher:
 
   ```bash
