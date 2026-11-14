@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 
 import ifcopenshell
@@ -32,9 +33,11 @@ def _verified_path(entry: dict) -> str:
 
 
 @pytest.mark.parametrize("entry", _MANIFEST["files"], ids=lambda e: e["path"])
-def test_self_diff_is_zero(entry: dict) -> None:
+def test_self_diff_is_zero(entry: dict, tmp_path: Path) -> None:
     path = _verified_path(entry)
-    report = diff_files(path, path)
+    copy = tmp_path / "copy.ifc"
+    shutil.copyfile(path, copy)
+    report = diff_files(path, str(copy))
     assert_report_invariants(report)
     assert_zero_diff(report)
 

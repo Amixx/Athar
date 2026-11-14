@@ -11,6 +11,7 @@ matched, disjoint pairs stay unmatched), never golden counts.
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import uuid
 
@@ -86,9 +87,11 @@ def _bounded_runtime():
 
 
 @pytest.mark.parametrize("key", LARGE_FILES)
-def test_same_file_diff_is_clean(key):
+def test_same_file_diff_is_clean(key, tmp_path):
     path = acceptance_path(key)
-    report = diff_files(path, path)
+    copy = tmp_path / f"{key}-copy.ifc"
+    shutil.copyfile(path, copy)
+    report = diff_files(path, str(copy))
     assert_report_invariants(report)
     assert_zero_diff(report)
     # Non-vacuity floor: these models must yield substantial signature
@@ -133,6 +136,15 @@ def test_unrelated_pair_stays_unmatched(old_key, new_key):
     assert stats["matcher_diagnostics"]["matched_by_tier"]["guid"] == 0
     assert stats["deleted"] >= stats["old_signatures"] // 2
     assert stats["added"] >= stats["new_signatures"] // 2
+
+
+@pytest.mark.parametrize("old_name,new_name", (("r2", "r3"), ("r8", "r9")))
+def test_revit_noop_reexports_are_empty(old_name, new_name):
+    from scripts.explore.benchmark_competitors import _revit_export_path
+
+    report = diff_files(_revit_export_path(old_name), _revit_export_path(new_name))
+    assert_report_invariants(report)
+    assert_zero_diff(report)
 
 
 def test_guid_scramble_at_scale_recovers_identity(tmp_path_factory):

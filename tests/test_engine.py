@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 
 import pytest
 
@@ -66,8 +67,10 @@ def test_schema_mismatch_error_is_typed_and_structured():
     assert "IFC2X3" in str(err) and "IFC4" in str(err)
 
 
-def test_engine_model_without_products_yields_empty_report():
-    report = diff_files(EMPTY_MODEL, EMPTY_MODEL)
+def test_engine_model_without_products_yields_empty_report(tmp_path):
+    copy = tmp_path / "empty-copy.ifc"
+    shutil.copyfile(EMPTY_MODEL, copy)
+    report = diff_files(EMPTY_MODEL, str(copy))
     for section in SECTIONS:
         assert report["stats"][section] == 0
         assert report[section] == []
