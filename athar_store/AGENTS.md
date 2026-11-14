@@ -48,14 +48,25 @@ per-revision deltas — but without any Git dependency, via `ArtifactPack`:
   (`zstd --patch-from`); `set_baseline` starts a fresh chain with a full
   snapshot. Chains are capped at `MAX_CHAIN_DEPTH` (8); the next ingest past
   the cap stores a full snapshot and roots a new chain.
-- Every delta is decoded and sha-verified at ingest before the pack commits to
-  it; a failed verification, an over-large delta (≥50% of logical size), or a
-  missing base falls back to a full zstd snapshot, then to a raw copy.
-- The `zstd` executable is an optional external tool: without it the pack
-  degrades to raw copies (the legacy layout, which stays readable forever);
-  reading compressed artifacts requires it again. Semantic deltas are *not*
-  used for storage — the engine's diff report is not byte-invertible, so
-  reconstruction correctness comes from byte deltas.
+- Every delta and full snapshot is decoded and sha-verified at ingest before
+  the pack commits to it. An over-large delta (≥50% of logical size) or a
+  missing or full-depth base is stored as a full zstd snapshot instead; an
+  encoding that fails its round-trip check raises `PackError`.
+- Writing any artifact and reading a compressed one require the external
+  `zstd` executable (1.5+, for `--patch-from`). Its absence raises
+  `PackError` with an install hint; there is no uncompressed fallback. It is a
+  system binary, so the wheel metadata cannot declare it. Raw `<sha>.ifc`
+  files without a sidecar, as written by release 0.1.0, are read and
+  hash-verified; sidecars only ever carry `zstd` or `zstd-delta`. Semantic
+  deltas are *not* used for storage — the engine's diff report is not
+  byte-invertible, so reconstruction correctness comes from byte deltas.
+- Materialization walks the chain iteratively through two scratch files beside
+  the destination, regardless of depth, and replaces the destination only after
+  the final link's hash check, so a failed export leaves it untouched. The
+  destination gets the mode a plain `open` would create (0666 masked by the
+  process umask), not the scratch files' 0600. Every link is hash-verified.
+  Cyclic chains, inconsistent depths, and depths beyond eight are refused. Ingest past eight stores a full snapshot;
+  there is no separate repack command.
 - Reads go through `BaselineStore.export_artifact` / `ArtifactPack.open`
   (temporary materialization); `review` materializes the baseline the same
   way. `athar store export` and `athar store stats` expose this on the CLI.

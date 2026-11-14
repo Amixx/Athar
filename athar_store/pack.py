@@ -5,16 +5,16 @@ artifact may be stored as a zstd ``--patch-from`` delta against a base
 artifact (typically the baseline it was reviewed against), so a lineage of
 large exports costs one full snapshot plus small per-revision deltas.
 
-Reconstruction is byte-exact by construction: every delta is decoded and
+Reconstruction is byte-exact by construction: every encoding is decoded and
 sha-verified at ingest time, before the pack commits to it. A delta that
-fails verification, exceeds the chain-depth bound, or saves too little space
-falls back to a full zstd snapshot; when the ``zstd`` executable is missing
-the pack degrades to raw copies (the pre-delta layout, which stays readable
-forever). Reading compressed artifacts requires ``zstd`` again.
+saves too little space or exceeds the chain-depth bound is stored as a full
+zstd snapshot. Verification and compression failures raise PackError.
+Writing artifacts and reading compressed ones require the external ``zstd``
+executable (1.5+). Raw artifacts written by release 0.1.0 remain readable.
 
 On-disk, per sha256:
 
-- ``<sha>.ifc``            raw bytes (legacy layout and no-zstd fallback)
+- ``<sha>.ifc``            release 0.1.0 raw bytes without a sidecar
 - ``<sha>.ifc.zst``        full zstd snapshot
 - ``<sha>.ifc.patch.zst``  zstd delta against ``base_sha256``
 - ``<sha>.meta.json``      encoding, base, chain depth, logical/stored sizes
@@ -24,13 +24,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
+from ._io import atomic_file, mkdir_durable
+
+PACK_FORMAT = 1
 MAX_CHAIN_DEPTH = 8
 _DELTA_ACCEPT_RATIO = 0.5
 _ZSTD_LEVEL = "-9"
@@ -41,10 +45,6 @@ class PackError(Exception):
     """Raised when an artifact cannot be stored or reconstructed."""
 
 
-def zstd_available() -> bool:
-    return shutil.which("zstd") is not None
-
-
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -53,12 +53,31 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _scratch_path(directory: Path) -> Path:
+    descriptor, name = tempfile.mkstemp(prefix=".athar-pack-", dir=directory)
+    os.close(descriptor)
+    return Path(name)
+
+
+def _new_file_mode() -> int:
+    # The umask can only be read by setting it; 0o077 is in force for that instant.
+    umask = os.umask(0o077)
+    os.umask(umask)
+    return 0o666 & ~umask
+
+
 def _window_log(*sizes: int) -> int:
     return min(30, max(24, *(size.bit_length() for size in sizes)))
 
 
 def _zstd(*args: str) -> None:
-    result = subprocess.run(["zstd", "-q", "-f", *args], capture_output=True, text=True)
+    try:
+        result = subprocess.run(["zstd", "-q", "-f", *args], capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise PackError(
+            "Store packing requires the zstd executable (1.5+); "
+            "install with `brew install zstd` or `apt install zstd`."
+        ) from exc
     if result.returncode != 0:
         raise PackError(f"zstd failed ({result.returncode}): {result.stderr.strip()}")
 
@@ -66,8 +85,11 @@ def _zstd(*args: str) -> None:
 class ArtifactPack:
     """Content-addressed artifact files with optional zstd delta chains."""
 
-    def __init__(self, directory: str | Path) -> None:
+    def __init__(
+        self, directory: str | Path, *, scratch_path: Callable[[Path], Path] = _scratch_path
+    ) -> None:
         self.directory = Path(directory)
+        self._scratch_path = scratch_path
 
     # ----- lookup ------------------------------------------------------------
 
@@ -77,13 +99,30 @@ class ArtifactPack:
     def meta(self, sha256: str) -> dict[str, Any] | None:
         """Stored metadata for one artifact, or None if absent.
 
-        A bare ``<sha>.ifc`` without a sidecar (pre-delta layout) is reported
-        as ``raw`` so old stores keep working unchanged.
+        A bare ``<sha>.ifc`` without a sidecar (release 0.1.0) is reported as
+        ``raw``.
         """
         meta_path = self._meta_path(sha256)
         if meta_path.is_file():
             with open(meta_path, encoding="utf-8") as handle:
-                return json.load(handle)
+                meta = json.load(handle)
+            if meta.get("format") != PACK_FORMAT:
+                raise PackError(
+                    f"artifact {sha256} has pack format {meta.get('format')!r}; "
+                    f"this Athar reads format {PACK_FORMAT}"
+                )
+            encoding = meta.get("encoding")
+            depth = meta.get("chain_depth")
+            if (
+                meta.get("sha256") != sha256
+                or encoding not in ("zstd", "zstd-delta")
+                or type(depth) is not int
+                or not 0 <= depth <= MAX_CHAIN_DEPTH
+                or (encoding == "zstd" and (depth != 0 or meta.get("base_sha256") is not None))
+                or (encoding == "zstd-delta" and (depth == 0 or not isinstance(meta.get("base_sha256"), str)))
+            ):
+                raise PackError(f"artifact {sha256} has invalid pack metadata")
+            return meta
         raw = self._raw_path(sha256)
         if raw.is_file():
             size = raw.stat().st_size
@@ -131,17 +170,14 @@ class ArtifactPack:
         sha256 = _sha256_file(src)
         existing = self.meta(sha256)
         if existing is not None:
+            with self.open(sha256):
+                pass
             return existing
-        self.directory.mkdir(parents=True, exist_ok=True)
+        mkdir_durable(self.directory)
         size = src.stat().st_size
-        meta = None
-        if zstd_available():
-            meta = self._try_ingest_delta(src, sha256, size, base_sha256)
-            if meta is None:
-                meta = self._try_ingest_full(src, sha256, size)
+        meta = self._try_ingest_delta(src, sha256, size, base_sha256)
         if meta is None:
-            shutil.copyfile(src, self._raw_path(sha256))
-            meta = self._meta_dict(sha256, "raw", None, 0, size, size, None)
+            meta = self._ingest_full(src, sha256, size)
         self._write_meta(meta)
         return meta
 
@@ -155,34 +191,33 @@ class ArtifactPack:
             return None
         delta = self._delta_path(sha256)
         window_log = _window_log(base_meta["size_bytes"], size)
-        try:
-            with self.open(base_sha256) as base_path, tempfile.TemporaryDirectory(
-                prefix="athar-pack-", dir=self.directory
-            ) as tmp:
-                _zstd(
-                    _ZSTD_LEVEL,
-                    f"--long={window_log}",
-                    f"--patch-from={base_path}",
-                    "-o",
-                    str(delta),
-                    str(src),
-                )
-                if delta.stat().st_size >= size * _DELTA_ACCEPT_RATIO:
-                    raise PackError("delta saves too little over a full snapshot")
-                verify = Path(tmp) / "verify.ifc"
-                _zstd(
-                    "-d",
-                    f"--long={window_log}",
-                    f"--patch-from={base_path}",
-                    "-o",
-                    str(verify),
-                    str(delta),
-                )
-                if _sha256_file(verify) != sha256:
-                    raise PackError("delta round-trip hash mismatch")
-        except PackError:
-            delta.unlink(missing_ok=True)
-            return None
+        with self.open(base_sha256) as base_path, tempfile.TemporaryDirectory(
+            prefix="athar-pack-", dir=self.directory
+        ) as tmp:
+            candidate = Path(tmp) / "delta.zst"
+            _zstd(
+                _ZSTD_LEVEL,
+                f"--long={window_log}",
+                f"--patch-from={base_path}",
+                "-o",
+                str(candidate),
+                str(src),
+            )
+            if candidate.stat().st_size >= size * _DELTA_ACCEPT_RATIO:
+                return None
+            verify = Path(tmp) / "verify.ifc"
+            _zstd(
+                "-d",
+                f"--long={window_log}",
+                f"--patch-from={base_path}",
+                "-o",
+                str(verify),
+                str(candidate),
+            )
+            if _sha256_file(verify) != sha256:
+                raise PackError("delta round-trip hash mismatch")
+            with atomic_file(delta) as temporary:
+                os.replace(candidate, temporary)
         return self._meta_dict(
             sha256,
             "zstd-delta",
@@ -193,14 +228,17 @@ class ArtifactPack:
             window_log,
         )
 
-    def _try_ingest_full(self, src: Path, sha256: str, size: int) -> dict[str, Any] | None:
+    def _ingest_full(self, src: Path, sha256: str, size: int) -> dict[str, Any]:
         full = self._full_path(sha256)
-        try:
-            _zstd(_ZSTD_LEVEL, "-o", str(full), str(src))
-            _zstd("-t", str(full))
-        except PackError:
-            full.unlink(missing_ok=True)
-            return None
+        with atomic_file(full) as temporary:
+            _zstd(_ZSTD_LEVEL, "-o", str(temporary), str(src))
+            verify = self._scratch_path(self.directory)
+            try:
+                _zstd("-d", "-o", str(verify), str(temporary))
+                if _sha256_file(verify) != sha256:
+                    raise PackError("full snapshot round-trip hash mismatch")
+            finally:
+                verify.unlink(missing_ok=True)
         return self._meta_dict(sha256, "zstd", None, 0, size, full.stat().st_size, None)
 
     # ----- read --------------------------------------------------------------
@@ -211,42 +249,62 @@ class ArtifactPack:
         meta = self.meta(sha256)
         if meta is None:
             raise PackError(f"unknown artifact {sha256}")
-        encoding = meta["encoding"]
-        if encoding == "raw":
-            shutil.copyfile(self._raw_path(sha256), dest)
-            return dest
-        if not zstd_available():
-            raise PackError(f"artifact {sha256} is zstd-encoded but no `zstd` executable is available")
-        if encoding == "zstd":
-            _zstd("-d", "-o", str(dest), str(self._full_path(sha256)))
-            return dest
-        if encoding == "zstd-delta":
-            with self.open(meta["base_sha256"]) as base_path:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        chain: list[dict[str, Any]] = []
+        visited = {sha256}
+        root = meta
+        while root["encoding"] == "zstd-delta":
+            chain.append(root)
+            base = root["base_sha256"]
+            if base in visited or len(chain) > MAX_CHAIN_DEPTH:
+                raise PackError(f"artifact {sha256} has a cyclic or over-depth delta chain")
+            visited.add(base)
+            parent = self.meta(base)
+            if parent is None:
+                raise PackError(f"artifact {sha256} is missing delta base {base}")
+            if root["chain_depth"] != parent["chain_depth"] + 1:
+                raise PackError(f"artifact {sha256} has inconsistent chain depths")
+            root = parent
+        scratch = (self._scratch_path(dest.parent), self._scratch_path(dest.parent))
+        try:
+            active = scratch[0]
+            if root["encoding"] == "raw":
+                shutil.copyfile(self._raw_path(root["sha256"]), active)
+            else:
+                _zstd("-d", "-o", str(active), str(self._full_path(root["sha256"])))
+            if _sha256_file(active) != root["sha256"]:
+                raise PackError(f"artifact {root['sha256']} failed sha256 verification")
+            for link in reversed(chain):
+                output = scratch[1] if active == scratch[0] else scratch[0]
                 _zstd(
                     "-d",
-                    f"--long={meta['window_log']}",
-                    f"--patch-from={base_path}",
-                    "-o",
-                    str(dest),
-                    str(self._delta_path(sha256)),
+                    f"--long={link['window_log']}",
+                    f"--patch-from={active}",
+                    "-o", str(output),
+                    str(self._delta_path(link["sha256"])),
                 )
-            return dest
-        raise PackError(f"artifact {sha256} has unknown encoding {encoding!r}")
+                if _sha256_file(output) != link["sha256"]:
+                    raise PackError(f"artifact {link['sha256']} failed sha256 verification")
+                active = output
+            os.chmod(active, _new_file_mode())
+            os.replace(active, dest)
+        finally:
+            for path in scratch:
+                path.unlink(missing_ok=True)
+        return dest
 
     @contextmanager
     def open(self, sha256: str) -> Iterator[Path]:
-        """Yield a readable path with the artifact's exact bytes.
-
-        Raw artifacts are yielded in place; compressed ones are materialized
-        into a temporary file that is removed on exit.
-        """
+        """Yield a verified path with the artifact's exact bytes."""
         meta = self.meta(sha256)
         if meta is None:
             raise PackError(f"unknown artifact {sha256}")
         if meta["encoding"] == "raw":
+            if _sha256_file(self._raw_path(sha256)) != sha256:
+                raise PackError(f"artifact {sha256} failed sha256 verification")
             yield self._raw_path(sha256)
             return
-        with tempfile.TemporaryDirectory(prefix="athar-pack-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="athar-pack-", dir=self.directory) as tmp:
             yield self.materialize(sha256, Path(tmp) / f"{sha256}.ifc")
 
     # ----- internals ---------------------------------------------------------
@@ -274,6 +332,7 @@ class ArtifactPack:
         window_log: int | None,
     ) -> dict[str, Any]:
         return {
+            "format": PACK_FORMAT,
             "sha256": sha256,
             "encoding": encoding,
             "base_sha256": base_sha256,
@@ -284,6 +343,5 @@ class ArtifactPack:
         }
 
     def _write_meta(self, meta: dict[str, Any]) -> None:
-        with open(self._meta_path(meta["sha256"]), "w", encoding="utf-8") as handle:
-            json.dump(meta, handle, indent=2, sort_keys=True)
-            handle.write("\n")
+        with atomic_file(self._meta_path(meta["sha256"])) as temporary:
+            temporary.write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
