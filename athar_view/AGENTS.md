@@ -50,7 +50,9 @@ so parser and renderer can be swapped independently.
   carries display names, per-file cache keys, and lazy byte/report resolvers so
   App.svelte fetches and tessellates a step only when it becomes active.
   App.svelte keeps a per-url mesh cache across the whole chain, so switching
-  to an adjacent step re-tessellates only the one new revision.
+  to an adjacent step re-tessellates only the one new revision. Dropped meshes
+  and validated reports use content-hash keys. Start over clears both caches
+  and disposes the scene.
 - `src/lib/debug.ts` — `window.__athar_viewer` state mirror (phase, bucket
   counts, meshless counts, appearances, selection) so headless tests assert
   state, not pixels; the app stays usable without WebGL (panels work, canvas

@@ -3,6 +3,8 @@ import { describe, expect, it } from 'bun:test'
 import {
   addDroppedFiles,
   assignRoles,
+  chainFromFiles,
+  hashFile,
   MANIFEST_SCHEMA_VERSION,
   NO_DROPS,
   parseManifest,
@@ -102,6 +104,20 @@ describe('addDroppedFiles', () => {
     let drops = addDroppedFiles([file('a.ifc')], NO_DROPS)
     drops = addDroppedFiles([file('b.ifc'), file('c.ifc')], drops)
     expect(drops.ifcs.map((f) => f.name)).toEqual(['b.ifc', 'c.ifc'])
+  })
+})
+
+describe('chainFromFiles', () => {
+  it('keys models and reports by content, not file names or the model pair', async () => {
+    const a = await hashFile(new File(['first'], 'same.ifc'))
+    const b = await hashFile(new File(['second'], 'same.ifc'))
+    const copy = await hashFile(new File(['first'], 'renamed.ifc'))
+    const first = chainFromFiles(a, b, {}, 'report-a').steps[0]
+    const second = chainFromFiles(copy, b, {}, 'report-b').steps[0]
+    expect(first.oldKey).not.toBe(first.newKey)
+    expect(first.oldKey).toBe(second.oldKey)
+    expect(first.reportKey).not.toBe(second.reportKey)
+    expect(await first.fetchOldBytes()).toEqual(await a.file.arrayBuffer())
   })
 })
 

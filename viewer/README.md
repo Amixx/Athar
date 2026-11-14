@@ -48,7 +48,9 @@ highlight overlay.
    by matching each file's SHA-256 against the report's
    `audit.inputs.{old,new}.sha256`. When a file matches neither or the report
    records no hashes, the app shows a warning and asks the user to assign the
-   roles before it starts; it never assigns them by file name.
+   roles before it starts; it never assigns them by file name. Dropped geometry
+   and validated reports are cached by SHA-256 content hash. Start over clears
+   both caches and the scene.
 2. **`?src=<origin>`**: fetches `<origin>/manifest.json`
    (`athar_viewer_manifest: 1`, `schema_version` handshake) and the files it
    points at. This is what `athar view` (in `athar_view/`) serves.

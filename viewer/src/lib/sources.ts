@@ -59,6 +59,7 @@ export interface StepSource {
   newName: string
   oldKey: string
   newKey: string
+  reportKey: string
   fetchOldBytes: () => Promise<ArrayBuffer>
   fetchNewBytes: () => Promise<ArrayBuffer>
   fetchReport: () => Promise<unknown>
@@ -159,6 +160,7 @@ export async function loadChainFromSrc(src: string): Promise<LoadedChain> {
       newName: step.new.name ?? 'new.ifc',
       oldKey: oldUrl,
       newKey: newUrl,
+      reportKey: reportUrl,
       fetchOldBytes: () => fetchOk(oldUrl).then((r) => r.arrayBuffer()),
       fetchNewBytes: () => fetchOk(newUrl).then((r) => r.arrayBuffer()),
       fetchReport: () => fetchOk(reportUrl).then((r) => r.json()),
@@ -234,15 +236,16 @@ export function assignRoles<T extends { file: { name: string }; sha256: string }
   return { verified: false, reason: `${a.file.name} and ${b.file.name} both match the same input of the report.` }
 }
 
-export function chainFromFiles(oldFile: File, newFile: File, report: unknown): LoadedChain {
+export function chainFromFiles(oldFile: HashedFile, newFile: HashedFile, report: unknown, reportHash: string): LoadedChain {
   const step: StepSource = {
-    label: `${oldFile.name} → ${newFile.name}`,
-    oldName: oldFile.name,
-    newName: newFile.name,
-    oldKey: `file:${oldFile.name}`,
-    newKey: `file:${newFile.name}`,
-    fetchOldBytes: () => oldFile.arrayBuffer(),
-    fetchNewBytes: () => newFile.arrayBuffer(),
+    label: `${oldFile.file.name} → ${newFile.file.name}`,
+    oldName: oldFile.file.name,
+    newName: newFile.file.name,
+    oldKey: `sha256:${oldFile.sha256}`,
+    newKey: `sha256:${newFile.sha256}`,
+    reportKey: `sha256:${reportHash}`,
+    fetchOldBytes: () => oldFile.file.arrayBuffer(),
+    fetchNewBytes: () => newFile.file.arrayBuffer(),
     fetchReport: () => Promise.resolve(report),
   }
   return { steps: [step], activeStep: 0 }

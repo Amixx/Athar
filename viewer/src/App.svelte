@@ -42,6 +42,7 @@
   interface UnverifiedPair {
     files: [HashedFile, HashedFile]
     report: unknown
+    reportHash: string
     reason: string
     oldIndex: 0 | 1 | null
   }
@@ -127,12 +128,13 @@
     try {
       const [a, b] = await Promise.all(dropped.ifcs.map(hashFile))
       const report = await readReportFile(dropped.reportFile!)
+      const { sha256: reportHash } = await hashFile(dropped.reportFile!)
       parseReport(report)
       const roles = assignRoles([a, b], reportInputHashes(report))
       if (roles.verified) {
-        startDropped(roles.old.file, roles.new.file, report)
+        startDropped(roles.old, roles.new, report, reportHash)
       } else {
-        unverified = { files: [a, b], report, reason: roles.reason, oldIndex: null }
+        unverified = { files: [a, b], report, reportHash, reason: roles.reason, oldIndex: null }
         phase = 'confirm'
         publishDebug({ phase: 'confirm' })
       }
@@ -141,23 +143,33 @@
     }
   }
 
-  function startDropped(oldFile: File, newFile: File, report: unknown): void {
+  function startDropped(oldFile: HashedFile, newFile: HashedFile, report: unknown, reportHash: string): void {
     unverified = null
-    const chain = chainFromFiles(oldFile, newFile, report)
+    const chain = chainFromFiles(oldFile, newFile, report, reportHash)
     steps = chain.steps
     void loadStep(chain.activeStep)
   }
 
   function confirmUnverified(): void {
     if (!unverified || unverified.oldIndex === null) return
-    const oldFile = unverified.files[unverified.oldIndex].file
-    const newFile = unverified.files[1 - unverified.oldIndex].file
-    startDropped(oldFile, newFile, unverified.report)
+    const oldFile = unverified.files[unverified.oldIndex]
+    const newFile = unverified.files[1 - unverified.oldIndex]
+    startDropped(oldFile, newFile, unverified.report, unverified.reportHash)
   }
 
   function startOver(): void {
+    loadSeq += 1
+    scene?.dispose()
+    scene = null
+    rendererReady = false
+    selection = null
+    warning = ''
     phase = 'empty'
     error = ''
+    meshCache.clear()
+    reportCache.clear()
+    steps = []
+    index = null
     drops = NO_DROPS
     unverified = null
     publishDebug({ phase: 'empty', error: undefined })
@@ -186,10 +198,11 @@
   }
 
   async function getReport(step: StepSource): Promise<unknown> {
-    const key = `${step.oldKey}=>${step.newKey}`
+    const key = step.reportKey
     const cached = reportCache.get(key)
     if (cached !== undefined) return cached
     const json = await step.fetchReport()
+    parseReport(json)
     reportCache.set(key, json)
     return json
   }
@@ -575,6 +588,7 @@
     <div class="panel viewbtns">
       <button onclick={() => scene?.fitChanges()}>Fit changes</button>
       <button onclick={() => scene?.fitModel()}>Fit model</button>
+      <button onclick={startOver}>Start over</button>
     </div>
   {/if}
 
