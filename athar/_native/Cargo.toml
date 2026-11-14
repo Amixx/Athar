@@ -2,7 +2,7 @@
 name = "athar_native"
 version = "0.1.0"
 edition = "2021"
-description = "Native (Rust/PyO3) acceleration for Athar's bottom signature pipeline (Stage A: Merkle + WL gossip)."
+description = "Athar's bottom signature pipeline: STEP tokenizer, canonicalization, edge classification, Merkle hashing, WL topology and spatial features (Rust/PyO3)."
 license = "LGPL-3.0-or-later"
 publish = false
 
@@ -14,7 +14,7 @@ crate-type = ["cdylib"]
 [features]
 # `extension-module` must be OFF when building the test binary (otherwise the
 # linker can't resolve libpython symbols). Default build (maturin) keeps it on;
-# run unit tests with `cargo test --no-default-features`.
+# run unit tests with `make native-test`.
 default = ["extension-module"]
 extension-module = ["pyo3/extension-module"]
 
