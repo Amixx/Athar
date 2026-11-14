@@ -5,7 +5,6 @@ from __future__ import annotations
 import functools
 import json
 import math
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +16,7 @@ from athar.bottom.schema_dict import canonical_class_name
 
 ASPECTS = ("geometry", "data", "topology", "placement")
 CHANGE_SCOPES = ("intrinsic", "transitive", "mixed")
+AFFECTED_CAP = 50
 
 
 _POLICY_PACK_DIR = Path(__file__).parent / "policies"
@@ -359,12 +359,7 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     return {
         "ok": not violations,
         "violations": violations,
-        "summary": {
-            "added": _section_count(report, "added"),
-            "deleted": _section_count(report, "deleted"),
-            "modified": _section_count(report, "modified"),
-            "unchanged": _section_count(report, "unchanged"),
-        },
+        "summary": {section: report["stats"][section] for section in _SECTIONS},
     }
 
 
@@ -389,52 +384,28 @@ def schema_mismatch_result(old_schema: str, new_schema: str) -> dict[str, Any]:
 def _check_section_limits(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
     for section in ("added", "deleted", "modified"):
         key = f"max_{section}"
-        if key not in policy:
-            continue
-        limit = policy[key]
-        actual = _section_count(report, section)
-        if actual > limit:
-            violations.append(_limit_violation(f"{section}_limit", key, actual, limit))
+        if key in policy:
+            refs = [_entity_ref(item, section) for item in report[section]]
+            _append_limit_violation(violations, f"{section}_limit", key, refs, policy[key])
 
 
 def _check_class_limits(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
+    schema = _report_schema(report)
     for section in ("added", "deleted", "modified"):
         key = f"max_{section}_by_class"
-        if key not in policy:
-            continue
-        schema = _report_schema(report)
-        classes = [_item_class(item, section) for item in report[section]]
-        for class_name, limit in policy[key].items():
-            actual = sum(1 for item_class in classes if class_name in _lineage(schema, item_class))
-            if actual > limit:
-                violations.append(
-                    _limit_violation(
-                        f"{section}_class_limit",
-                        key,
-                        actual,
-                        limit,
-                        class_name=class_name,
-                    )
-                )
+        refs = [_entity_ref(item, section) for item in report[section]] if key in policy else []
+        for class_name, limit in policy.get(key, {}).items():
+            matching = [ref for ref in refs if class_name in _lineage(schema, ref["class"])]
+            _append_limit_violation(
+                violations, f"{section}_class_limit", key, matching, limit, class_name=class_name
+            )
 
 
 def _check_scope_limits(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
     key = "max_modified_change_scope"
-    if key not in policy:
-        return
-    counts = Counter(item["change_scope"] for item in report["modified"])
-    for scope, limit in policy[key].items():
-        actual = counts.get(scope, 0)
-        if actual > limit:
-            violations.append(
-                _limit_violation(
-                    "modified_change_scope_limit",
-                    key,
-                    actual,
-                    limit,
-                    scope=scope,
-                )
-            )
+    for scope, limit in policy.get(key, {}).items():
+        matching = [_modified_entity_ref(item) for item in report["modified"] if item["change_scope"] == scope]
+        _append_limit_violation(violations, "modified_change_scope_limit", key, matching, limit, scope=scope)
 
 
 def _check_site_placement(report: dict[str, Any], policy: dict[str, Any], violations: list[dict[str, Any]]) -> None:
@@ -450,8 +421,7 @@ def _check_site_placement(report: dict[str, Any], policy: dict[str, Any], violat
             {
                 "code": "site_placement_changed",
                 "message": f"IfcSite placement changed for {len(affected)} entity(s)",
-                "count": len(affected),
-                "affected": affected[:20],
+                **_affected(affected),
             }
         )
 
@@ -483,8 +453,7 @@ def _check_placement_limits(report: dict[str, Any], policy: dict[str, Any], viol
             {
                 "code": "placement_delta_limit",
                 "message": f"Placement delta exceeded for {len(offenders)} entity(s)",
-                "count": len(offenders),
-                "affected": offenders[:20],
+                **_affected(offenders),
             }
         )
 
@@ -502,8 +471,7 @@ def _check_aspect_bans(report: dict[str, Any], policy: dict[str, Any], violation
                     "code": "aspect_change_forbidden",
                     "message": f"{aspect} changes are forbidden for {len(affected)} entity(s)",
                     "aspect": aspect,
-                    "count": len(affected),
-                    "affected": affected[:20],
+                    **_affected(affected),
                 }
             )
 
@@ -529,8 +497,7 @@ def _check_property_removal(report: dict[str, Any], policy: dict[str, Any], viol
             {
                 "code": "property_removed",
                 "message": f"Properties removed from {len(affected)} entity(s)",
-                "count": len(affected),
-                "affected": affected[:20],
+                **_affected(affected),
             }
         )
 
@@ -561,8 +528,7 @@ def _check_property_value_changes(report: dict[str, Any], policy: dict[str, Any]
                     "code": "property_value_changed",
                     "message": f"Protected property {prop_name} changed on {len(affected)} entity(s)",
                     "property": prop_name,
-                    "count": len(affected),
-                    "affected": affected[:20],
+                    **_affected(affected),
                 }
             )
 
@@ -593,8 +559,7 @@ def _check_property_additions(report: dict[str, Any], policy: dict[str, Any], vi
                     "code": "property_added",
                     "message": f"Protected property {prop_name} added to {len(affected)} entity(s)",
                     "property": prop_name,
-                    "count": len(affected),
-                    "affected": affected[:20],
+                    **_affected(affected),
                 }
             )
 
@@ -637,12 +602,10 @@ def _property_value(entry: dict[str, Any], *keys: str) -> dict[str, Any]:
     return {"pset": entry["pset"], "inherited": entry["inherited"], **{key: entry[key] for key in keys}}
 
 
-def _section_count(report: dict[str, Any], section: str) -> int:
-    return report["stats"][section]
-
-
-def _item_class(item: dict[str, Any], section: str) -> str:
-    return _modified_class(item) if section == "modified" else item["class"]
+def _entity_ref(item: dict[str, Any], section: str) -> dict[str, Any]:
+    if section == "modified":
+        return _modified_entity_ref(item)
+    return {key: item[key] for key in _ENTITY_KEYS}
 
 
 def _report_schema(report: dict[str, Any]) -> str:
@@ -663,19 +626,32 @@ def _class_matches(classes: str | list[str], report: dict[str, Any], item: dict[
     return any(name in classes for name in _lineage(_report_schema(report), _modified_class(item)))
 
 
-def _limit_violation(
+def _append_limit_violation(
+    violations: list[dict[str, Any]],
     code: str,
     policy_key: str,
-    actual: int,
+    refs: list[dict[str, Any]],
     limit: int,
     **extra: Any,
-) -> dict[str, Any]:
-    out = {
-        "code": code,
-        "message": f"{policy_key} exceeded: {actual} > {limit}",
-        "policy": policy_key,
-        "actual": actual,
-        "limit": limit,
+) -> None:
+    if len(refs) <= limit:
+        return
+    violations.append(
+        {
+            "code": code,
+            "message": f"{policy_key} exceeded: {len(refs)} > {limit}",
+            "policy": policy_key,
+            "actual": len(refs),
+            "limit": limit,
+            **extra,
+            **_affected(refs),
+        }
+    )
+
+
+def _affected(refs: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "count": len(refs),
+        "affected": refs[:AFFECTED_CAP],
+        "truncated": max(0, len(refs) - AFFECTED_CAP),
     }
-    out.update(extra)
-    return out

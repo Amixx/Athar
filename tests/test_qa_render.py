@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from athar_qa import render_check_report, render_history
 
 
@@ -93,6 +95,33 @@ def test_render_check_report_schema_and_truncation():
     assert "schema: IFC2X3 -> IFC4" in text
     assert "removed P.A, P.B (type)" in text
     assert "... and 2 more" in text
+
+
+def test_render_check_report_lists_ten_affected_entities():
+    affected = [{"class": "IfcWall", "step_id": i, "guid": f"G{i}", "name": f"W{i}"} for i in range(50)]
+    result = {
+        "ok": False,
+        "violations": [
+            {
+                "code": "deleted_limit",
+                "message": "max_deleted exceeded: 60 > 0",
+                "count": 60,
+                "affected": affected,
+                "truncated": 10,
+            }
+        ],
+    }
+
+    text = render_check_report(result)
+
+    assert 'IfcWall "W9" #9 G9' in text
+    assert "W10" not in text
+    assert "... and 50 more" in text
+
+
+def test_render_check_report_without_ok_is_an_error():
+    with pytest.raises(ValueError, match="no boolean 'ok'"):
+        render_check_report({"violations": []})
 
 
 def test_render_history_timeline():

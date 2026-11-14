@@ -5,12 +5,15 @@ from __future__ import annotations
 from typing import Any
 
 _ASPECT_ORDER = ("added", "deleted", "modified", "unchanged")
+_SHOWN_AFFECTED = 10
 
 
 def render_check_report(result: dict[str, Any], *, title: str = "Athar QA gate") -> str:
     """Render an :func:`athar.check.evaluate_report` verdict as text."""
+    ok = result.get("ok")
+    if not isinstance(ok, bool):
+        raise ValueError("Check verdict has no boolean 'ok'")
     violations = result.get("violations") or []
-    ok = result.get("ok", not violations)
 
     lines: list[str] = []
     if ok:
@@ -63,10 +66,9 @@ def _violation_detail_lines(violation: dict[str, Any]) -> list[str]:
     if code == "schema_mismatch":
         return [f"  schema: {violation.get('old')} -> {violation.get('new')}"]
 
-    lines: list[str] = []
-    for entry in violation.get("affected") or []:
-        lines.append("  - " + _affected_line(code, entry))
-    hidden = (violation.get("count") or 0) - len(violation.get("affected") or [])
+    shown = (violation.get("affected") or [])[:_SHOWN_AFFECTED]
+    lines = ["  - " + _affected_line(code, entry) for entry in shown]
+    hidden = (violation.get("count") or 0) - len(shown)
     if hidden > 0:
         lines.append(f"  ... and {hidden} more")
     return lines

@@ -634,3 +634,28 @@ def test_duplicate_property_count_change_fails_closed():
     assert violation["affected"][0]["changes"] == [
         {"kind": "count_changed", "pset": "Pset_DoorCommon", "inherited": False, "old_count": 2, "new_count": 1}
     ]
+
+
+def test_count_limit_violations_name_the_entities(tmp_path):
+    walls = [{"id": f"w{i}", "x": float(i)} for i in range(60)]
+    report = _diff(tmp_path, {"walls": walls}, {"walls": walls[:2]})
+
+    verdict = evaluate_report(report, {"max_deleted": 0, "max_deleted_by_class": {"IfcWall": 57}})
+
+    section, by_class = verdict["violations"]
+    assert section["count"] == 58
+    assert len(section["affected"]) == 50
+    assert section["truncated"] == 8
+    assert {"class", "step_id", "guid", "name"} <= set(section["affected"][0])
+    assert section["affected"][0]["class"] == "IfcWall"
+    assert {ref["name"] for ref in section["affected"]} <= {f"w{i}" for i in range(2, 60)}
+    assert by_class["count"] == 58
+    assert by_class["truncated"] == 8
+
+
+def test_scope_limit_violation_names_the_entities():
+    verdict = evaluate_report(_report(), {"max_modified_change_scope": {"mixed": 0}})
+
+    [violation] = verdict["violations"]
+    assert [ref["guid"] for ref in violation["affected"]] == ["WALL"]
+    assert violation["truncated"] == 0
