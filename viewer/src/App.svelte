@@ -521,15 +521,22 @@
           {#each REPORT_KEYS as key (key)}
             <div class="legendrow" data-testid="legend-{key}">
               <span><i class="dot {REPORT_KEY_LEGEND[key].dot}"></i>{REPORT_KEY_LEGEND[key].label}</span>
-              <span class="mono">{coverage.inReport[key]} in report, {coverage.drawn[key]} drawn</span>
+              <span class="mono"
+                >{coverage.inReport[key]} in report{rendererReady ? `, ${coverage.drawn[key]} drawn` : ''}</span
+              >
             </div>
           {/each}
         {/if}
         <div class="legendrow" data-testid="legend-extra">
           <span><i class="dot extra"></i>Extra</span>
-          <span class="mono">{unreported.old.length} old, {unreported.new} new, {extraDrawn} drawn</span>
+          <span class="mono"
+            >{unreported.old.length} old, {unreported.new} new{rendererReady ? `, ${extraDrawn} drawn` : ''}</span
+          >
         </div>
       </div>
+      {#if !rendererReady}
+        <div class="footnote" data-testid="legend-drawing">3D drawing unavailable: nothing is drawn.</div>
+      {/if}
       <div class="footnote">Extra: geometry the report has no record of. The new file's is drawn; the old file's is listed below.</div>
       {#if coverage && coverage.undrawn.length > 0}
         <span class="microlabel">not drawn ({coverage.undrawn.length})</span>

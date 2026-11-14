@@ -113,6 +113,22 @@ test('the legend shows report and drawn counts and lists undrawn entities for in
   await expect(page.locator('.inspector .badge')).toHaveText('modified')
 })
 
+test('the legend says drawing is unavailable instead of drawn counts without WebGL', async ({ page }) => {
+  await page.addInitScript(() => {
+    const getContext = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+      return kind.startsWith('webgl') ? null : (getContext as any).call(this, kind, ...rest)
+    } as typeof getContext
+  })
+  await page.goto(`/?src=${srcOrigin}`)
+  const state = await waitReady(page)
+  expect(state.rendererReady).toBe(false)
+
+  await expect(page.getByTestId('legend-transitive')).toHaveText(/Indirect\s*3 in report$/)
+  await expect(page.getByTestId('legend-extra')).toHaveText(/Extra\s*0 old, 0 new$/)
+  await expect(page.getByTestId('legend-drawing')).toHaveText('3D drawing unavailable: nothing is drawn.')
+})
+
 test('slider snaps and section toggles drive bucket appearances', async ({ page }) => {
   await page.goto(`/?src=${srcOrigin}`)
   await waitReady(page)

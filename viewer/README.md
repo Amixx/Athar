@@ -46,7 +46,8 @@ ghosted unchanged geometry: unchanged entities cannot be clicked while Ghost is
 on, so a click reaches the changed geometry behind them.
 
 The summary legend shows, for each row (added, deleted, direct, indirect,
-unchanged), how many entities the report lists and how many the scene draws.
+unchanged), how many entities the report lists and how many the scene draws;
+without WebGL it shows the report counts and says that nothing is drawn.
 Report entities with no drawn geometry (spatial containers, property-only
 objects) are listed under it and open in the inspector when clicked. The
 `extra` row counts meshes without a report record in the old and the new file;
