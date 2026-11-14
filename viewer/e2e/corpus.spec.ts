@@ -1,10 +1,10 @@
 /**
  * Acceptance run against a live `athar view` server on a real corpus pair.
- * Opt-in: skipped unless ATHAR_E2E_SRC is set. Launch the server with the
- * Playwright preview origin granted, then set ATHAR_E2E_SRC to the `src`
- * value of the viewer url it prints (the per-launch data url):
+ * Opt-in: skipped unless ATHAR_E2E_SRC is set. Launch the server, then set
+ * ATHAR_E2E_SRC to the `src` value of the viewer url it prints (the
+ * per-launch data url):
  *
- *   athar view old.ifc new.ifc --offline --no-open --dev-origin http://127.0.0.1:4173
+ *   athar view old.ifc new.ifc --offline --no-open
  *   ATHAR_E2E_SRC=<printed src url> bunx playwright test corpus
  *
  * Verifies the served manifest/report against what the app actually
