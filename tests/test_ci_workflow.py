@@ -107,6 +107,25 @@ PINNED_WORKFLOWS = {
 }
 
 
+@pytest.mark.parametrize("name", PINNED_WORKFLOWS)
+def test_workflow_pins_every_third_party_action_to_a_commit_sha(name):
+    uses = _third_party_uses(PINNED_WORKFLOWS[name]())
+    assert uses
+    for action in uses:
+        assert re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", action), action
+
+
+@pytest.mark.parametrize("name", PINNED_WORKFLOW_TEXTS)
+def test_every_pinned_action_carries_its_version_comment(name):
+    pinned = [
+        line for line in PINNED_WORKFLOW_TEXTS[name]().splitlines()
+        if "uses:" in line and re.search(r"@[0-9a-f]{40}\b", line)
+    ]
+    assert pinned
+    for line in pinned:
+        assert re.search(r"@[0-9a-f]{40} # v\d+(\.\d+)*$", line), line
+
+
 @pytest.mark.parametrize("name", PR_COMMENT_WORKFLOWS)
 def test_pr_comment_workflow_runs_python_isolated_from_the_checked_out_pull_request(name):
     commands = [
@@ -195,6 +214,92 @@ def test_pr_comment_dry_run_needs_no_token_or_github_access(tmp_path):
 
 _ANNOTATED_TAG = {"tags": {"0.1.1": {"type": "tag", "sha": "c" * 40}},
                   "tag_objects": {"c" * 40: {"type": "commit", "sha": "a" * 40}}}
+
+
+@pytest.mark.parametrize("overrides,error", [
+    ({}, None),
+    (_ANNOTATED_TAG, None),
+    ({"path": ".github/workflows/tests.yml"}, "not the Python release workflow"),
+    ({"conclusion": "failure"}, "did not succeed"),
+    ({"head_branch": None}, "release run has no ref name"),
+    ({"head_branch": "release-branch"}, "is not a tag in this repository"),
+    ({"tags": {"0.1.1": {"type": "commit", "sha": "b" * 40}}}, "does not point at the release run's commit"),
+    ({**_ANNOTATED_TAG, "tag_objects": {"c" * 40: {"type": "commit", "sha": "b" * 40}}},
+     "does not point at the release run's commit"),
+    ({"wheel_version": "0.9.0"}, "does not equal tag"),
+    ({"sdist_version": "0.9.0"}, "does not equal tag"),
+    ({"package": "other"}, "does not equal tag"),
+    ({"empty": True}, "must provide wheels and an sdist"),
+])
+def test_publish_validates_run_tag_and_artifact_metadata_before_upload(tmp_path, overrides, error):
+    config = {
+        "path": ".github/workflows/python-release.yml", "conclusion": "success",
+        "head_branch": "0.1.1", "head_sha": "a" * 40,
+        "tags": {"0.1.1": {"type": "commit", "sha": "a" * 40}}, "tag_objects": {},
+        "wheel_version": "0.1.1", "sdist_version": "0.1.1", "package": "athar-ifc",
+        **overrides,
+    }
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(f"#!{sys.executable}\n" + '''import io
+import json
+import os
+import sys
+import tarfile
+import zipfile
+from pathlib import Path
+c = json.loads(os.environ["RELEASE_TEST_CONFIG"])
+a = sys.argv[1:]
+repo = "repos/{owner}/{repo}/"
+if a[0] == "api" and a[1] == repo + "actions/runs/123":
+    print(json.dumps({k: c[k] for k in ("path", "conclusion", "head_branch", "head_sha")}))
+elif a[0] == "api" and a[1].startswith(repo + "git/ref/tags/"):
+    target = c["tags"].get(a[1].removeprefix(repo + "git/ref/tags/"))
+    if target is None:
+        sys.exit("gh: Not Found (HTTP 404)")
+    print(json.dumps({"object": target}))
+elif a[0] == "api" and a[1].startswith(repo + "git/tags/"):
+    print(json.dumps({"object": c["tag_objects"][a[1].removeprefix(repo + "git/tags/")]}))
+elif a[:2] == ["run", "download"] and "--pattern" in a:
+    root = Path(a[a.index("--dir") + 1])
+    root.mkdir(parents=True, exist_ok=True)
+    if not c.get("empty"):
+        out = root / "dist-test"
+        out.mkdir()
+        with zipfile.ZipFile(out / "athar_ifc-0.1.1-py3-none-any.whl", "w") as z:
+            z.writestr("athar_ifc-0.1.1.dist-info/METADATA", f'Name: {c["package"]}\\nVersion: {c["wheel_version"]}\\n')
+        content = f'Name: {c["package"]}\\nVersion: {c["sdist_version"]}\\n'.encode()
+        with tarfile.open(out / "athar_ifc-0.1.1.tar.gz", "w:gz") as t:
+            info = tarfile.TarInfo("athar_ifc-0.1.1/PKG-INFO")
+            info.size = len(content)
+            t.addfile(info, io.BytesIO(content))
+else:
+    sys.exit(f"unexpected gh command: {a}")
+''', encoding="utf-8")
+    gh.chmod(0o755)
+    uvx = bin_dir / "uvx"
+    uvx.write_text(f"#!{sys.executable}\n" + '''import os
+import sys
+from pathlib import Path
+with Path(os.environ["RELEASE_TEST_LOG"]).open("a") as f:
+    f.write(" ".join(sys.argv[1:3]) + "\\n")
+''', encoding="utf-8")
+    uvx.chmod(0o755)
+    log = tmp_path / "upload.log"
+    result = subprocess.run(
+        ["make", "-f", str(REPO_ROOT / "Makefile"), "publish", "RUN=123", f"PYTHON={sys.executable}"],
+        cwd=tmp_path, capture_output=True, text=True,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}",
+             "RELEASE_TEST_CONFIG": json.dumps(config), "RELEASE_TEST_LOG": str(log)},
+    )
+    if error:
+        assert result.returncode != 0
+        assert error in result.stderr, result.stdout + result.stderr
+        assert not log.exists()
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert log.read_text().splitlines() == ["twine check", "twine upload"]
 
 
 def test_readme_workflow_for_other_repositories_installs_the_published_wheel():

@@ -381,6 +381,16 @@ Viewer development requires [bun](https://bun.sh) and lives entirely under
 with `make viewer-build`; `make viewer-package-static` copies it into
 `athar_view/static`, which the release workflow does before building wheels.
 
+## Publishing
+
+Dispatch `.github/workflows/python-release.yml` on a release tag matching the
+package version (for example `0.1.1`), then run `make publish RUN=<id>`.
+Publishing requires a successful release-workflow run whose ref is a tag of
+this repository that, read through the GitHub API (annotated tags
+dereferenced), points at the run's commit, and wheels and an sdist whose
+package metadata all identify `athar-ifc` at the tag's version. Artifacts are
+validated in a temporary directory before Twine uploads them to PyPI.
+
 ## Testing
 
 ```bash
