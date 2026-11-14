@@ -214,13 +214,26 @@ export interface DroppedFiles {
 
 export const NO_DROPS: DroppedFiles = { ifcs: [] }
 
-/** Add dropped files: `.json` replaces the report, `.ifc` files join the last two kept. */
-export function addDroppedFiles(files: File[], current: DroppedFiles): DroppedFiles {
-  const ifcs = files.filter((f) => f.name.toLowerCase().endsWith('.ifc'))
-  const json = files.find((f) => f.name.toLowerCase().endsWith('.json'))
+/**
+ * Add dropped files: the first `.json` replaces the report, `.ifc` files join
+ * the last two kept. `notes` name every file that was replaced or ignored.
+ */
+export function addDroppedFiles(files: File[], current: DroppedFiles): { drops: DroppedFiles; notes: string[] } {
+  const isIfc = (f: File) => f.name.toLowerCase().endsWith('.ifc')
+  const isJson = (f: File) => f.name.toLowerCase().endsWith('.json')
+  const allIfcs = [...current.ifcs, ...files.filter(isIfc)]
+  const [json, ...extraJsons] = files.filter(isJson)
+  const notes = [
+    ...files
+      .filter((f) => !isIfc(f) && !isJson(f))
+      .map((f) => `${f.name} was ignored: only .ifc files and a .json report are accepted.`),
+    ...allIfcs.slice(0, -2).map((f) => `${f.name} was replaced: only the two most recent .ifc files are kept.`),
+    ...extraJsons.map((f) => `${f.name} was ignored: only one report is used.`),
+  ]
+  if (json && current.reportFile) notes.push(`${current.reportFile.name} was replaced by ${json.name}.`)
   return {
-    ifcs: [...current.ifcs, ...ifcs].slice(-2),
-    reportFile: json ?? current.reportFile,
+    drops: { ifcs: allIfcs.slice(-2), reportFile: json ?? current.reportFile },
+    notes,
   }
 }
 

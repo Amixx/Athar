@@ -52,6 +52,7 @@
   let phase = $state<Phase>('empty')
   let error = $state('')
   let warning = $state('')
+  let dropNotes = $state<string[]>([])
   let progress = $state({ stage: '', count: 0 })
   let drops = $state<DroppedFiles>(NO_DROPS)
   let unverified = $state<UnverifiedPair | null>(null)
@@ -184,6 +185,7 @@
     extraDrawn = 0
     unreported = { old: [], new: 0 }
     drops = NO_DROPS
+    dropNotes = []
     unverified = null
     publishDebug({ phase: 'empty', error: undefined })
   }
@@ -332,12 +334,18 @@
     event.preventDefault()
     dragging = false
     if (phase !== 'empty' || !event.dataTransfer) return
-    drops = addDroppedFiles([...event.dataTransfer.files], drops)
+    addFiles([...event.dataTransfer.files])
   }
 
   function onPickedFiles(input: HTMLInputElement): void {
-    drops = addDroppedFiles([...(input.files ?? [])], drops)
+    addFiles([...(input.files ?? [])])
     input.value = ''
+  }
+
+  function addFiles(files: File[]): void {
+    const added = addDroppedFiles(files, drops)
+    drops = added.drops
+    dropNotes = added.notes
   }
 
   function onPointerDown(event: PointerEvent): void {
@@ -397,8 +405,15 @@
     <canvas bind:this={canvasEl}></canvas>
   </div>
 
-  {#if warning && phase !== 'error'}
-    <div class="panel banner">{warning}</div>
+  {#if (warning || dropNotes.length > 0) && phase !== 'error'}
+    <div class="panel banner">
+      {#if warning}<div>{warning}</div>{/if}
+      {#if dropNotes.length > 0}
+        <div data-testid="drop-notes">
+          {#each dropNotes as note, i (i)}<div>{note}</div>{/each}
+        </div>
+      {/if}
+    </div>
   {/if}
 
   {#if hasChain && (phase === 'ready' || phase === 'loading')}

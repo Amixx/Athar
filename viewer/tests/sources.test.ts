@@ -103,15 +103,28 @@ describe('addDroppedFiles', () => {
   const file = (name: string) => new File(['x'], name)
 
   it('keeps ifcs in drop order without assigning roles, and takes the json as report', () => {
-    const result = addDroppedFiles([file('final.ifc'), file('r.json'), file('draft.ifc')], NO_DROPS)
-    expect(result.ifcs.map((f) => f.name)).toEqual(['final.ifc', 'draft.ifc'])
-    expect(result.reportFile?.name).toBe('r.json')
+    const { drops, notes } = addDroppedFiles([file('final.ifc'), file('r.json'), file('draft.ifc')], NO_DROPS)
+    expect(drops.ifcs.map((f) => f.name)).toEqual(['final.ifc', 'draft.ifc'])
+    expect(drops.reportFile?.name).toBe('r.json')
+    expect(notes).toEqual([])
   })
 
-  it('keeps the two most recent ifcs across drops', () => {
-    let drops = addDroppedFiles([file('a.ifc')], NO_DROPS)
-    drops = addDroppedFiles([file('b.ifc'), file('c.ifc')], drops)
+  it('keeps the two most recent ifcs across drops and names the one it replaced', () => {
+    const first = addDroppedFiles([file('a.ifc')], NO_DROPS)
+    const { drops, notes } = addDroppedFiles([file('b.ifc'), file('c.ifc')], first.drops)
     expect(drops.ifcs.map((f) => f.name)).toEqual(['b.ifc', 'c.ifc'])
+    expect(notes).toEqual(['a.ifc was replaced: only the two most recent .ifc files are kept.'])
+  })
+
+  it('names a replaced report and the files it ignores', () => {
+    const first = addDroppedFiles([file('old.json')], NO_DROPS)
+    const { drops, notes } = addDroppedFiles([file('notes.txt'), file('new.json'), file('extra.json')], first.drops)
+    expect(drops.reportFile?.name).toBe('new.json')
+    expect(notes).toEqual([
+      'notes.txt was ignored: only .ifc files and a .json report are accepted.',
+      'extra.json was ignored: only one report is used.',
+      'old.json was replaced by new.json.',
+    ])
   })
 })
 

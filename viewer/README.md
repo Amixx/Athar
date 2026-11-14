@@ -60,7 +60,9 @@ tessellated entity in either file goes unaccounted for.
    by matching each file's SHA-256 against the report's
    `audit.inputs.{old,new}.sha256`. When a file matches neither or the report
    records no hashes, the app shows a warning and asks the user to assign the
-   roles before it starts; it never assigns them by file name. Files are
+   roles before it starts; it never assigns them by file name. Only the two
+   most recent `.ifc` files and the first `.json` of a drop are kept; a note
+   names every file a drop replaces or ignores. Files are
    accepted only on the empty view, and Start over clears the mesh and report
    caches and the scene.
 2. **`?src=<origin>`**: fetches `<origin>/manifest.json`

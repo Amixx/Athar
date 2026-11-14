@@ -120,6 +120,18 @@ test('start over leaves no model pixels on the canvas', async ({ page }) => {
   expect((await canvasShot(page)).equals(blank)).toBe(true)
 })
 
+test('names the files a drop replaces or ignores', async ({ page }) => {
+  await page.goto('/')
+  await page.setInputFiles('[data-testid=input-ifc]', [
+    ifc('a.ifc', oldBytes),
+    ifc('b.ifc', newBytes),
+    ifc('c.ifc', newBytes),
+    { name: 'readme.txt', mimeType: 'text/plain', buffer: Buffer.from('x') },
+  ])
+  await expect(page.getByTestId('drop-notes')).toContainText('a.ifc was replaced')
+  await expect(page.getByTestId('drop-notes')).toContainText('readme.txt was ignored')
+})
+
 test('asks for the roles when the report cannot verify the files', async ({ page }) => {
   await page.goto('/')
   await page.setInputFiles('[data-testid=input-ifc]', [ifc('b.ifc', oldBytes), ifc('a.ifc', newBytes)])
