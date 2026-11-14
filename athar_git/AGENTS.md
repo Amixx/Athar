@@ -6,7 +6,36 @@ core engine, but `athar/` must never depend on `athar_git/`.
 ## Responsibilities
 
 - `render.py` produces deterministic terminal/Markdown summaries from existing
-  JSON delta reports. It should not alter engine semantics.
+  JSON delta reports. It should not alter engine semantics. IFC-derived text
+  (schema, class, entity, property set and property names, values, file paths,
+  policy messages) appears only inside code spans or fenced blocks, so links,
+  images, mentions and HTML in it never render. Code spans fold newlines to
+  spaces; fences exceed every backtick run in the text they hold.
+- Entity lists print deleted, added, then modified, each with its own cap and
+  a "not shown" remainder line. Under a modified entity, `property_deltas`
+  render as `Pset.Name: old -> new` first. Raw `data_delta` rows for
+  property and quantity facts are dropped only when every value those facts
+  lost and gained pairs one to one with a property delta (names by equality;
+  strings, integers and booleans by equality with a fact of a compatible IFC
+  value type; quantized reals, quantities and enumeration lists by count);
+  otherwise every raw row is shown, since the
+  engine skips unnamed and null properties and collapses duplicate
+  (pset, name, inherited) keys. Other raw rows are always shown. `stats.placement_cohorts` of two or more
+  elements print as one "N elements moved by (x, y, z) m" line, largest
+  first and capped like the entity lists (`max_cohorts`, default `max_items`,
+  then an "and M more placement cohorts" line), and drop those elements' own
+  placement rows. Every IFC-derived name, value, path and GlobalId is cut to
+  200 characters with an explicit "...[N more characters]" marker, and inside
+  the terminal text (and so inside the Markdown fenced block) escapes
+  backslashes, carriage returns and newlines, so model text cannot start a
+  report row of its own. The match line appears only for entities not
+  matched by GlobalId. Numbers never use scientific notation. Counts and
+  values shown with a unit (placement moves and vectors) carry thousands
+  separators; other model numbers, which may be identifiers or years, print
+  their exact digits without separators. Placement moves of a metre or more
+  are shown in metres.
+  Text the renderers author never contains middle dots; model text is printed
+  as the report carries it, middle dots included.
 - `cache.py` stores persistent `SignatureBundle` objects for Git diffs, keyed
   by Git blob oid when available and by content sha256 otherwise. Cache entries
   are canon-version scoped and invalidated when pickle metadata, the
