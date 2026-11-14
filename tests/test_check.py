@@ -298,3 +298,53 @@ def test_safety_critical_pack_catches_fire_rating_change():
     assert result["ok"] is False
     codes = {v["code"] for v in result["violations"]}
     assert {"property_value_changed", "property_removed"} <= codes
+
+
+def test_misspelled_class_name_is_an_error():
+    with pytest.raises(ValueError, match="max_deleted_by_class: 'IfcWal' is not an IFC entity"):
+        evaluate_report(_report(), {"max_deleted_by_class": {"IfcWal": 0}})
+    with pytest.raises(ValueError, match="forbid_aspect_changes.data: 'IfcLabel' is not an IFC entity"):
+        evaluate_report(_report(), {"forbid_aspect_changes": {"data": "IfcLabel"}})
+
+
+def test_class_names_match_case_insensitively():
+    result = evaluate_report(_report(), {"max_deleted_by_class": {"IFCWALL": 0}})
+
+    assert [(v["code"], v["class_name"]) for v in result["violations"]] == [("deleted_class_limit", "IfcWall")]
+
+
+@pytest.mark.parametrize("schema", ["IFC4", "IFC2X3"])
+@pytest.mark.parametrize("supertype", ["IfcBuildingElement", "IfcElement", "IfcProduct"])
+def test_class_rule_on_a_supertype_applies_to_subtypes(schema, supertype):
+    report = _report()
+    report["schemas"] = {"old": schema, "new": schema}
+
+    deleted = evaluate_report(report, {"max_deleted_by_class": {supertype: 0}})
+    aspect = evaluate_report(report, {"forbid_aspect_changes": {"data": supertype}})
+
+    assert [v["actual"] for v in deleted["violations"]] == [1]
+    assert [a["class"] for v in aspect["violations"] for a in v["affected"]] == ["IfcWall"]
+
+
+def test_class_rule_on_a_subtype_does_not_apply_to_its_supertype():
+    result = evaluate_report(_report(), {"max_deleted_by_class": {"IfcCurtainWall": 0, "IfcSite": 0}})
+
+    assert result["ok"] is True
+
+
+def test_class_rule_on_a_collapsed_class_applies_to_its_canonical_class():
+    policy = normalize_policy({"max_deleted_by_class": {"IfcWallStandardCase": 0}})
+
+    assert policy == {"max_deleted_by_class": {"IfcWall": 0}}
+    assert evaluate_report(_report(), policy)["violations"][0]["actual"] == 1
+    with pytest.raises(ValueError, match="names IfcWall more than once"):
+        normalize_policy({"max_deleted_by_class": {"IfcWallStandardCase": 0, "IfcWall": 1}})
+
+
+def test_nearest_class_placement_limit_wins():
+    report = _report()
+    policy = {"max_placement_delta_mm_by_class": {"IfcSite": 1000, "IfcProduct": 10}}
+
+    assert evaluate_report(report, policy)["ok"] is True
+    policy["max_placement_delta_mm_by_class"]["IfcSite"] = 100
+    assert evaluate_report(report, policy)["ok"] is False

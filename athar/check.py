@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import math
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+from ifcopenshell import ifcopenshell_wrapper
+
+from athar.bottom.constants import SUPPORTED_SCHEMAS
+from athar.bottom.schema_dict import canonical_class_name
 
 
 ASPECTS = ("geometry", "data", "topology", "placement")
@@ -71,13 +77,21 @@ def _object(value: Any, key: str) -> dict[str, Any]:
 
 
 def _class_count_limits(value: Any, key: str) -> dict[str, int]:
-    return {
-        name: _count_limit(limit, f"{key}.{name}") for name, limit in sorted(_object(value, key).items())
-    }
+    return _class_keyed(value, key, _count_limit)
 
 
 def _class_mm_limits(value: Any, key: str) -> dict[str, float]:
-    return {name: _mm_limit(limit, f"{key}.{name}") for name, limit in sorted(_object(value, key).items())}
+    return _class_keyed(value, key, _mm_limit)
+
+
+def _class_keyed(value: Any, key: str, parse) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for name, limit in _object(value, key).items():
+        canonical = _class_name(name, key)
+        if canonical in out:
+            raise ValueError(f"{key} names {canonical} more than once")
+        out[canonical] = parse(limit, f"{key}.{name}")
+    return dict(sorted(out.items()))
 
 
 def _scope_limits(value: Any, key: str) -> dict[str, int]:
@@ -108,10 +122,41 @@ def _class_filter(value: Any, key: str) -> str | list[str]:
     if value == "*":
         return "*"
     if isinstance(value, str):
-        return [value]
+        return [_class_name(value, key)]
     if isinstance(value, list) and value and all(isinstance(item, str) for item in value):
-        return sorted(set(value))
+        return sorted({_class_name(item, key) for item in value})
     raise ValueError(f"{key} must be '*', a class name, or a non-empty list of class names")
+
+
+def _class_name(name: Any, key: str) -> str:
+    """Spell an IFC entity name the way reports do, case-insensitively.
+
+    Reports carry the engine's canonical class (``IfcWallStandardCase`` is
+    reported as ``IfcWall``), so a policy naming a collapsed class is applied to
+    its canonical class.
+    """
+    if isinstance(name, str):
+        for schema in SUPPORTED_SCHEMAS:
+            try:
+                declaration = ifcopenshell_wrapper.schema_by_name(schema).declaration_by_name(name)
+            except RuntimeError:
+                continue
+            if isinstance(declaration, ifcopenshell_wrapper.entity):
+                return canonical_class_name(declaration.name())
+    raise ValueError(f"{key}: {name!r} is not an IFC entity in {' or '.join(SUPPORTED_SCHEMAS)}")
+
+
+@functools.lru_cache(maxsize=None)
+def _lineage(schema: str, class_name: str) -> tuple[str, ...]:
+    """The class followed by its supertypes in ``schema``, nearest first."""
+    try:
+        declaration = ifcopenshell_wrapper.schema_by_name(schema).declaration_by_name(class_name)
+    except RuntimeError as exc:
+        raise ValueError(f"Report class {class_name!r} is not an entity in {schema}") from exc
+    names = [class_name]
+    while (declaration := declaration.supertype()) is not None:
+        names.append(declaration.name())
+    return tuple(names)
 
 
 _POLICY_KEYS = {
@@ -247,9 +292,10 @@ def _check_class_limits(report: dict[str, Any], policy: dict[str, Any], violatio
         key = f"max_{section}_by_class"
         if key not in policy:
             continue
-        counts = _section_class_counts(report, section)
+        schema = _report_schema(report)
+        classes = [_item_class(item, section) for item in report.get(section, [])]
         for class_name, limit in policy[key].items():
-            actual = counts.get(class_name, 0)
+            actual = sum(1 for item_class in classes if class_name in _lineage(schema, item_class))
             if actual > limit:
                 violations.append(
                     _limit_violation(
@@ -306,13 +352,15 @@ def _check_placement_limits(report: dict[str, Any], policy: dict[str, Any], viol
     if global_limit is None and not class_limits:
         return
 
+    schema = _report_schema(report)
     offenders: list[dict[str, Any]] = []
     for item in report.get("modified", []):
         delta = item.get("aspects", {}).get("placement_delta_mm")
         norm = _placement_norm(delta)
         if norm is None:
             continue
-        limit = class_limits.get(_modified_class(item), global_limit)
+        lineage = _lineage(schema, _modified_class(item))
+        limit = next((class_limits[name] for name in lineage if name in class_limits), global_limit)
         if limit is None:
             continue
         if norm > limit:
@@ -336,7 +384,7 @@ def _check_aspect_bans(report: dict[str, Any], policy: dict[str, Any], violation
         affected = [
             _modified_entity_ref(item)
             for item in report.get("modified", [])
-            if item.get("aspects", {}).get(aspect) == "changed" and _class_matches(classes, _modified_class(item))
+            if item.get("aspects", {}).get(aspect) == "changed" and _class_matches(classes, report, item)
         ]
         if affected:
             violations.append(
@@ -356,7 +404,7 @@ def _check_property_removal(report: dict[str, Any], policy: dict[str, Any], viol
         return
     affected: list[dict[str, Any]] = []
     for item in report.get("modified", []):
-        if not _class_matches(classes, _modified_class(item)):
+        if not _class_matches(classes, report, item):
             continue
         removed = (item.get("property_deltas") or {}).get("removed") or []
         if not removed:
@@ -382,7 +430,7 @@ def _check_property_value_changes(report: dict[str, Any], policy: dict[str, Any]
     for prop_name, classes in policy.get("forbid_property_value_change", {}).items():
         affected: list[dict[str, Any]] = []
         for item in report.get("modified", []):
-            if not _class_matches(classes, _modified_class(item)):
+            if not _class_matches(classes, report, item):
                 continue
             changed = (item.get("property_deltas") or {}).get("changed") or []
             matches = [e for e in changed if e.get("name") == prop_name]
@@ -421,13 +469,12 @@ def _section_count(report: dict[str, Any], section: str) -> int:
     return len(rows) if isinstance(rows, list) else 0
 
 
-def _section_class_counts(report: dict[str, Any], section: str) -> Counter[str]:
-    counts: Counter[str] = Counter()
-    for item in report.get(section, []):
-        class_name = _modified_class(item) if section == "modified" else item.get("class")
-        if class_name:
-            counts[str(class_name)] += 1
-    return counts
+def _item_class(item: dict[str, Any], section: str) -> str:
+    return _modified_class(item) if section == "modified" else item.get("class")
+
+
+def _report_schema(report: dict[str, Any]) -> str:
+    return (report.get("schemas") or {}).get("new")
 
 
 def _modified_class(item: dict[str, Any]) -> str | None:
@@ -457,8 +504,10 @@ def _placement_norm(delta: Any) -> float | None:
         return None
 
 
-def _class_matches(classes: str | list[str], class_name: str | None) -> bool:
-    return classes == "*" or class_name in classes
+def _class_matches(classes: str | list[str], report: dict[str, Any], item: dict[str, Any]) -> bool:
+    if classes == "*":
+        return True
+    return any(name in classes for name in _lineage(_report_schema(report), _modified_class(item)))
 
 
 def _limit_violation(
