@@ -47,6 +47,7 @@ interface BucketEntry {
   material: THREE.MeshLambertMaterial
   ranges: EntityRange[]
   pickable: boolean
+  highlightGeometry: THREE.BufferGeometry
 }
 
 interface EntityLocation {
@@ -83,6 +84,13 @@ export class DiffScene {
   private changesBox = new THREE.Box3()
   private displacement: THREE.Group | null = null
   private highlight: THREE.Mesh | null = null
+  private readonly highlightMaterial = new THREE.MeshBasicMaterial({
+    color: HIGHLIGHT_COLOR,
+    transparent: true,
+    opacity: 0.35,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  })
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
@@ -244,7 +252,11 @@ export class DiffScene {
     const mesh = new THREE.Mesh(geometry, material)
     mesh.name = `bucket:${bucket}`
     mesh.userData.bucket = bucket
-    return { bucket, mesh, material, ranges, pickable: true }
+    const highlightGeometry = new THREE.BufferGeometry()
+    highlightGeometry.setAttribute('position', geometry.getAttribute('position'))
+    highlightGeometry.setAttribute('normal', geometry.getAttribute('normal'))
+    highlightGeometry.setIndex(geometry.getIndex()!)
+    return { bucket, mesh, material, ranges, pickable: true, highlightGeometry }
   }
 
   private buildDisplacementLines(
@@ -341,37 +353,33 @@ export class DiffScene {
 
   /** Overlay highlight for one entity (zero-copy: reuses merged buffers). */
   setHighlight(target: { side: Side; stepId: number } | null): void {
-    if (this.highlight) {
-      this.scene.remove(this.highlight)
-      ;(this.highlight.material as THREE.Material).dispose()
-      this.highlight.geometry.dispose()
-      this.highlight = null
+    if (!target) {
+      if (this.highlight) this.highlight.visible = false
+      this.invalidate()
+      return
     }
-    if (target) {
-      const location = this.entityLocations[target.side].get(target.stepId)
-      const entry = location && this.buckets.get(location.bucket)
-      if (location && entry) {
-        const source = entry.mesh.geometry
-        const geometry = new THREE.BufferGeometry()
-        geometry.setAttribute('position', source.getAttribute('position'))
-        geometry.setAttribute('normal', source.getAttribute('normal'))
-        const sourceIndex = source.getIndex()!.array as Uint32Array
-        geometry.setIndex(
-          new THREE.BufferAttribute(sourceIndex.subarray(location.start, location.start + location.count), 1),
-        )
-        const material = new THREE.MeshBasicMaterial({
-          color: HIGHLIGHT_COLOR,
-          transparent: true,
-          opacity: 0.35,
-          depthTest: false,
-          side: THREE.DoubleSide,
-        })
-        this.highlight = new THREE.Mesh(geometry, material)
-        this.highlight.renderOrder = 999
-        this.scene.add(this.highlight)
-      }
+    const location = this.entityLocations[target.side].get(target.stepId)
+    const entry = location && this.buckets.get(location.bucket)
+    if (!location || !entry) {
+      if (this.highlight) this.highlight.visible = false
+      this.invalidate()
+      return
+    }
+    const geometry = entry.highlightGeometry
+    geometry.setDrawRange(location.start, location.count)
+    if (!this.highlight) {
+      this.highlight = new THREE.Mesh(geometry, this.highlightMaterial)
+      this.highlight.renderOrder = 999
+      this.scene.add(this.highlight)
+    } else {
+      this.highlight.geometry = geometry
+      this.highlight.visible = true
     }
     this.invalidate()
+  }
+
+  memoryInfo(): { geometries: number; textures: number } {
+    return { geometries: this.renderer.info.memory.geometries, textures: this.renderer.info.memory.textures }
   }
 
   entityBox(side: Side, stepId: number): THREE.Box3 | undefined {
@@ -409,6 +417,7 @@ export class DiffScene {
     for (const entry of this.buckets.values()) {
       this.scene.remove(entry.mesh)
       entry.mesh.geometry.dispose()
+      entry.highlightGeometry.dispose()
       entry.material.dispose()
     }
     this.buckets.clear()
@@ -439,6 +448,7 @@ export class DiffScene {
     this.observer.disconnect()
     this.clearModels()
     this.controls.dispose()
+    this.highlightMaterial.dispose()
     this.renderer.dispose()
   }
 }

@@ -22,6 +22,7 @@ export interface ViewerDebugState {
   appearances?: Record<Bucket, Appearance>
   displacementLines?: number
   selection?: { side: string; stepId: number } | null
+  rendererMemory?: { geometries: number; textures: number }
   /** Chain navigation: total steps, active index, and its label. */
   stepCount?: number
   activeStep?: number

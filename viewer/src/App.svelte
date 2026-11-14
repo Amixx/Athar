@@ -342,6 +342,7 @@
     selection = hit
     scene?.setHighlight(hit ? { side: hit.side, stepId: hit.stepId } : null)
     publishDebug({ selection: hit ? { side: hit.side, stepId: hit.stepId } : null })
+    requestAnimationFrame(() => publishDebug({ rendererMemory: scene?.memoryInfo() }))
   }
 
   function sectionOf(record: EntityRecord | null, hit: PickHit | null): string {
