@@ -299,9 +299,16 @@ athar git install --difftool                      # then: git difftool -t athar 
 ```
 
 The browser does all tessellation (`@ifc-lite/geometry` WASM); rendering is
-three.js. `--viewer-url` (or `ATHAR_VIEWER_URL`) hands off to a hosted viewer
-Perfetto-style: the page fetches the models back from the local server via
-`?src=`, so nothing is uploaded. Offline mode serves a local build from
+three.js. The local server listens on 127.0.0.1 only, answers only requests
+addressed to its own origin, and serves the models and report under a secret
+per-launch path that is part of the printed URL. Cross-origin viewer development
+requires explicit `--dev-origin URL`, which authorizes exactly that origin; no
+private-network permission is granted. For example, use
+`--viewer-url http://localhost:5173/ --dev-origin http://localhost:5173` with
+Vite. `--viewer-url` (or `ATHAR_VIEWER_URL`) selects the viewer but cannot grant
+access by itself: `athar view` refuses to start unless `--dev-origin` equals
+that viewer's origin, or `--offline` is given. The viewer fetches models from localhost via `?src=`; nothing
+is uploaded. Offline mode serves a local build from
 `ATHAR_VIEWER_DIST`, a release-packaged `athar_view/static`, or a freshly built
 `viewer/dist`. The same SPA also accepts plain drag-drop of `old.ifc`,
 `new.ifc`, and a report JSON — no launcher needed.

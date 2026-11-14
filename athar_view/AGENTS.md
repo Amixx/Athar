@@ -75,35 +75,52 @@ Thin Python launcher. Depends on the core engine and the `athar_git` bundle
 cache; nothing depends on it.
 
 - `server.py` — Builds the report through cached signature bundles, then serves
-  the manifest contract on `127.0.0.1`: `/manifest.json`
-  (`athar_viewer_manifest: 1` plus `schema_version` for the viewer handshake),
-  `/files/old.ifc|new.ifc|report.json`, and the static SPA when offline. CORS
-  supports hosted handoff: origin-restricted `Access-Control-Allow-Origin`,
-  Chrome Private Network Access preflight, `Cross-Origin-Resource-Policy:
-  cross-origin`, path-traversal guard.
+  the manifest contract on `127.0.0.1` only. Data endpoints sit under a
+  per-launch `secrets.token_urlsafe` path prefix (`server.data_url`, the
+  viewer's `src`): `<token>/manifest.json` (`athar_viewer_manifest: 1` plus
+  `schema_version` for the viewer handshake) and
+  `<token>/files/old.ifc|new.ifc|report.json`; manifest file urls are relative
+  so the viewer resolves them under the token. The static SPA (offline only)
+  is served at `/` without the token and never redirects to it. Every request
+  must carry the server's own `Host: 127.0.0.1:<port>` (421 otherwise, the
+  DNS-rebinding guard); a request with an `Origin` must come from the server's
+  own origin or the one configured `allowed_origin` (403 otherwise). Only that
+  configured origin (hosted hand-off) gets `Access-Control-Allow-Origin`; there
+  is no wildcard or private-network allowance.
+  `Cross-Origin-Resource-Policy: same-origin` and a path-traversal guard apply
+  everywhere.
 - Manifest schema v2 (chain) — `MANIFEST_SCHEMA_VERSION = 2`. A chain manifest
   drops the top-level `old/new/report` and carries `steps: [{label, old, new,
   report}, ...]` plus `active_step`. Each shared revision is served once under a
-  stable per-file url (`/files/model/{i}.ifc`); adjacent steps reuse it, so a
+  stable per-file url (`files/model/{i}.ifc`); adjacent steps reuse it, so a
   file that is the new-side of one step and the old-side of the next has one url
   (the viewer keys its mesh cache on that url). Step reports are built lazily on
-  first `GET /files/report/{step}.json` and cached, so an N-file chain never
+  first `GET <token>/files/report/{step}.json` and cached, so an N-file chain never
   pays for diffs the user does not open. A v1 single-pair manifest is
   equivalent to a one-step chain; the viewer treats "no `steps` field" as the
   legacy single-pair form, and both remain served and drag-drop loadable.
 - `cli.py` — `athar view a.ifc b.ifc [c.ifc …] [--offline] [--no-open]
-  [--port N] [--viewer-url URL] [--cache-dir DIR]`. Two files is a single diff
-  (v1 manifest, byte-identical to before); three or more builds a chain of
+  [--port N] [--viewer-url URL] [--dev-origin URL] [--cache-dir DIR]`. Two files is a single diff
+  (v1 manifest); three or more builds a chain of
   consecutive pair steps (`r2→r3, r3→r4, …`) served as a v2 manifest. Hosted
   mode opens
-  `<viewer-url>?src=<local origin>` Perfetto-style (URL from `--viewer-url` or
-  `ATHAR_VIEWER_URL`; nothing is uploaded — the hosted page fetches from
-  localhost) and falls back to offline if the hosted origin is unreachable.
+  `<viewer-url>?src=<local data url>` Perfetto-style (URL from `--viewer-url`
+  or `ATHAR_VIEWER_URL`) and requires `--dev-origin` equal to that URL's
+  origin (both normalised to what a browser sends: lowercase scheme and host,
+  no default port), the one CORS origin the server grants; a missing or different
+  `--dev-origin` is refused before the reachability check, and the error
+  names `--dev-origin <origin>` and `--offline`. Nothing is uploaded. It
+  falls back to offline if the hosted origin is unreachable. A Vite dev server uses
+  `--viewer-url http://localhost:5173/ --dev-origin http://localhost:5173`. The
+  `Viewer:` URL is printed and flushed before serving, so `--no-open` works
+  through a pipe.
   Offline mode — the default while no hosted deployment exists — serves
   `ATHAR_VIEWER_DIST`, release-packaged `athar_view/static`, or local
-  `viewer/dist`. Inputs over 50MB warn but proceed.
+  `viewer/dist`, and grants `--dev-origin` the same CORS access when given
+  (including after a hosted fallback). Inputs over 50MB warn but proceed.
 - `athar git install --difftool` additionally sets
-  `difftool.athar.cmd = athar view "$LOCAL" "$REMOTE"`, so
+  `difftool.athar.cmd = <athar> view "$LOCAL" "$REMOTE"` (the same absolute
+  `<athar>` prefix as the diff driver, see `athar_git/AGENTS.md`), so
   `git difftool -t athar -- model.ifc` opens the visual diff for any committed
   revision pair.
 
@@ -125,9 +142,12 @@ the switch. `frame.spec.ts` moves the fixture site to a large world coordinate
 (so each file gets a different RTC offset) and asserts an element's old and new
 bounds coincide through the `entityBounds` debug probe.
 `viewer/e2e/corpus.spec.ts` is opt-in acceptance against a live launcher:
-`athar view OLD NEW --offline --no-open --port 4799`, then
-`ATHAR_E2E_SRC=http://127.0.0.1:4799 bunx playwright test corpus` (verified on
+`athar view OLD NEW --offline --no-open --port 4799 --dev-origin http://127.0.0.1:4173`
+(Playwright serves the app from port 4173, so its fetches to 4799 are
+cross-origin), then
+`ATHAR_E2E_SRC=<the src from the printed Viewer URL> bunx playwright test corpus` (verified on
 Building-Landscaping v0→v3 and a GNI 2026 arc/structure pair). On the Python
 side, `tests/test_athar_view.py` covers report bytes + cache population, server
-endpoints/CORS/PNA preflight/traversal guard, offline/hosted/fallback modes,
+endpoints over real HTTP (token, foreign `Host`, foreign `Origin`, configured
+origin CORS/PNA preflight, traversal guard), the piped `--no-open` URL line, offline/hosted/fallback modes,
 `--difftool` git config, and `python -m athar view` dispatch.

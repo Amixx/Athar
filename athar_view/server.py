@@ -1,15 +1,21 @@
 """Localhost file server for the visual diff viewer hand-off.
 
 Perfetto-style: the CLI serves only the two IFC files + the diff report on
-127.0.0.1 with CORS headers for the viewer origin, so model data never
-leaves the machine. In offline mode the same server additionally serves a
-built viewer SPA from an explicit path, a packaged bundle, or local viewer/dist.
+127.0.0.1, so model data never leaves the machine. Data endpoints live under
+a per-launch secret path prefix (`data_url`); every request must name the
+server's own loopback `Host`, and a request carrying an `Origin` must come
+from the server itself or from the one configured `allowed_origin` (the
+launcher's `--dev-origin`), which alone receives CORS headers. In offline
+mode the same server additionally serves a built viewer SPA from an explicit
+path, a packaged bundle, or local viewer/dist.
 """
 
 from __future__ import annotations
 
+import hmac
 import json
 import os
+import secrets
 import threading
 import urllib.parse
 from dataclasses import dataclass
@@ -17,12 +23,11 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from athar.engine import diff_bundles
+from athar.engine import diff_bundles, package_version
 from athar_git.cache import load_or_build_bundle
 
-from athar_view import __version__
-
 MANIFEST_SCHEMA_VERSION = 2
+LOOPBACK_HOST = "127.0.0.1"
 
 _CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -91,9 +96,12 @@ class ViewerHTTPServer(ThreadingHTTPServer):
         active_step: int = 0,
         cache_dir: str | os.PathLike[str] | None = None,
         dist_dir: Path | None,
-        allowed_origin: str = "*",
+        allowed_origin: str | None = None,
     ) -> None:
+        if allowed_origin is not None and not _is_origin(allowed_origin):
+            raise ValueError(f"allowed_origin must be a scheme://host[:port] origin, got {allowed_origin!r}")
         super().__init__(address, ViewerRequestHandler)
+        self.token = secrets.token_urlsafe(32)
         self.old_path = old_path
         self.new_path = new_path
         self.report_bytes = report_bytes
@@ -111,8 +119,17 @@ class ViewerHTTPServer(ThreadingHTTPServer):
         return self.chain_steps is not None
 
     @property
+    def host(self) -> str:
+        return f"{LOOPBACK_HOST}:{self.server_address[1]}"
+
+    @property
     def origin(self) -> str:
-        return f"http://127.0.0.1:{self.server_address[1]}"
+        return f"http://{self.host}"
+
+    @property
+    def data_url(self) -> str:
+        """Base URL of the manifest and model/report files (the viewer's `src`)."""
+        return f"{self.origin}/{self.token}"
 
     def manifest_bytes(self) -> bytes:
         if self.is_chain:
@@ -120,10 +137,10 @@ class ViewerHTTPServer(ThreadingHTTPServer):
         manifest = {
             "athar_viewer_manifest": 1,
             "schema_version": MANIFEST_SCHEMA_VERSION,
-            "generator": f"athar_view/{__version__}",
-            "old": {"name": self.old_path.name, "url": "/files/old.ifc"},
-            "new": {"name": self.new_path.name, "url": "/files/new.ifc"},
-            "report": {"url": "/files/report.json"},
+            "generator": f"athar_view/{package_version()}",
+            "old": {"name": self.old_path.name, "url": "files/old.ifc"},
+            "new": {"name": self.new_path.name, "url": "files/new.ifc"},
+            "report": {"url": "files/report.json"},
         }
         return json.dumps(manifest).encode("utf-8")
 
@@ -136,15 +153,15 @@ class ViewerHTTPServer(ThreadingHTTPServer):
             steps.append(
                 {
                     "label": step.label,
-                    "old": {"name": old_file.name, "url": f"/files/model/{step.old_idx}.ifc"},
-                    "new": {"name": new_file.name, "url": f"/files/model/{step.new_idx}.ifc"},
-                    "report": {"url": f"/files/report/{i}.json"},
+                    "old": {"name": old_file.name, "url": f"files/model/{step.old_idx}.ifc"},
+                    "new": {"name": new_file.name, "url": f"files/model/{step.new_idx}.ifc"},
+                    "report": {"url": f"files/report/{i}.json"},
                 }
             )
         return {
             "athar_viewer_manifest": 1,
             "schema_version": MANIFEST_SCHEMA_VERSION,
-            "generator": f"athar_view/{__version__}",
+            "generator": f"athar_view/{package_version()}",
             "steps": steps,
             "active_step": self.active_step,
         }
@@ -176,18 +193,44 @@ class ViewerRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
         pass
 
-    def _cors_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", self.server.allowed_origin)
+    def _cross_origin(self) -> str | None:
+        """The configured viewer origin when this request comes from it."""
+        allowed = self.server.allowed_origin
+        if allowed is not None and self.headers.get("Origin") == allowed:
+            return allowed
+        return None
+
+    def _refusal(self) -> HTTPStatus | None:
+        if self.headers.get("Host") != self.server.host:
+            return HTTPStatus.MISDIRECTED_REQUEST
+        origin = self.headers.get("Origin")
+        if origin is not None and origin != self.server.origin and self._cross_origin() is None:
+            return HTTPStatus.FORBIDDEN
+        return None
+
+    def _send_status(self, status: HTTPStatus) -> None:
+        self.send_response(status)
+        self._common_headers()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _common_headers(self) -> None:
+        cross_origin = self._cross_origin()
+        if cross_origin is not None:
+            self.send_header("Access-Control-Allow-Origin", cross_origin)
         self.send_header("Vary", "Origin")
-        self.send_header("Cross-Origin-Resource-Policy", "cross-origin")
-        # Chrome Private Network Access: a public (hosted) origin fetching
-        # 127.0.0.1 preflights with Access-Control-Request-Private-Network.
-        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header("Cache-Control", "no-store")
 
     def do_OPTIONS(self) -> None:  # noqa: N802 - stdlib naming
+        refusal = self._refusal()
+        if refusal is None and self._cross_origin() is None:
+            refusal = HTTPStatus.FORBIDDEN
+        if refusal is not None:
+            self._send_status(refusal)
+            return
         self.send_response(HTTPStatus.NO_CONTENT)
-        self._cors_headers()
+        self._common_headers()
         self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "*")
         self.end_headers()
@@ -199,24 +242,18 @@ class ViewerRequestHandler(BaseHTTPRequestHandler):
         self._respond(head_only=False)
 
     def _respond(self, *, head_only: bool) -> None:
-        path, _, query = self.path.partition("?")
-        if path == "/" and self.server.dist_dir is not None and "src=" not in query:
-            # This server holds exactly one loaded diff; the bare root would
-            # show the SPA's empty drag-drop landing instead of it.
-            self.send_response(HTTPStatus.TEMPORARY_REDIRECT)
-            self._cors_headers()
-            self.send_header("Location", f"/?src={urllib.parse.quote(self.server.origin, safe='')}")
-            self.end_headers()
+        refusal = self._refusal()
+        if refusal is not None:
+            self._send_status(refusal)
             return
+        path = urllib.parse.urlsplit(self.path).path
         resolved = self._resolve(path)
         if resolved is None:
-            self.send_response(HTTPStatus.NOT_FOUND)
-            self._cors_headers()
-            self.end_headers()
+            self._send_status(HTTPStatus.NOT_FOUND)
             return
         body, content_type = resolved
         self.send_response(HTTPStatus.OK)
-        self._cors_headers()
+        self._common_headers()
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -225,21 +262,24 @@ class ViewerRequestHandler(BaseHTTPRequestHandler):
 
     def _resolve(self, path: str) -> tuple[bytes, str] | None:
         server = self.server
+        prefix, _, data_path = path.lstrip("/").partition("/")
+        if hmac.compare_digest(prefix.encode(), server.token.encode()):
+            return self._resolve_data(server, "/" + data_path)
+        if server.dist_dir is not None:
+            return self._resolve_static(server.dist_dir, path)
+        return None
+
+    def _resolve_data(self, server: ViewerHTTPServer, path: str) -> tuple[bytes, str] | None:
         if path == "/manifest.json":
             return server.manifest_bytes(), _CONTENT_TYPES[".json"]
         if server.is_chain:
-            resolved = self._resolve_chain(server, path)
-            if resolved is not None:
-                return resolved
-        else:
-            if path == "/files/old.ifc":
-                return server.old_path.read_bytes(), _CONTENT_TYPES[".ifc"]
-            if path == "/files/new.ifc":
-                return server.new_path.read_bytes(), _CONTENT_TYPES[".ifc"]
-            if path == "/files/report.json":
-                return server.report_bytes, _CONTENT_TYPES[".json"]
-        if server.dist_dir is not None:
-            return self._resolve_static(server.dist_dir, path)
+            return self._resolve_chain(server, path)
+        if path == "/files/old.ifc":
+            return server.old_path.read_bytes(), _CONTENT_TYPES[".ifc"]
+        if path == "/files/new.ifc":
+            return server.new_path.read_bytes(), _CONTENT_TYPES[".ifc"]
+        if path == "/files/report.json":
+            return server.report_bytes, _CONTENT_TYPES[".json"]
         return None
 
     @staticmethod
@@ -285,10 +325,10 @@ def make_server(
     *,
     dist_dir: str | os.PathLike[str] | None = None,
     port: int = 0,
-    allowed_origin: str = "*",
+    allowed_origin: str | None = None,
 ) -> ViewerHTTPServer:
     return ViewerHTTPServer(
-        ("127.0.0.1", port),
+        (LOOPBACK_HOST, port),
         old_path=Path(old_path),
         new_path=Path(new_path),
         report_bytes=report_bytes,
@@ -312,15 +352,24 @@ def make_chain_server(
     active_step: int = 0,
     dist_dir: str | os.PathLike[str] | None = None,
     port: int = 0,
-    allowed_origin: str = "*",
+    allowed_origin: str | None = None,
 ) -> ViewerHTTPServer:
     chain_files = [Path(f) for f in files]
     return ViewerHTTPServer(
-        ("127.0.0.1", port),
+        (LOOPBACK_HOST, port),
         chain_files=chain_files,
         chain_steps=build_chain_steps(chain_files),
         active_step=active_step,
         cache_dir=cache_dir,
         dist_dir=Path(dist_dir) if dist_dir is not None else None,
         allowed_origin=allowed_origin,
+    )
+
+
+def _is_origin(value: str) -> bool:
+    parsed = urllib.parse.urlsplit(value)
+    return (
+        parsed.scheme in ("http", "https")
+        and bool(parsed.netloc)
+        and value == f"{parsed.scheme}://{parsed.netloc}"
     )
