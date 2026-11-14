@@ -250,6 +250,39 @@ Viewer development requires [bun](https://bun.sh) and lives entirely under
 with `make viewer-build`; `make viewer-package-static` copies it into
 `athar_view/static`, which the release workflow does before building wheels.
 
+## Baseline store and persisted reviews
+
+`athar store` keeps accepted IFC baselines, candidate artifacts, full compressed
+review reports, and an append-only project history under `~/.athar/store`
+(or `--root` / `ATHAR_STORE_ROOT`). `athar review` serves the local review UI.
+The store compresses artifacts with the `zstd` command-line tool (1.5+), which
+must be on `PATH` (`brew install zstd`, `apt install zstd`); it is a system
+binary, not a Python dependency.
+
+```bash
+athar store set-baseline tower architecture accepted.ifc --actor checker
+athar store review tower architecture delivery.ifc --actor designer
+athar store approve tower architecture evt-000002 --actor checker
+athar store report tower evt-000002
+athar review
+```
+
+Every baseline, review, approval, and rejection requires a nonblank actor and
+records the original delivery filename, UTC time, Athar version, and canonical
+signature version. Only pending reviews against the current baseline can be
+decided; errors name the event that decided or invalidated a review. The HTTP
+API returns 400 for missing actors and 409 for conflicting decisions.
+
+`athar store verify PROJECT` checks consecutive event IDs, artifact hashes through
+every delta chain, a readable report for every review and a review for every
+stored report, and complete baseline pointers against history replay. It prints
+`{"problems": [...], "notes": [...]}`: exit 0 when there are no problems, 2
+otherwise. Reviews written by release 0.1.0, which kept no reports, appear as
+notes, as does the report of a review interrupted before it was recorded; the
+next write to the project removes that report. `--rebuild-pointers` prints the
+pointer changes to stderr before repairing them; its JSON result still lists
+the problems found, so run verify again after repair.
+
 ## Testing
 
 ```bash

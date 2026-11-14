@@ -16,12 +16,15 @@ Stdlib `ThreadingHTTPServer` on 127.0.0.1, same pattern as `athar_view`:
   counts.
 - `GET /api/projects/{p}/events[?model_key=]` — the event log.
 - `GET /api/projects/{p}/reviews/{id}` — the persisted delta report
-  (404 for reviews predating report persistence; the UI degrades gracefully).
+  (404 for reviews predating report persistence, where the UI degrades
+  gracefully, and for ids that name no review event).
 - `GET /api/projects/{p}/artifacts/{sha}.ifc` — exact artifact bytes,
   materialized from the delta pack per request.
 - `POST /api/projects/{p}/models/{m}/review|baseline?actor=&filename=[&policy=]`
   — raw IFC bytes as the body; streams to a temp file, runs the store action,
   returns the event. Synchronous: the response *is* the finished review.
+  `filename` is the delivery name the event records; a missing or blank one
+  is a 400.
 - `POST /api/projects/{p}/models/{m}/approve|reject` — JSON
   `{review_id, actor, note}`.
 - `GET /viewer/{p}/{review_id}/manifest.json` — a v1 viewer manifest whose

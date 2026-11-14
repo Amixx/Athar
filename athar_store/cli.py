@@ -13,7 +13,6 @@ import json
 import sys
 from typing import Any
 
-from athar.bottom.parser import IfcParseError
 from athar.check import resolve_policy
 
 from .store import BaselineStore, StoreError
@@ -35,6 +34,7 @@ def build_store_parser() -> argparse.ArgumentParser:
     p_set.add_argument("ifc", help="Path to the accepted IFC file")
     p_set.add_argument("--actor", required=True, help="Who set the baseline")
     p_set.add_argument("--note")
+    p_set.add_argument("--replace", action="store_true", help="Replace an existing baseline")
     p_set.set_defaults(func=_cmd_set_baseline)
 
     p_review = sub.add_parser("review", help="Diff a candidate against the baseline and record the verdict")
@@ -99,6 +99,11 @@ def build_store_parser() -> argparse.ArgumentParser:
     p_pending.add_argument("model_key")
     p_pending.set_defaults(func=_cmd_pending)
 
+    p_verify = sub.add_parser("verify", help="Verify the store record")
+    p_verify.add_argument("project_id")
+    p_verify.add_argument("--rebuild-pointers", action="store_true")
+    p_verify.set_defaults(func=_cmd_verify)
+
     return parser
 
 
@@ -106,7 +111,7 @@ def run_store(args: argparse.Namespace) -> int:
     store = BaselineStore(args.root)
     try:
         return args.func(store, args)
-    except (StoreError, IfcParseError) as exc:
+    except StoreError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
@@ -117,7 +122,14 @@ def _cmd_init(store: BaselineStore, args: argparse.Namespace) -> int:
 
 def _cmd_set_baseline(store: BaselineStore, args: argparse.Namespace) -> int:
     return _emit(
-        store.set_baseline(args.project_id, args.model_key, args.ifc, actor=args.actor, note=args.note)
+        store.set_baseline(
+            args.project_id,
+            args.model_key,
+            args.ifc,
+            actor=args.actor,
+            note=args.note,
+            replace=args.replace,
+        )
     )
 
 
@@ -188,6 +200,19 @@ def _cmd_report(store: BaselineStore, args: argparse.Namespace) -> int:
 
 def _cmd_pending(store: BaselineStore, args: argparse.Namespace) -> int:
     return _emit(store.pending_reviews(args.project_id, args.model_key))
+
+
+def _cmd_verify(store: BaselineStore, args: argparse.Namespace) -> int:
+    def show_changes(changes: list[str]) -> None:
+        print(json.dumps({"pointer_changes": changes}, indent=2), file=sys.stderr, flush=True)
+
+    result = store.verify(
+        args.project_id,
+        rebuild_pointers=args.rebuild_pointers,
+        before_rebuild=show_changes,
+    )
+    _emit(result)
+    return 2 if result["problems"] else 0
 
 
 def _emit(payload: Any) -> int:
