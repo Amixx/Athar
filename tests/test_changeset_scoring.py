@@ -208,3 +208,18 @@ def test_repeats_that_disagree_are_flagged_nondeterministic():
     expected = bench.Expected(changed_guids={"modified": ["A"]})
     row = _scored_pair("wobble", {"athar": wobbling}, expected)
     assert bench.aggregate_tools([row])["synthetic"]["athar"]["nondeterministic"] == 1
+
+
+def test_peak_rss_covers_descendant_processes():
+    allocate = "b = b'x' * (200 * 2**20)"
+    spawn = f"import subprocess, sys; subprocess.run([sys.executable, '-c', {allocate!r}], check=True)"
+    completed = bench._run_subprocess([sys.executable, "-c", spawn], timeout_s=60)
+    assert completed["returncode"] == 0
+    assert completed["peak_rss_mb"] >= 200
+
+
+def test_same_file_pairs_diff_a_copy_at_a_second_path(tmp_path):
+    pair = next(pair for pair in bench.BENCHMARK_PAIRS if pair.kind == "same_file")
+    old, new = pair.builder(tmp_path)
+    assert old != new
+    assert Path(old).read_bytes() == Path(new).read_bytes()

@@ -18,11 +18,8 @@ import argparse
 import importlib.metadata
 import importlib.util
 import json
-import math
 import os
 import platform
-import re
-import resource
 import shutil
 import statistics
 import subprocess
@@ -48,7 +45,6 @@ COMPLETED_STATUSES = frozenset({"ok", "refused"})
 FAILED_STATUSES = frozenset({"error", "timeout"})
 TIMING_REFERENCE = "athar"
 RATIO_METRICS = ("seconds_median", "peak_rss_mb_max", "gb_seconds_median")
-_TIME_MAX_RSS_RE = re.compile(r"(?P<rss>\d+)\s+maximum resident set size")
 
 Counts = dict[str, int]
 PairBuilder = Callable[[Path], tuple[str, str]]
@@ -81,6 +77,24 @@ def _static_pair(old_key: str, new_key: str, *, acceptance: bool = False) -> Pai
 
     def build(_workdir: Path) -> tuple[str, str]:
         return resolver(old_key), resolver(new_key)
+
+    return build
+
+
+def _same_file_pair(key: str, *, acceptance: bool = False) -> PairBuilder:
+    """The file against a byte-identical copy at a second path.
+
+    Two paths, because a tool may shortcut when both arguments name one file
+    (``athar.engine.diff_files`` then parses once).
+    """
+    resolver = acceptance_path if acceptance else corpus_path
+
+    def build(workdir: Path) -> tuple[str, str]:
+        src = Path(resolver(key))
+        workdir.mkdir(parents=True, exist_ok=True)
+        copy = workdir / f"{key}-copy{src.suffix}"
+        shutil.copyfile(src, copy)
+        return str(src), str(copy)
 
     return build
 
@@ -199,7 +213,7 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
     Pair(
         name="same_file_gni_190",
         kind="same_file",
-        builder=_static_pair("gni_190", "gni_190"),
+        builder=_same_file_pair("gni_190"),
         expectation="zero semantic changes",
         expected=NO_CHANGE,
     ),
@@ -300,7 +314,7 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
     Pair(
         name="large_same_file_gni_p5_arc",
         kind="large_same_file",
-        builder=_static_pair("gni_p5_arc", "gni_p5_arc", acceptance=True),
+        builder=_same_file_pair("gni_p5_arc", acceptance=True),
         expectation="76MB same-file: zero semantic changes, isolates parse cost",
         expected=NO_CHANGE,
         large=True,
@@ -308,7 +322,7 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
     Pair(
         name="large_same_file_spanish_180mb",
         kind="large_same_file",
-        builder=_static_pair("spanish", "spanish", acceptance=True),
+        builder=_same_file_pair("spanish", acceptance=True),
         expectation="180MB same-file: zero semantic changes, parse-bound stress",
         expected=NO_CHANGE,
         large=True,
@@ -634,10 +648,6 @@ def _repeat_outcome(run: dict) -> dict:
 
 
 def _run_athar(old_path: str, new_path: str, timeout_s: int) -> dict:
-    # Run via the CLI as a subprocess, sampled by the same mechanism as every
-    # other tool (no in-process special-casing) — same startup cost, same RSS
-    # sampling, same GB-seconds definition. `python -m athar old new` prints the report
-    # JSON to stdout.
     argv = [sys.executable, "-m", "athar", old_path, new_path]
     start = time.perf_counter()
     completed = _run_subprocess(argv, timeout_s)
@@ -789,7 +799,6 @@ _IFCFAST_RUNNER = (
 def _run_ifcfast(old_path: str, new_path: str, timeout_s: int) -> dict:
     if importlib.util.find_spec("ifcfast") is None:
         return {"status": "not_installed", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
-    # Subprocess, sampled identically to the other tools (was in-process before).
     argv = [sys.executable, "-c", _IFCFAST_RUNNER, old_path, new_path]
     start = time.perf_counter()
     completed = _run_subprocess(argv, timeout_s)
@@ -814,39 +823,45 @@ def _run_ifcfast(old_path: str, new_path: str, timeout_s: int) -> dict:
 
 
 def _run_subprocess(argv: list[str], timeout_s: int) -> dict:
-    # Run the tool directly under Popen and sample its RSS over time, so the
-    # same mechanism yields both peak RSS and GB-seconds. (Replaces the previous
-    # `/usr/bin/time -l` wrapper, whose exact peak we trade for a sampled one —
-    # acceptable since peak RSS is itself noisy and GB-seconds is the better metric.)
-    try:
-        proc = subprocess.Popen(
-            argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+    """Run one tool process; every tool is measured through this function.
 
-    sampler = _RssTimeSampler(proc.pid)
-    timed_out = False
-    with sampler:
+    Peak RSS is the kernel's ``ru_maxrss`` from ``wait4``, which covers the
+    process and the descendants it waited for. GB-seconds integrate the RSS
+    of the process itself, sampled with ``ps``.
+    """
+    with tempfile.TemporaryFile("w+") as stdout, tempfile.TemporaryFile("w+") as stderr:
         try:
-            stdout, stderr = proc.communicate(timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            stdout, stderr = proc.communicate()
-            timed_out = True
-    if timed_out:
-        return {"status": "timeout", "seconds": timeout_s}
-    return {
-        "status": "completed",
-        "returncode": proc.returncode,
-        "stdout": stdout,
-        "stderr": stderr,
-        "peak_rss_mb": sampler.peak_mb(),
-        "gb_seconds": sampler.gb_seconds(0.0),
-    }
+            proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr, text=True)
+        except OSError as exc:
+            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        deadline = time.perf_counter() + timeout_s
+        with _RssTimeSampler(proc.pid) as sampler:
+            while True:
+                pid, wait_status, rusage = os.wait4(proc.pid, os.WNOHANG)
+                if pid:
+                    break
+                if time.perf_counter() > deadline:
+                    proc.kill()
+                    os.wait4(proc.pid, 0)
+                    proc.returncode = -9
+                    return {"status": "timeout", "seconds": timeout_s}
+                time.sleep(0.005)
+        proc.returncode = os.waitstatus_to_exitcode(wait_status)
+        stdout.seek(0)
+        stderr.seek(0)
+        return {
+            "status": "completed",
+            "returncode": proc.returncode,
+            "stdout": stdout.read(),
+            "stderr": stderr.read(),
+            "peak_rss_mb": _maxrss_mb(rusage.ru_maxrss),
+            "gb_seconds": sampler.gb_seconds(),
+        }
+
+
+def _maxrss_mb(ru_maxrss: int) -> float:
+    # macOS reports bytes, Linux KiB.
+    return round(ru_maxrss / (1024 * 1024) if platform.system() == "Darwin" else ru_maxrss / 1024, 1)
 
 
 def _ifcdiff_counts(payload: object) -> dict | None:
@@ -1190,23 +1205,8 @@ def _expected_json(expected: Expected | None) -> dict | None:
     }
 
 
-def _current_peak_rss_mb() -> float | None:
-    usage = resource.getrusage(resource.RUSAGE_SELF)
-    rss = usage.ru_maxrss
-    if not rss:
-        return None
-    # macOS reports bytes; Linux reports KiB.
-    return round(rss / (1024 * 1024), 1) if platform.system() == "Darwin" else round(rss / 1024, 1)
-
-
 def _read_rss_mb(pid: int) -> float | None:
-    """Current RSS of `pid` in MiB via `ps` (KiB on macOS and Linux).
-
-    Every tool runs as a subprocess and is sampled this way, so the sampling
-    harness stays small — `ps` is only ever forked from the lightweight parent,
-    never from a process holding gigabytes (which is what inflated timings when
-    Athar ran in-process). Same mechanism for every tool, by design.
-    """
+    """Current RSS of `pid` in MiB via `ps` (KiB on macOS and Linux)."""
     try:
         out = subprocess.run(
             ["ps", "-o", "rss=", "-p", str(pid)],
@@ -1223,10 +1223,7 @@ class _RssTimeSampler:
     """Background thread that records (t, rss_mb) for a pid, to integrate GB-seconds.
 
     GB-seconds (the area under the RSS curve) fuses "how much memory" and "for how
-    long" into the unit cloud platforms bill — a fairer cost metric than a
-    one-point peak. For in-process tools pass the harness baseline to
-    ``gb_seconds`` so only the diff's marginal memory is counted; subprocess
-    tools start near zero so their raw integral is already the diff's cost.
+    long" into the unit cloud platforms bill.
     """
 
     def __init__(self, pid: int, interval: float = 0.03) -> None:
@@ -1251,25 +1248,13 @@ class _RssTimeSampler:
         self._stop.set()
         self._thread.join(timeout=1.0)
 
-    def gb_seconds(self, baseline_mb: float = 0.0) -> float | None:
+    def gb_seconds(self) -> float | None:
         if len(self.samples) < 2:
             return None
         total = 0.0
         for (t0, m0), (t1, m1) in zip(self.samples, self.samples[1:]):
-            a = max(m0 - baseline_mb, 0.0)
-            b = max(m1 - baseline_mb, 0.0)
-            total += (a + b) / 2.0 / 1024.0 * (t1 - t0)  # MB->GB, * dt
+            total += (m0 + m1) / 2.0 / 1024.0 * (t1 - t0)  # MB->GB, * dt
         return round(total, 3)
-
-    def peak_mb(self) -> float | None:
-        return round(max(m for _, m in self.samples), 1) if self.samples else None
-
-
-def _parse_time_peak_rss(stderr: str) -> float | None:
-    match = _TIME_MAX_RSS_RE.search(stderr)
-    if not match:
-        return None
-    return round(int(match.group("rss")) / (1024 * 1024), 1)
 
 
 def _write_json(path: Path, payload: dict) -> None:

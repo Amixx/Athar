@@ -40,6 +40,12 @@ Scripts are for inspection and repeatable investigation.
       is not a false negative. `counts.modified` bounds derive from the truth
       sets (`|required|`..`|required|+|optional|`), so a tool that inflates
       `modified` fails assessment even where GUID scoring is absent.
+    - Every tool, Athar included (`python -m athar old new`), runs as a
+      subprocess through `_run_subprocess`: wall time includes interpreter
+      start and imports, peak RSS is `ru_maxrss` from `wait4` (process plus
+      waited-for descendants), GB-seconds integrate sampled RSS. Same-file
+      pairs diff a byte-identical copy at a second path, since
+      `diff_files` parses once when both arguments name one file.
     - Run statuses: `ok`, `refused` (Athar's schema refusal), `error`,
       `timeout`, `not_installed`. `not_installed` is shown and left out of
       every average. `error` and `timeout` are a miss on that pair: assessed
