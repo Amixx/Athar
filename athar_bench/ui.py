@@ -308,7 +308,7 @@ def _row(row: dict[str, Any]) -> str:
       <td>
         <strong><a href="/pair/{_url(name)}">{_e(name)}</a></strong>
         <div><span class="badge text-bg-light border">{_e(row.get("kind", "unknown"))}</span></div>
-        <div class="small"><a href="/viewer/{_url(name)}" target="_blank" rel="noreferrer">viewer</a> · <a href="/pair/{_url(name)}">outputs</a></div>
+        <div class="small d-flex flex-wrap column-gap-2"><a href="/viewer/{_url(name)}" target="_blank" rel="noreferrer">viewer</a><a href="/pair/{_url(name)}">outputs</a></div>
       </td>
       <td class="text-secondary">{_e(row.get("expectation", ""))}</td>
       {"".join(_tool_cell(row, tool) for tool in TOOLS)}
@@ -336,7 +336,7 @@ def _tool_cell(row: dict[str, Any], tool: str) -> str:
       <span class="badge {_badge_class(assessment)}" title="{_e(title)}">{_label(assessment)}</span>
       {counts_line}
       {_changeset_line(result.get("changeset"))}
-      <div class="text-secondary small">{_metric(time_s, "s")} · {_metric(rss, "MB")} · {_metric(gb_s, "GB·s")}</div>
+      <div class="text-secondary small d-flex flex-wrap column-gap-2"><span>{_metric(time_s, "s")}</span><span>{_metric(rss, "MB")}</span><span>{_metric(gb_s, "GB-seconds")}</span></div>
       {output}
     </td>
     """
@@ -345,11 +345,11 @@ def _tool_cell(row: dict[str, Any], tool: str) -> str:
 def _changeset_line(score: Any) -> str:
     if not isinstance(score, dict):
         return ""
-    detail = f"tp {score.get('tp', '—')} · fp {score.get('fp', '—')} · fn {score.get('fn', '—')} vs GUID ground truth"
+    detail = f"tp {score.get('tp', '—')}, fp {score.get('fp', '—')}, fn {score.get('fn', '—')} vs GUID ground truth"
     return (
         f'<div class="font-monospace small" title="{_e(detail)}">'
-        f"P {_score_fmt(score.get('precision'))} · R {_score_fmt(score.get('recall'))}"
-        f" · F1 {_score_fmt(score.get('f1'))}</div>"
+        f"P {_score_fmt(score.get('precision'))}, R {_score_fmt(score.get('recall'))}"
+        f", F1 {_score_fmt(score.get('f1'))}</div>"
     )
 
 
@@ -385,10 +385,10 @@ def _tool_averages(rows: list[dict[str, Any]]) -> str:
               <th>Correctness</th>
               <th>Judged pairs</th>
               <th>Unexpected</th>
-              <th title="Mean precision / recall / F1 against GUID-level ground truth, over pairs where this tool was scored">Changeset P · R · F1</th>
+              <th title="Mean precision / recall / F1 against GUID-level ground truth, over pairs where this tool was scored">Changeset P / R / F1</th>
               <th>Avg median time</th>
               <th>Avg peak RSS</th>
-              <th>Avg GB·s</th>
+              <th>Avg GB-seconds</th>
             </tr>
           </thead>
           <tbody>{body}</tbody>
@@ -448,7 +448,7 @@ def _tool_average_stats(rows: list[dict[str, Any]], tool: str) -> dict[str, Any]
     changeset = "—"
     if scored:
         changeset = (
-            f"{_score_fmt(avg_precision)} · {_score_fmt(avg_recall)} · {_score_fmt(avg_f1_value)}"
+            f"{_score_fmt(avg_precision)} / {_score_fmt(avg_recall)} / {_score_fmt(avg_f1_value)}"
             f" ({scored}p)"
         )
     return {
@@ -462,7 +462,7 @@ def _tool_average_stats(rows: list[dict[str, Any]], tool: str) -> dict[str, Any]
         "avg_time_value": avg_time_value,
         "avg_time": "—" if avg_time_value is None else f"{_fmt_num(avg_time_value)} s",
         "avg_gbs_value": avg_gbs_value,
-        "avg_gbs": "—" if avg_gbs_value is None else f"{_fmt_num(avg_gbs_value)} GB·s",
+        "avg_gbs": "—" if avg_gbs_value is None else f"{_fmt_num(avg_gbs_value)} GB-seconds",
         "avg_rss_value": avg_rss_value,
         "avg_rss": "—" if avg_rss_value is None else _metric(avg_rss_value, "MB"),
     }
@@ -556,7 +556,7 @@ def _pair_page(data: dict[str, Any], path: Path, pair: dict[str, Any], *, viewer
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{_e(name)} · Athar benchmark viewer</title>
+  <title>Athar benchmark viewer: {_e(name)}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>{_css()}</style>
 </head>

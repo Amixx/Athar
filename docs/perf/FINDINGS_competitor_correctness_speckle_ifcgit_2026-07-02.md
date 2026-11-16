@@ -8,7 +8,7 @@ The 2026-06-27 benchmark covered ifcdiff and ifcfast but not Speckle or
 IfcGit, because neither is CLI-runnable as shipped. Both are now wrapped as
 local CLI runners and registered in
 `scripts/explore/benchmark_competitors.py` as subprocess tools with the same
-RSS/GB·s sampling as every other tool:
+RSS/GB-seconds sampling as every other tool:
 
 - `scripts/explore/speckle_diff_runner.py` — Speckle's production IFC
   importer (`speckleifc`, ships inside `specklepy`, itself ifcopenshell-based)

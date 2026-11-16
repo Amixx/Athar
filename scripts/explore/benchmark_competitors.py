@@ -611,7 +611,7 @@ def _repeat(fn: Callable[[], dict], repeats: int) -> dict:
 def _run_athar(old_path: str, new_path: str, timeout_s: int) -> dict:
     # Run via the CLI as a subprocess, sampled by the same mechanism as every
     # other tool (no in-process special-casing) — same startup cost, same RSS
-    # sampling, same GB·s definition. `python -m athar old new` prints the report
+    # sampling, same GB-seconds definition. `python -m athar old new` prints the report
     # JSON to stdout.
     argv = [sys.executable, "-m", "athar", old_path, new_path]
     start = time.perf_counter()
@@ -790,9 +790,9 @@ def _run_ifcfast(old_path: str, new_path: str, timeout_s: int) -> dict:
 
 def _run_subprocess(argv: list[str], timeout_s: int) -> dict:
     # Run the tool directly under Popen and sample its RSS over time, so the
-    # same mechanism yields both peak RSS and GB·s. (Replaces the previous
+    # same mechanism yields both peak RSS and GB-seconds. (Replaces the previous
     # `/usr/bin/time -l` wrapper, whose exact peak we trade for a sampled one —
-    # acceptable since peak RSS is itself noisy and GB·s is the better metric.)
+    # acceptable since peak RSS is itself noisy and GB-seconds is the better metric.)
     try:
         proc = subprocess.Popen(
             argv,
@@ -1102,9 +1102,9 @@ def _read_rss_mb(pid: int) -> float | None:
 
 
 class _RssTimeSampler:
-    """Background thread that records (t, rss_mb) for a pid, to integrate GB·s.
+    """Background thread that records (t, rss_mb) for a pid, to integrate GB-seconds.
 
-    GB·s (the area under the RSS curve) fuses "how much memory" and "for how
+    GB-seconds (the area under the RSS curve) fuses "how much memory" and "for how
     long" into the unit cloud platforms bill — a fairer cost metric than a
     one-point peak. For in-process tools pass the harness baseline to
     ``gb_seconds`` so only the diff's marginal memory is counted; subprocess

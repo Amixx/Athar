@@ -189,7 +189,7 @@ noise. Two better metrics were added:
   vs peak live). **Deterministic** — a function of the input, not the OS — so it
   only moves when *we* change the work. The best "are we doing the right thing"
   signal.
-- **GB·seconds** (`profile_memory.py`: trapezoidal integral of RSS over time).
+- **GB-seconds** (`profile_memory.py`: trapezoidal integral of RSS over time).
   Fuses memory × time into the unit cloud platforms bill. The "cost" KPI.
 
 Measured on the 180 MB file (post-drops):
@@ -203,7 +203,7 @@ Measured on the 180 MB file (post-drops):
 | assemble | 4.9 | 1,576 | 29.8 M |
 | **TOTAL** | | **11,542** | **221.3 M** |
 
-`churn_factor = 11,542 / 3,665 = 3.1×`. `memory-time = 168 GB·s`.
+`churn_factor = 11,542 / 3,665 = 3.1×`. `memory-time = 168 GB-seconds`.
 
 **Headline: 221 million allocations to diff one file (~200 per entity).**
 `canonicalize` (80 M) and `merkle` (48 M, 56 s) dominate — the stages that build
@@ -231,12 +231,12 @@ checkpoint exactly), so zero correctness risk.
 Both axes moved together by deleting transient strings — fewer `malloc` calls
 *is* the time win.
 
-Caveat learned: **GB·s rose (168 → 192) despite shorter wall time**, because it
-integrates *RSS* and RSS was noisy-high that run (3,587 vs 2,396 MB). GB·s
+Caveat learned: **GB-seconds rose (168 → 192) despite shorter wall time**, because it
+integrates *RSS* and RSS was noisy-high that run (3,587 vs 2,396 MB). GB-seconds
 inherits RSS noise; to be a real KPI it should integrate live heap (deterministic),
 not RSS. The trustworthy proxies remain **allocation count** and stage time.
 
-### Refactor #2 (done): canonicalize encode-into-buffer + deterministic heap·s
+### Refactor #2 (done): canonicalize encode-into-buffer + deterministic heap-seconds
 
 Two changes:
 
@@ -245,9 +245,9 @@ Two changes:
   aggregates; STEP-logical detection uses `eq_ignore_ascii_case` instead of
   `to_uppercase()` (allocation-free). Byte-identical (verified vs checkpoint;
   21/21 Rust unit tests pass).
-- **Deterministic heap·s** added to the native report: live heap (exact) ×
-  stage time, trapezoidal. Unlike RSS-based GB·s it doesn't inherit allocator
-  noise. (`heap=150.4 GB·s` on the 180 MB file.)
+- **Deterministic heap-seconds** added to the native report: live heap (exact) ×
+  stage time, trapezoidal. Unlike RSS-based GB-seconds it doesn't inherit allocator
+  noise. (`heap=150.4 GB-seconds` on the 180 MB file.)
 
 | metric | before | after | Δ |
 |---|---:|---:|---:|
