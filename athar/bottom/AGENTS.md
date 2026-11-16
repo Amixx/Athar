@@ -82,6 +82,7 @@ and `athar_native.reference_policy()`:
   placement plane equals its projection. The axis references produce no edge.
   A frame the rules leave undefined (parallel axes, an axis reference that is
   not a direction) keeps the attribute-wise encoding.
+- Spatial coordinates are converted to metres without quantization before placement-chain composition. World and local matrices are quantized at `PLACEMENT_SCALE = 1e6` (one micrometre for translations, `1e-6` for rotation entries). IfcOpenShell's `get_local_placement` returns file units; crosschecks scale its translation to metres and allow one quantum plus `1e-9` relative. IfcOpenShell's helper retains a non-perpendicular RefDirection; the engine uses the IFC-derived projection.
 - `spatial.rs` builds placement matrices from the same axes (`placement_axes`
   in `canon.rs`). A relative placement whose frame is undefined, including an
   axis attribute set to a zero, malformed or missing direction, has a zero
@@ -320,3 +321,4 @@ comparable within one version.
 | v12 | signatures carry the local placement and the placement parent beside the world placement, and the relation targets of each root |
 | v13 | `vh_geometry` of a root does not cover the root's class |
 | v14 | hashes as in v13; `data_facts` paths label an owner below the root by class and `Name`; related entities say whether their GlobalId is shared; property values without a declared or convertible unit stay as written |
+| v15 | spatial coordinates remain unquantized until frame composition; world/local matrices and relative feature-position hashes use the composed frame |

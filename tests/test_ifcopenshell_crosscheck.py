@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from itertools import zip_longest
 from pathlib import Path
 
 import ifcopenshell
+import ifcopenshell.util.placement
+import ifcopenshell.util.unit
+import numpy as np
 import pytest
+
+from athar.bottom.signatures import build_signature_bundle
 
 from athar.bottom._native import native
 from tests.corpus import REPO_ROOT, corpus_path
@@ -153,3 +159,129 @@ def test_parser_authored_values(tmp_path):
     path = tmp_path / "values.ifc"
     model.write(str(path))
     assert _parser_disagreements(path) == []
+
+
+def _placement_disagreements(path):
+    model = ifcopenshell.open(str(path))
+    bundle = build_signature_bundle(str(path))
+    scale = ifcopenshell.util.unit.calculate_unit_scale(model)
+    differences, unresolved = [], []
+    for step, signature in bundle.signatures.items():
+        placement = getattr(model[step], "ObjectPlacement", None)
+        if placement is None:
+            continue
+        current, seen = placement, set()
+        while current is not None and current.is_a("IfcLocalPlacement") and current.id() not in seen:
+            seen.add(current.id())
+            current = current.PlacementRelTo
+        plain_chain = current is None
+        if signature.placement_unresolved:
+            assert not plain_chain, (step, placement)
+            assert signature.placement is None
+            unresolved.append((step, current.is_a(), current.id()))
+            continue
+        assert plain_chain, (step, placement)
+        assert signature.placement is not None, step
+        oracle = ifcopenshell.util.placement.get_local_placement(placement)
+        oracle[:3, 3] *= scale
+        actual = [value / 1_000_000 for value in signature.placement]
+        expected = oracle.flatten().tolist()
+        # PLACEMENT_SCALE is 1e6; translations and rotation entries have a 1e-6 quantum.
+        if any(not (math.isfinite(a) and math.isfinite(b)) or abs(a - b) > 1e-6 + 1e-9 * abs(b)
+               for a, b in zip(actual, expected)):
+            differences.append((step, actual, expected))
+    return differences, unresolved
+
+
+@pytest.mark.parametrize("source", _FILES)
+def test_placement_agreement(source):
+    path = source if isinstance(source, Path) else Path(corpus_path(source))
+    differences, unresolved = _placement_disagreements(path)
+    print(f"{path.name}: unresolved placements {unresolved}")
+    expected_differences = {
+        "cylinders.ifc": ({36}, "IfcBuildAxes projects the non-perpendicular RefDirection; IfcOpenShell a2p retains it"),
+        "standard_case_element_beam.ifc": (set(range(2000, 2900, 100)),
+                                           "IfcBuildAxes projects the rounded, non-perpendicular axes; IfcOpenShell a2p retains them"),
+    }
+    steps, reason = expected_differences.get(path.name, (set(), ""))
+    assert {step for step, _, _ in differences} == steps, (
+        f"{len(differences)} placement disagreements in {path}:\n" + "\n".join(map(repr, differences))
+    )
+    if differences:
+        assert reason
+        model = ifcopenshell.open(str(path))
+        for step, actual, _ in differences:
+            chain, placement = [], model[step].ObjectPlacement
+            while placement is not None:
+                chain.append(placement.RelativePlacement)
+                placement = placement.PlacementRelTo
+            projected = np.eye(4)
+            for relative in reversed(chain):
+                local = ifcopenshell.util.placement.get_axis2placement(relative)
+                z, x = local[:3, 2].copy(), local[:3, 0].copy()
+                x -= z * np.dot(x, z)
+                x /= np.linalg.norm(x)
+                local[:3, 0] = x
+                local[:3, 1] = np.cross(z, x)
+                projected = projected @ local
+            projected[:3, 3] *= ifcopenshell.util.unit.calculate_unit_scale(model)
+            assert actual == pytest.approx(projected.flatten().tolist(), abs=1e-6, rel=1e-9), (step, reason)
+
+
+@pytest.mark.parametrize("prefix", [None, "MILLI"])
+def test_placement_authored_chain(tmp_path, prefix):
+    model = ifcopenshell.file(schema="IFC4")
+    unit = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE", Prefix=prefix)
+    assignment = model.create_entity("IfcUnitAssignment", Units=[unit])
+    model.create_entity("IfcProject", GlobalId=ifcopenshell.guid.new(), UnitsInContext=assignment)
+    parent = None
+    for position, axis, ref in [((23.125, -4.5, 8.0), (0.0, 3.0, 4.0), (2.0, 0.0, 0.0)),
+                                ((-1.25, 6.75, 2.0), (0.0, 0.0, 1.0), (3.0, 4.0, 0.0)),
+                                ((0.00000049, 0.00000051, -0.0000015), None, None)]:
+        relative = model.create_entity("IfcAxis2Placement3D",
+                                      Location=model.create_entity("IfcCartesianPoint", Coordinates=position),
+                                      Axis=model.create_entity("IfcDirection", DirectionRatios=axis) if axis else None,
+                                      RefDirection=model.create_entity("IfcDirection", DirectionRatios=ref) if ref else None)
+        parent = model.create_entity("IfcLocalPlacement", PlacementRelTo=parent, RelativePlacement=relative)
+        model.create_entity("IfcWall", GlobalId=ifcopenshell.guid.new(), ObjectPlacement=parent)
+    path = tmp_path / "placements.ifc"
+    model.write(str(path))
+    assert _parser_disagreements(path) == []
+    assert _placement_disagreements(path) == ([], [])
+
+
+def test_placement_nested_rounding(tmp_path):
+    model = ifcopenshell.file(schema="IFC4")
+    parent = None
+    for _ in range(4):
+        point = model.create_entity("IfcCartesianPoint", Coordinates=(0.00000049, -0.00000049, 0.0))
+        relative = model.create_entity("IfcAxis2Placement3D", Location=point)
+        parent = model.create_entity("IfcLocalPlacement", PlacementRelTo=parent, RelativePlacement=relative)
+    model.create_entity("IfcWall", GlobalId=ifcopenshell.guid.new(), ObjectPlacement=parent)
+    path = tmp_path / "nested.ifc"
+    model.write(str(path))
+    for point in model.by_type("IfcCartesianPoint"):
+        point.Coordinates = (0.0, 0.0, 0.0)
+    moved = tmp_path / "moved.ifc"
+    model.write(str(moved))
+    from athar.engine import diff_files
+
+    report = diff_files(str(path), str(moved))
+    (item,) = report["modified"]
+    assert item["aspects"]["placement"] == "changed"
+    assert item["aspects"]["placement_delta_mm"] == pytest.approx([-0.002, 0.002, 0.0])
+    assert _placement_disagreements(path) == ([], [])
+
+
+def test_placement_coverage_model(tmp_path):
+    from tests.test_change_coverage import _build
+
+    path = tmp_path / "coverage.ifc"
+    _build().write(str(path))
+    assert _parser_disagreements(path) == []
+    differences, unresolved = _placement_disagreements(path)
+    assert differences == []
+    model = ifcopenshell.open(str(path))
+    assert [(model[step].Name, cls) for step, cls, _ in unresolved] == [
+        ("GP1", "IfcGridPlacement"), ("GP2", "IfcGridPlacement")
+    ]

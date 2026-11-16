@@ -618,8 +618,7 @@ fn canonical_triangle_parts(
     Some(parts)
 }
 
-/// Read the first attribute as a list of reals, quantize each with `measure`,
-/// and return the first three as `value/1e6`.
+/// Read spatial coordinates in SI units without rounding before frame composition.
 fn coords_from_first_list(
     rec: &Record,
     measure: &Measure,
@@ -641,7 +640,8 @@ fn coords_from_first_list(
             },
             _ => return None,
         };
-        out[i] = quantize_real(v, *measure, false, unit_factors) as f64 / 1_000_000.0;
+        let factor = measure.unit_type().and_then(|u| unit_factors.get(u)).copied().unwrap_or(1.0);
+        out[i] = v * factor;
     }
     Some(out)
 }
