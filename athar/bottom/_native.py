@@ -14,7 +14,7 @@ from __future__ import annotations
 
 try:
     import athar_native as _native  # type: ignore
-except Exception:  # pragma: no cover - exercised only when the wheel is absent
+except ImportError:  # pragma: no cover - exercised only when the wheel is absent
     _native = None
 
 

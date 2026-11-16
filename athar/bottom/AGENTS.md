@@ -26,6 +26,16 @@ gossip → `spatial.rs` placement/centroid/AABB. The edge-policy table lives in
 `edges.rs`. `GlobalId` and `OwnerHistory` never enter hashes; spatial tagging
 supports IFC4 `IfcSpatialElement` and IFC2X3 `IfcSpatialStructureElement` roots.
 
+`step.rs` reads every byte from the `DATA` statement (found after the header's
+`ENDSEC;`, outside strings and comments) to its `ENDSEC;`. Anything that is
+not a record or trivia, a duplicate `#id`, and complex (multiple-inheritance)
+instances are errors carrying the byte offset and the record id. Keywords and
+enumeration values are case-insensitive and normalized to upper case. String
+bytes decode as UTF-8 where valid and as Latin-1 per byte otherwise, then STEP
+control directives are decoded, so raw and escaped spellings hash alike
+(canon-v10). ifcopenshell drops raw non-ASCII string bytes, so values read
+through it (property extraction) can differ from the hashed ones.
+
 ## Edge Policy Contracts
 
 - Property and quantity subtrees (`HasProperties`, `Quantities`,
