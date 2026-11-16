@@ -848,6 +848,7 @@ fn build_bundle(
     path: &str,
     schema_json: &str,
     unit_factors: &HashMap<String, f64>,
+    record_unit_factors: &HashMap<i64, HashMap<String, f64>>,
 ) -> Result<NativeBundle, String> {
     let mut prof = StageProfiler::new();
     prof.mark("enter");
@@ -857,7 +858,7 @@ fn build_bundle(
     drop(bytes);
     prof.mark("tokenize");
     let schema = descriptor::parse_schema(schema_json)?;
-    let mut parsed = canon::canonicalize(&records, &schema, unit_factors);
+    let mut parsed = canon::canonicalize(&records, &schema, unit_factors, record_unit_factors);
     drop(records);
     prof.mark("canonicalize");
     let graph = edges::build_edges(&parsed.entities, &parsed.index);
@@ -1296,15 +1297,18 @@ type CoverageTuple = (BTreeMap<String, i64>, BTreeMap<String, (i64, String)>, BT
 /// Full native parse + signature build for one IFC file.
 ///
 /// `schema_json` is the per-class descriptor map; `unit_factors` maps unit
-/// types to scale factors. Returns `(signatures, edge_stats, (dangling_refs,
-/// cycle_breaks, warnings), (unknown_relationships, unreached,
-/// ignored_by_design), (relation_labels, related_entities))`.
+/// types to scale factors; `record_unit_factors` maps a step id to unit
+/// factors that override the file's for that record alone. Returns
+/// `(signatures, edge_stats, (dangling_refs, cycle_breaks, warnings),
+/// (unknown_relationships, unreached, ignored_by_design),
+/// (relation_labels, related_entities))`.
 #[pyfunction]
 fn build_signature_bundle(
     py: Python<'_>,
     path: String,
     schema_json: String,
     unit_factors: HashMap<String, f64>,
+    record_unit_factors: HashMap<i64, HashMap<String, f64>>,
 ) -> PyResult<(
     Vec<SigTuple>,
     BTreeMap<String, i64>,
@@ -1313,7 +1317,7 @@ fn build_signature_bundle(
     (Vec<(String, String)>, HashMap<i64, EntityLabel>),
 )> {
     let bundle = py
-        .allow_threads(|| build_bundle(&path, &schema_json, &unit_factors))
+        .allow_threads(|| build_bundle(&path, &schema_json, &unit_factors, &record_unit_factors))
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     let coverage = bundle.coverage;
     Ok((

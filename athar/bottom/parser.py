@@ -180,7 +180,32 @@ def _extract_unit_context(ifc) -> dict[str, Any]:
     return {
         "unit_factors": {k: unit_factors[k] for k in sorted(unit_factors)},
         "property_unit_factors": {k: property_unit_factors[k] for k in sorted(property_unit_factors)},
+        "record_unit_factors": _map_conversion_unit_factors(ifc),
     }
+
+
+def _map_conversion_unit_factors(ifc) -> dict[int, dict[str, float]]:
+    """Length factor per ``IfcMapConversion`` whose target CRS sets ``MapUnit``.
+
+    The conversion's lengths are in that unit; without ``MapUnit`` they use the
+    project length unit and the conversion has no entry.
+    """
+    if ifc.schema == "IFC2X3":
+        return {}
+    factors: dict[int, dict[str, float]] = {}
+    for conversion in ifc.by_type("IfcMapConversion"):
+        crs = conversion.TargetCRS
+        map_unit = crs.MapUnit if crs is not None and crs.is_a("IfcProjectedCRS") else None
+        if map_unit is None:
+            continue
+        step_id = conversion.id()
+        if getattr(map_unit, "UnitType", None) != "LENGTHUNIT":
+            raise ValueError(f"#{step_id} IfcMapConversion: TargetCRS MapUnit is not a length unit")
+        factor = unit_factor(map_unit)
+        if factor is None:
+            raise ValueError(f"#{step_id} IfcMapConversion: TargetCRS MapUnit has no positive length factor")
+        factors[step_id] = {"LENGTHUNIT": factor}
+    return factors
 
 
 def unit_factor(unit) -> float | None:

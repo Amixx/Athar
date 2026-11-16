@@ -210,7 +210,9 @@ def _build_bundle_phased(path: str, rec: Recorder):
         _assert_supported_schema(schema)
         holder["ifc"] = ifc
         holder["schema"] = schema
-        holder["unit_factors"] = _extract_unit_context(ifc).get("unit_factors", {})
+        context = _extract_unit_context(ifc)
+        holder["unit_factors"] = context.get("unit_factors", {})
+        holder["record_unit_factors"] = context["record_unit_factors"]
 
     rec.run("ifc_open", _open)
     rec.run("extract_properties", lambda: holder.update(props=extract_properties(holder["ifc"], holder["unit_factors"])))
@@ -224,7 +226,7 @@ def _build_bundle_phased(path: str, rec: Recorder):
     schema_json = schema_descriptors_json(holder["schema"])
 
     def _native() -> Any:
-        return native_mod.build_signature_bundle(path, schema_json, holder["unit_factors"])
+        return native_mod.build_signature_bundle(path, schema_json, holder["unit_factors"], holder["record_unit_factors"])
 
     sigs, edge_stats_map, diag, coverage = rec.run("native_build", _native)
     dangling, cycle_breaks, warnings = diag

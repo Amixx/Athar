@@ -117,6 +117,7 @@ pub fn canonicalize(
     records: &[Record],
     schema: &SchemaDesc,
     unit_factors: &HashMap<String, f64>,
+    record_unit_factors: &HashMap<i64, HashMap<String, f64>>,
 ) -> ParsedNative {
     let tri_pointlists = collect_triangulated_pointlists(records, schema, unit_factors);
     let dir_ratios: HashMap<i64, [f64; 3]> = records
@@ -180,6 +181,19 @@ pub fn canonicalize(
             geom_parts.push(part.clone());
         }
 
+        let overlaid: HashMap<String, f64>;
+        let attr_unit_factors = match record_unit_factors.get(&rec.step_id) {
+            Some(overrides) => {
+                overlaid = unit_factors
+                    .iter()
+                    .chain(overrides)
+                    .map(|(unit, factor)| (unit.clone(), *factor))
+                    .collect();
+                &overlaid
+            }
+            None => unit_factors,
+        };
+
         // Attributes are zipped positionally with the schema descriptor.
         let n = rec.attrs.len().min(desc.attrs.len());
         for i in 0..n {
@@ -209,12 +223,12 @@ pub fn canonicalize(
             part.push_str("attr=");
             part.push_str(&attr.name);
             part.push(':');
-            encode_inner_into(&mut part, token, &attr.shape, attr.direction, unit_factors);
+            encode_inner_into(&mut part, token, &attr.shape, attr.direction, attr_unit_factors);
             let geom = desc.geometric && !attr.text;
             if !geom {
-                data_facts.push((attr_rc, fact_value(token, &attr.shape, attr.direction, unit_factors)));
+                data_facts.push((attr_rc, fact_value(token, &attr.shape, attr.direction, attr_unit_factors)));
             } else if !matches!(attr.shape, Shape::Agg { .. }) {
-                geom_facts.push((attr_rc, fact_value(token, &attr.shape, attr.direction, unit_factors)));
+                geom_facts.push((attr_rc, fact_value(token, &attr.shape, attr.direction, attr_unit_factors)));
             }
             if geom {
                 geom_parts.push(part);
