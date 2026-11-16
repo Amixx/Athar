@@ -41,7 +41,11 @@ so parser and renderer can be swapped independently.
   for the legend.
   Per-bucket appearance (visible/opacity/color) is a pure function of slider t
   and toggles.
-- `src/lib/scene.ts` — three.js scene: one merged mesh per bucket, so slider
+- `src/lib/scene.ts` — three.js scene: one merged mesh and one merged outline
+  per bucket. Voiding features (`IfcOpeningElement`, `IfcOpeningStandardCase`,
+  `IfcVoidingFeature`) render only changed buckets, as edges with line highlights;
+  unchanged and unreported voids are hidden. Report classes take precedence over
+  mesh `ifcType`; legend drawn counts include outlines. Thus slider
   drags are O(buckets) material updates regardless of entity count; per-entity
   index ranges drive raycast picking and a zero-copy highlight overlay.
 - `src/lib/sources.ts` — both input paths: drag-drop (two IFC files +

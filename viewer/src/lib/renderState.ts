@@ -84,11 +84,12 @@ export const GHOST_OPACITY = 0.15
 /** Transitive (indirect) changes render subordinate (semi-transparent) to direct edits. */
 export const TRANSITIVE_OPACITY = 0.5
 
-/**
- * Assign the visual bucket for one side's mesh of an entity.
- * Returns null when that side's mesh must not be rendered.
- */
-export function bucketFor(side: Side, rec: EntityRecord | undefined): Bucket | null {
+export function isVoidingFeature(klass: string | undefined): boolean {
+  return ['IFCOPENINGELEMENT', 'IFCOPENINGSTANDARDCASE', 'IFCVOIDINGFEATURE'].includes(klass?.toUpperCase() ?? '')
+}
+
+export function bucketFor(side: Side, rec: EntityRecord | undefined, meshClass?: string): Bucket | null {
+  if (isVoidingFeature(rec?.klass ?? meshClass) && (!rec || rec.section === 'unchanged')) return null
   if (rec === undefined) {
     // Mesh without a report record: render the new-side copy only; the old-side
     // copy would coincide when nothing changed, and there is no identity

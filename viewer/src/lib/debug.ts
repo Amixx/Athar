@@ -22,7 +22,7 @@ export interface ViewerDebugState {
   displacementLines?: number
   selection?: { side: string; stepId: number } | null
   /** three.js uuids of the visible highlight overlay's geometry and material. */
-  highlightObjects?: { geometry: string; material: string } | null
+  highlightObjects?: { geometry: string; material: string; type: string } | null
   /** Chain navigation: total steps, active index, and its label. */
   stepCount?: number
   activeStep?: number
@@ -33,6 +33,7 @@ export interface ViewerDebugState {
   entityBounds?: (side: Side, stepId: number) => Bounds | null
   /** Scene-space bounds of one entity as the scene built it, or null when that side is not drawn. */
   drawnBounds?: (side: Side, stepId: number) => Bounds | null
+  entityDrawing?: (side: Side, stepId: number) => { type: string; vertices: number } | null
 }
 
 declare global {

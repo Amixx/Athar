@@ -258,7 +258,7 @@
       const translations = frameTranslations(oldGeometry.origin, newGeometry.origin)
       const geometries = { old: oldGeometry, new: newGeometry }
       const bucketOfFn = (side: Side, stepId: number) =>
-        bucketFor(side, side === 'old' ? diff.old.get(stepId) : diff.new.get(stepId))
+        bucketFor(side, side === 'old' ? diff.old.get(stepId) : diff.new.get(stepId), geometries[side].byEntity.get(stepId)?.[0]?.ifcType)
       const displacementGroups = groupDisplacements(
         report.modified,
         report.stats.placement_cohorts ?? [],
@@ -300,6 +300,7 @@
           bucketOfFn,
           displacementGroups,
           translations,
+          (side, stepId) => (side === 'old' ? diff.old : diff.new).get(stepId)?.klass,
         )
         displacementLines = stats.displacementLines
         scene.applyAppearances(computeAppearances(sliderT, toggles), showLines)
@@ -324,6 +325,7 @@
           const meshes = geometries[side].byEntity.get(stepId)
           return meshes ? entityBounds(meshes, translations[side]) : null
         },
+        entityDrawing: (side: Side, stepId: number) => scene?.entityDrawing(side, stepId) ?? null,
         drawnBounds: (side: Side, stepId: number) => {
           const box = scene?.entityBox(side, stepId)
           return box ? { min: box.min.toArray(), max: box.max.toArray() } : null
@@ -541,10 +543,11 @@
       {#if !rendererReady}
         <div class="footnote" data-testid="legend-drawing">3D drawing unavailable: nothing is drawn.</div>
       {/if}
-      <div class="footnote">Extra: geometry the report has no record of. The new file's is drawn; the old file's is listed below.</div>
+      <div class="footnote">Drawn includes changed void outlines; unchanged and unreported voids are hidden.</div>
+      <div class="footnote">Extra: unreported geometry. Non-void new geometry is drawn; old geometry is listed below.</div>
       {#if coverage && coverage.undrawn.length > 0}
         <span class="microlabel">not drawn ({coverage.undrawn.length})</span>
-        <div class="footnote">In the report, but no 3D geometry is drawn for them (spatial containers, property-only objects).</div>
+        <div class="footnote">Not drawn: containers without meshes, property-only objects, and unchanged voids.</div>
         <div class="undrawn" data-testid="undrawn">
           {#each coverage.undrawn as entity (entity.side + entity.stepId)}
             <button class="classrow" onclick={() => select({ side: entity.side, stepId: entity.stepId })}>

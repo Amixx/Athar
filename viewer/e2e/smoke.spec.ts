@@ -124,6 +124,45 @@ for (const width of [375, 800, 1280, 1920]) {
   })
 }
 
+test('voiding features outline changes and hide unchanged or unreported meshes', async ({ page }) => {
+  const report = JSON.parse(await readFile(join(FIXTURES, 'report.json'), 'utf8'))
+  for (const item of [...report.modified, ...report.unchanged]) {
+    item.old.class = item.new.class = 'IfcOpeningElement'
+  }
+  for (const item of [...report.added, ...report.deleted]) item.class = 'IfcOpeningStandardCase'
+  await page.route(`${srcOrigin}/report.json`, route => route.fulfill({ json: report }))
+  await page.goto(`/?src=${srcOrigin}`)
+  await waitReady(page)
+  expect(await page.evaluate(() => (window as any).__athar_viewer.entityDrawing('new', 53))).toEqual({ type: 'LineSegments', vertices: 24 })
+  expect(await page.evaluate(() => (window as any).__athar_viewer.entityDrawing('old', 53))).toEqual({ type: 'LineSegments', vertices: 24 })
+  expect(await page.evaluate(() => (window as any).__athar_viewer.entityDrawing('new', 37))).toEqual({ type: 'LineSegments', vertices: 24 })
+  for (const [side, summary] of [['old', report.deleted[0]], ['new', report.added[0]]] as const) {
+    expect(await page.evaluate(({ side, id }) => (window as any).__athar_viewer.entityDrawing(side, id), { side, id: summary.step_id })).toEqual({ type: 'LineSegments', vertices: 24 })
+  }
+  await page.screenshot({ path: 'test-results/openings-outlined.png' })
+
+  const viewport = page.viewportSize()!
+  await page.mouse.click(viewport.width / 2, viewport.height / 2)
+  await expect(page.locator('.inspector')).toBeVisible()
+  expect(await page.evaluate(() => (window as any).__athar_viewer.highlightObjects?.type)).toBe('LineSegments')
+
+  report.unchanged.push(...report.modified)
+  report.modified = []
+  await page.reload()
+  await waitReady(page)
+  expect(await page.evaluate(() => (window as any).__athar_viewer.entityDrawing('new', 53))).toBeNull()
+
+  await page.route(`${srcOrigin}/new.ifc`, async route => {
+    const ifc = await readFile(join(FIXTURES, 'new.ifc'), 'utf8')
+    await route.fulfill({ body: ifc.replace('#37=IFCWALL(', '#37=IFCOPENINGELEMENT(') })
+  })
+  report.unchanged = report.unchanged.filter((item: any) => item.new.step_id !== 37)
+  await page.reload()
+  await waitReady(page)
+  expect(await page.evaluate(() => (window as any).__athar_viewer.entityBounds('new', 37))).not.toBeNull()
+  expect(await page.evaluate(() => (window as any).__athar_viewer.entityDrawing('new', 37))).toBeNull()
+})
+
 test('loads a pair via ?src= hand-off and buckets entities', async ({ page }) => {
   await page.goto(`/?src=${srcOrigin}`)
   const state = await waitReady(page)
