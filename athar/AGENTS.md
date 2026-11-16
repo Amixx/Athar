@@ -275,8 +275,9 @@ corpus evidence and tests.
   carries `unit` (`m`, `m2`, `m3`, `rad`, `s`, `kg`); other values are as
   written, without `unit`. A value is also as written, without `unit`, when
   the file's unit of the measure's type, or the unit the property names, is
-  not an `IfcSIUnit` or an `IfcConversionBasedUnit` (an
-  `IfcContextDependentUnit` has no factor), or the file declares none. A `changed` entry whose two
+  not convertible by IfcOpenShell's unit helpers (an
+  `IfcContextDependentUnit`, a conversion chain or derived unit containing one,
+  or a nonzero-offset conversion has no multiplicative factor), or the file declares none. A `changed` entry whose two
   sides have different units carries `old_unit` beside `unit` (either may be
   `null`), and a value whose unit changed is `changed` even when the number
   is equal. Only single values, enumerated values and quantities are

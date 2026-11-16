@@ -12,7 +12,7 @@ surface is thin glue:
 
 - `_native.py` — discovers the compiled module (`native()`).
 - `parser.py` — file-independent schema/unit glue only: schema-support guard,
-  measure-type helpers, `IfcUnitAssignment` factor extraction. `open_ifc` is
+  measure-type helpers, `IfcUnitAssignment` factor extraction through `ifcopenshell.util.unit.get_unit_scale` (IfcOpenShell 0.9.0.post1+). `unit_factor` also converts a property's own unit. SI, conversion-based chains and derived units have multiplicative factors; context-dependent units, chains or derived units containing them, and nonzero-offset conversions are omitted from both factor mappings. The first unit assignment supplies the unit types. Factors retain IfcOpenShell's gram basis for mass; property reporting converts grams to kilograms. Native `Measure` looks up length, area, volume and plane angle only (`descriptor.rs`); an absent factor leaves the number unscaled in `canon.rs`, without an SI property label. `open_ifc` is
   the one place `ifcopenshell` opens a file. ifcopenshell crashes the
   interpreter on a file it cannot open, so `require_readable_file` raises an
   `OSError` naming the path unless it is a regular file the process can read.

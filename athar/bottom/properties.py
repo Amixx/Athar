@@ -55,10 +55,9 @@ def _si_value(value, measure: str | None, own_unit, unit_factors: dict[str, floa
     """``(value in the SI unit of ``measure``, that unit)``; the value as written and ``None`` without one.
 
     ``own_unit`` is the unit the property or quantity names itself, which
-    takes the place of the file's unit assignment. Only an ``IfcSIUnit`` or
-    an ``IfcConversionBasedUnit`` has a factor; with any other own unit, or
-    when the file declares no unit of the measure's type, the value stays as
-    written.
+    takes the place of the file's unit assignment. A unit without a multiplicative
+    conversion factor, or an undeclared unit of the measure's type, leaves the
+    value as written.
     """
     if measure not in _SI_UNITS or isinstance(value, bool) or not isinstance(value, (int, float)):
         return value, None
@@ -67,10 +66,10 @@ def _si_value(value, measure: str | None, own_unit, unit_factors: dict[str, floa
         factor = unit_factors.get(unit_type)
         if factor is None:
             return value, None
-    elif own_unit.is_a("IfcSIUnit") or own_unit.is_a("IfcConversionBasedUnit"):
-        factor = unit_factor(own_unit)
     else:
-        return value, None
+        factor = unit_factor(own_unit)
+        if factor is None:
+            return value, None
     if factor == per_si:
         return value, unit
     return float(f"{value * factor / per_si:.12g}"), unit
