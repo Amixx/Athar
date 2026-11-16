@@ -9,22 +9,20 @@ from __future__ import annotations
 
 import json
 
-from .parser import unit_factor
+from .parser import measure_unit_type, unit_factor
 from .types import OrphanPropertySet, PropertyEntry
 
-# Measure class -> (unit type of the unit assignment, SI unit, factors of
-# that unit type per SI unit).
+# Measure class -> (unit type of the unit assignment, SI unit).
 _SI_UNITS = {
-    "IfcLengthMeasure": ("LENGTHUNIT", "m", 1.0),
-    "IfcPositiveLengthMeasure": ("LENGTHUNIT", "m", 1.0),
-    "IfcNonNegativeLengthMeasure": ("LENGTHUNIT", "m", 1.0),
-    "IfcAreaMeasure": ("AREAUNIT", "m2", 1.0),
-    "IfcVolumeMeasure": ("VOLUMEUNIT", "m3", 1.0),
-    "IfcPlaneAngleMeasure": ("PLANEANGLEUNIT", "rad", 1.0),
-    "IfcPositivePlaneAngleMeasure": ("PLANEANGLEUNIT", "rad", 1.0),
-    "IfcTimeMeasure": ("TIMEUNIT", "s", 1.0),
-    # Unit factors of mass are relative to the gram.
-    "IfcMassMeasure": ("MASSUNIT", "kg", 1000.0),
+    "IfcLengthMeasure": ("LENGTHUNIT", "m"),
+    "IfcPositiveLengthMeasure": ("LENGTHUNIT", "m"),
+    "IfcNonNegativeLengthMeasure": ("LENGTHUNIT", "m"),
+    "IfcAreaMeasure": ("AREAUNIT", "m2"),
+    "IfcVolumeMeasure": ("VOLUMEUNIT", "m3"),
+    "IfcPlaneAngleMeasure": ("PLANEANGLEUNIT", "rad"),
+    "IfcPositivePlaneAngleMeasure": ("PLANEANGLEUNIT", "rad"),
+    "IfcTimeMeasure": ("TIMEUNIT", "s"),
+    "IfcMassMeasure": ("MASSUNIT", "kg"),
 }
 _QUANTITIES = {
     "IfcQuantityLength": ("LengthValue", "IfcLengthMeasure"),
@@ -61,7 +59,7 @@ def _si_value(value, measure: str | None, own_unit, unit_factors: dict[str, floa
     """
     if measure not in _SI_UNITS or isinstance(value, bool) or not isinstance(value, (int, float)):
         return value, None
-    unit_type, unit, per_si = _SI_UNITS[measure]
+    unit_type, unit = _SI_UNITS[measure]
     if own_unit is None:
         factor = unit_factors.get(unit_type)
         if factor is None:
@@ -70,9 +68,41 @@ def _si_value(value, measure: str | None, own_unit, unit_factors: dict[str, floa
         factor = unit_factor(own_unit)
         if factor is None:
             return value, None
-    if factor == per_si:
+    if factor == 1.0:
         return value, unit
-    return float(f"{value * factor / per_si:.12g}"), unit
+    return float(f"{value * factor:.12g}"), unit
+
+
+_OWN_UNIT_VALUES = {
+    "IfcPropertySingleValue": ("NominalValue",),
+    "IfcPropertyBoundedValue": ("UpperBoundValue", "LowerBoundValue", "SetPointValue"),
+    "IfcPropertyListValue": ("ListValues",),
+}
+
+
+def own_unit_factors(ifc) -> dict[int, dict[str, float]]:
+    """Per property or quantity naming its own unit: the factor of that unit by the unit type of its values.
+
+    The unit takes the place of the file's unit assignment for that record; a
+    unit without a multiplicative factor leaves the values as written (factor 1).
+    """
+    schema = ifc.schema_identifier
+    factors: dict[int, dict[str, float]] = {}
+    for entity in ifc.by_type("IfcSimpleProperty") + ifc.by_type("IfcPhysicalSimpleQuantity"):
+        own_unit = _safe_get(entity, "Unit")
+        if own_unit is None:
+            continue
+        if entity.is_a() in _QUANTITIES:
+            measures = [_QUANTITIES[entity.is_a()][1]]
+        else:
+            values = [_safe_get(entity, attr) for attr in _OWN_UNIT_VALUES.get(entity.is_a(), ())]
+            values = [item for value in values for item in (value if isinstance(value, tuple) else (value,))]
+            measures = [value.is_a() for value in values if value is not None]
+        unit_types = {measure_unit_type(schema, measure) for measure in measures if measure} - {None}
+        if unit_types:
+            factor = unit_factor(own_unit)
+            factors[entity.id()] = {unit_type: 1.0 if factor is None else factor for unit_type in unit_types}
+    return factors
 
 
 def extract_orphan_property_sets(ifc) -> tuple[OrphanPropertySet, ...]:

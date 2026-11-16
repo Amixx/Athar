@@ -180,3 +180,82 @@ def test_property_unit_conversion_through_diff(tmp_path, kind, expected, label):
     assert delta["old_value"] == expected[0]
     assert delta["new_value"] == expected[1]
     assert delta.get("unit") == label
+
+
+def _derived(model, unit_type, *elements):
+    return model.create_entity("IfcDerivedUnit", UnitType=unit_type, Elements=[
+        model.create_entity("IfcDerivedUnitElement", Unit=unit, Exponent=exponent) for unit, exponent in elements
+    ])
+
+
+def _with_measures(path, units, values, quantities=()):
+    _build(str(path), 1.0, None)
+    model = ifcopenshell.open(str(path))
+    assignment = model.by_type("IfcUnitAssignment")[0]
+    assignment.Units = list(assignment.Units) + [build(model) for build in units]
+    proxy = model.by_type("IfcBuildingElementProxy")[0]
+    definitions = [model.create_entity("IfcPropertySet", GlobalId="0measuresmeasuresmeas1", Name="Pset_Measures", HasProperties=[
+        model.create_entity("IfcPropertySingleValue", Name=name, NominalValue=model.create_entity(measure, value),
+                            Unit=unit(model) if unit else None)
+        for name, measure, value, unit in values
+    ])]
+    if quantities:
+        definitions.append(model.create_entity("IfcElementQuantity", GlobalId="0quantitiesquantitiesq1", Name="Qto_Measures", Quantities=[
+            model.create_entity(cls, Name=name, **{attr: value}) for cls, name, attr, value in quantities
+        ]))
+    for index, definition in enumerate(definitions):
+        model.create_entity("IfcRelDefinesByProperties", GlobalId=f"0measurerelmeasurerel{index:02d}",
+                            RelatedObjects=[proxy], RelatingPropertyDefinition=definition)
+    model.write(str(path))
+
+
+def _thermal_units(prefix):
+    def build(model):
+        watt = model.create_entity("IfcSIUnit", UnitType="POWERUNIT", Name="WATT")
+        metre = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Prefix=prefix, Name="METRE")
+        kelvin = model.create_entity("IfcSIUnit", UnitType="THERMODYNAMICTEMPERATUREUNIT", Name="KELVIN")
+        return _derived(model, "THERMALTRANSMITTANCEUNIT", (watt, 1), (metre, -2), (kelvin, -1))
+    return build
+
+
+def _mass_unit(tonnes):
+    def build(model):
+        kilogram = model.create_entity("IfcSIUnit", UnitType="MASSUNIT", Prefix="KILO", Name="GRAM")
+        if not tonnes:
+            return kilogram
+        dimensions = model.create_entity("IfcDimensionalExponents", 0, 1, 0, 0, 0, 0, 0)
+        conversion = model.create_entity("IfcMeasureWithUnit", model.create_entity("IfcMassMeasure", 1000.0), kilogram)
+        return model.create_entity("IfcConversionBasedUnit", dimensions, "MASSUNIT", "tonne", conversion)
+    return build
+
+
+def test_measures_of_any_unit_type_normalize_across_unit_declarations(tmp_path):
+    si, scaled = tmp_path / "si.ifc", tmp_path / "scaled.ifc"
+    _with_measures(si, [_thermal_units(None), _mass_unit(False)],
+                   [("ThermalTransmittance", "IfcThermalTransmittanceMeasure", 0.25, None)],
+                   [("IfcQuantityWeight", "GrossWeight", "WeightValue", 1200.0)])
+    _with_measures(scaled, [_thermal_units("MILLI"), _mass_unit(True)],
+                   [("ThermalTransmittance", "IfcThermalTransmittanceMeasure", 0.25e-6, None)],
+                   [("IfcQuantityWeight", "GrossWeight", "WeightValue", 1.2)])
+
+    report = diff_files(str(si), str(scaled))
+    assert_report_invariants(report)
+    assert [item["new"]["class"] for item in report["modified"]] == ["IfcProject"]
+    (item,) = report["unchanged"]
+    assert item["old"]["guid"] == _GUID
+
+
+def test_a_property_unit_takes_the_place_of_the_file_unit(tmp_path):
+    from athar.bottom.signatures import build_signature_bundle
+
+    def nominal(path, value, unit):
+        _build(str(path), 1000.0, "MILLI")
+        model = ifcopenshell.open(str(path))
+        prop = model.by_type("IfcPropertySingleValue")[0]
+        prop.NominalValue.wrappedValue = value
+        prop.Unit = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE") if unit else None
+        model.write(str(path))
+        (signature,) = [s for s in build_signature_bundle(str(path)).signatures.values() if s.guid == _GUID]
+        return [value for path, value in signature.data_facts if value.startswith("IFCLENGTHMEASURE")]
+
+    assert nominal(tmp_path / "own.ifc", 3.0, unit=True) == nominal(tmp_path / "file.ifc", 3000.0, unit=False) == ["IFCLENGTHMEASURE: 3 m"]

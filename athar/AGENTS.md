@@ -255,8 +255,8 @@ corpus evidence and tests.
 - Numbers shown for people are real numbers in SI units, never the quantized
   integers that are hashed. A real in `data_delta` is the hashed quantity
   printed as a decimal with the unit its measure is normalized to
-  (`IFCLENGTHMEASURE: 3.25 m`, `m2`, `m3`, `rad`; a real without a measure
-  has no unit), so two values print alike exactly when they hash alike.
+  (`IFCLENGTHMEASURE: 3.25 m`, `m2`, `m3`, `rad`, `kg`, `s`; other measures
+  print the SI value without a unit, a real without a measure has no unit), so two values print alike exactly when they hash alike.
   `property_deltas` values of length, area, volume, plane angle, time and
   mass measures and of the matching quantities are converted from the file's
   unit (or the unit the property or quantity names itself) and the entry

@@ -24,21 +24,11 @@ import math
 import os
 import re
 import stat
+from functools import lru_cache
 from typing import Any
 
 from .constants import SUPPORTED_SCHEMAS
 
-_LENGTH_MEASURES = {
-    "IFCLENGTHMEASURE",
-    "IFCPOSITIVELENGTHMEASURE",
-    "IFCNONNEGATIVELENGTHMEASURE",
-}
-_ANGLE_MEASURES = {
-    "IFCPLANEANGLEMEASURE",
-    "IFCPOSITIVEPLANEANGLEMEASURE",
-}
-_AREA_MEASURES = {"IFCAREAMEASURE"}
-_VOLUME_MEASURES = {"IFCVOLUMEMEASURE"}
 _MAX_TYPE_CHAIN_HOPS = 32
 _MAX_IFCOPENSHELL_ID = 2**31 - 1
 _LOG_ERROR = re.compile(r"^\[error\] \[[^\]]*\] (.*)$", re.MULTILINE)
@@ -145,6 +135,24 @@ def _measure_type_from_attr_type(attr_type) -> str | None:
     return None
 
 
+def measure_unit_type(schema_name: str, measure: str) -> str | None:
+    """The unit type of the file unit that scales ``measure`` (``IfcThermalTransmittanceMeasure`` ->
+    ``THERMALTRANSMITTANCEUNIT``), or ``None`` for a measure without a unit type in the schema."""
+    import ifcopenshell.util.unit as units
+
+    unit_type = units.get_measure_unit_type(measure)
+    return unit_type if unit_type in _unit_types(schema_name) else None
+
+
+@lru_cache(maxsize=8)
+def _unit_types(schema_name: str) -> frozenset[str]:
+    from ifcopenshell import ifcopenshell_wrapper
+
+    schema = ifcopenshell_wrapper.schema_by_name(schema_name)
+    names = (schema.declaration_by_name(enum).enumeration_items() for enum in ("IfcUnitEnum", "IfcDerivedUnitEnum"))
+    return frozenset(name for items in names for name in items) - {"USERDEFINED"}
+
+
 def _safe_type_name(attr_type) -> str | None:
     if not hasattr(attr_type, "name"):
         return None
@@ -156,10 +164,10 @@ def _safe_type_name(attr_type) -> str | None:
 
 
 def _extract_unit_context(ifc) -> dict[str, Any]:
-    """Factors per unit type of the file's unit assignment.
+    """SI factors per unit type of the file's unit assignment.
 
     Both mappings contain only units with a finite positive conversion factor.
-    Native factors normalize the four spatial measure families; property factors
+    Native factors normalize every measure with a unit type; property factors
     label supported property measures in SI.
     """
     unit_factors: dict[str, float] = {}
@@ -209,26 +217,31 @@ def _map_conversion_unit_factors(ifc) -> dict[int, dict[str, float]]:
 
 
 def unit_factor(unit) -> float | None:
+    """The factor from ``unit`` to SI, mass in kilograms; ``None`` without a multiplicative one."""
     import ifcopenshell.util.unit as units
 
-    pending = [unit]
+    pending = [(unit, 1)]
+    grams = 0
     while pending:
-        component = pending.pop()
+        component, exponent = pending.pop()
         if component is None:
             return None
         if component.is_a("IfcSIUnit"):
             if component.Prefix is not None and component.Prefix not in units.prefixes:
                 return None
+            if component.Name == "GRAM":
+                grams += exponent
         elif component.is_a("IfcConversionBasedUnit"):
             if component.is_a("IfcConversionBasedUnitWithOffset") and component.ConversionOffset:
                 return None
             conversion = component.ConversionFactor
             if conversion is None or conversion.ValueComponent is None:
                 return None
-            pending.append(conversion.UnitComponent)
+            pending.append((conversion.UnitComponent, exponent))
         elif component.is_a("IfcDerivedUnit"):
-            pending.extend(element.Unit for element in component.Elements)
+            pending.extend((element.Unit, exponent * element.Exponent) for element in component.Elements)
         else:
             return None
-    factor = units.get_unit_scale(unit)
+    # IfcOpenShell scales mass relative to the gram.
+    factor = units.get_unit_scale(unit) / 1000.0**grams
     return float(factor) if math.isfinite(factor) and factor > 0 else None

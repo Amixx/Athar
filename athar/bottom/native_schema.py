@@ -12,14 +12,11 @@ from functools import lru_cache
 from ifcopenshell import ifcopenshell_wrapper as _w
 
 from .parser import (
-    _ANGLE_MEASURES,
-    _AREA_MEASURES,
-    _LENGTH_MEASURES,
-    _VOLUME_MEASURES,
     _is_aggregation_type,
     _MAX_TYPE_CHAIN_HOPS,
     _is_select_type,
     _measure_type_from_attr_type,
+    measure_unit_type,
 )
 from .schema_dict import canonical_class_name
 
@@ -34,29 +31,18 @@ _SHAPE_MODEL_ROOTS = frozenset(
 )
 
 
-def _measure_kind(attr_type) -> str:
-    """Map an attribute's measure to the native `Measure` enum tag.
+def _measure_unit(schema, attr_type) -> str | None:
+    """The unit type scaling an attribute's measure, for the native `Measure`.
 
-    Returns one of length/area/volume/angle/default. The `"DIRECTION" in
+    A real without one is a default-measure real; the `"DIRECTION" in
     attr_name` heuristic is carried separately as the per-attribute
-    `direction` flag and applied Rust-side for default-measure reals.
+    `direction` flag and applied Rust-side.
     """
     measure = _measure_type_from_attr_type(attr_type)
-    if not measure:
-        return "default"
-    upper = measure.upper()
-    if upper in _LENGTH_MEASURES:
-        return "length"
-    if upper in _AREA_MEASURES:
-        return "area"
-    if upper in _VOLUME_MEASURES:
-        return "volume"
-    if upper in _ANGLE_MEASURES:
-        return "angle"
-    return "default"
+    return measure_unit_type(schema.name(), measure) if measure else None
 
 
-def _shape_of(attr_type) -> dict:
+def _shape_of(schema, attr_type) -> dict:
     """Recursive canonicalization shape for one attribute (or aggregate item)."""
     if _is_select_type(attr_type):
         return {"k": "select"}
@@ -65,9 +51,9 @@ def _shape_of(attr_type) -> dict:
         return {
             "k": "agg",
             "sorted": kind in {"set", "bag"},
-            "elem": _shape_of(attr_type.type_of_element()),
+            "elem": _shape_of(schema, attr_type.type_of_element()),
         }
-    return {"k": "leaf", "m": _measure_kind(attr_type)}
+    return {"k": "leaf", "m": _measure_unit(schema, attr_type)}
 
 
 def _is_text(attr_type) -> bool:
@@ -134,7 +120,7 @@ def _build_descriptors(schema_name: str) -> dict:
                     "direction": "DIRECTION" in attr_name.upper(),
                     "derived": bool(derived[index]),
                     "text": _is_text(attr.type_of_attribute()),
-                    "shape": _shape_of(attr.type_of_attribute()),
+                    "shape": _shape_of(schema, attr.type_of_attribute()),
                 }
             )
         supers = _supertype_names(decl)
@@ -151,12 +137,17 @@ def _build_descriptors(schema_name: str) -> dict:
             "name": name_index,
             "attrs": attrs,
         }
-    return out
+    measures = {}
+    for decl in schema.declarations():
+        unit_type = measure_unit_type(schema_name, decl.name()) if decl.name().endswith("Measure") else None
+        if unit_type:
+            measures[decl.name().upper()] = unit_type
+    return {"classes": out, "measures": measures}
 
 
 @lru_cache(maxsize=8)
 def schema_descriptors_json(schema_name: str) -> str:
-    """JSON descriptor map for `schema_name`, keyed by UPPERCASE STEP keyword."""
+    """JSON descriptors for `schema_name`: classes by UPPERCASE STEP keyword, measure unit types."""
     import json
 
     return json.dumps(_build_descriptors(schema_name), separators=(",", ":"))
