@@ -39,6 +39,8 @@ control directives are decoded, so raw and escaped spellings hash alike
 (canon-v10). ifcopenshell drops raw non-ASCII string bytes, so values read
 through it (property extraction) can differ from the hashed ones.
 
+`athar_native.parse_step_file(path)` is the tokenizer inspection entry point, outside the signature pipeline. It returns `(step_id, class, attributes)` records with tagged values: `integer`, `real`, `string`, `enum`, `reference`, `null`, `derived`, `list`, and `typed` (type name plus arguments). Lists and typed arguments retain nesting; `$` and `*` remain distinct. `tests/test_ifcopenshell_crosscheck.py` compares these records with IfcOpenShell, with exact expected differences for malformed corpus records.
+
 Signature roots are products, spatial elements (IFC4 `IfcSpatialElement`,
 IFC2X3 `IfcSpatialStructureElement`) and `IfcProject` (descriptor flags
 `product`, `spatial`, `project`). `schema_dict.py` collapses every
