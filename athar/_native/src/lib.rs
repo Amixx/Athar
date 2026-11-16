@@ -41,6 +41,36 @@ fn parse_step_file(py: Python<'_>, path: &str) -> PyResult<Vec<(i64, String, Vec
     )).collect())
 }
 
+type ReferenceGraph = (Vec<(i64, String, i64)>, Vec<(i64, i64, String, String)>, Vec<(i64, i64)>, Vec<(i64, i64)>);
+
+/// The canonicalized references `(source, attribute, target)` and the graph
+/// built from them: include edges `(source, target, label, domain)` and the
+/// context and spatial pairs, all by step id.
+#[pyfunction]
+fn reference_graph(py: Python<'_>, path: String, schema_json: String) -> PyResult<ReferenceGraph> {
+    py.allow_threads(|| {
+        let bytes = std::fs::read(&path).map_err(|e| format!("read {path}: {e}"))?;
+        let records = step::Parser::new(&bytes).parse()?;
+        let schema = descriptor::parse_schema(&schema_json)?;
+        let parsed = canon::canonicalize(&records, &schema, &HashMap::new(), &HashMap::new());
+        let graph = edges::build_edges(&parsed.entities, &parsed.index);
+        let step = |entity: u32| parsed.entities[entity as usize].step_id;
+        let refs = parsed
+            .entities
+            .iter()
+            .flat_map(|e| e.refs.iter().map(|r| (e.step_id, r.attr_name.to_string(), r.target)))
+            .collect();
+        let includes = graph
+            .includes
+            .iter()
+            .map(|edge| (step(edge.source), step(edge.target), edge.label.to_string(), format!("{:?}", edge.domain)))
+            .collect();
+        let pairs = |set: &HashSet<(u32, u32)>| set.iter().map(|&(a, b)| (step(a), step(b))).collect();
+        Ok((refs, includes, pairs(&graph.context), pairs(&graph.spatial)))
+    })
+    .map_err(|e: String| pyo3::exceptions::PyValueError::new_err(e))
+}
+
 #[pyfunction]
 fn rekey_step_file(input: &str, output: &str, mapping: HashMap<i64, i64>) -> PyResult<()> {
     let bytes = std::fs::read(input)?;
@@ -1547,6 +1577,7 @@ mod tests {
 fn athar_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(parse_step_file, m)?)?;
+    m.add_function(wrap_pyfunction!(reference_graph, m)?)?;
     m.add_function(wrap_pyfunction!(rekey_step_file, m)?)?;
     m.add_function(wrap_pyfunction!(spatial::placement_motion, m)?)?;
     m.add_function(wrap_pyfunction!(build_signature_bundle, m)?)?;

@@ -122,16 +122,18 @@ def _expected_parser_differences(name):
                     for step in (78, 135)
                     for attr in ("CoordinateSpaceDimension", "Precision", "WorldCoordinateSystem", "TrueNorth")]
     if name == "advanced_brep.ifc":
-        endpoints = {94: (30, 36), 95: (36, 34), 96: (34, 32), 97: (32, 30),
-                     105: (38, 44), 106: (44, 42), 107: (42, 40), 108: (40, 38),
-                     116: (36, 38), 117: (38, 44), 118: (44, 30), 119: (30, 36),
-                     132: (32, 30), 133: (30, 44), 134: (44, 42), 135: (42, 32),
-                     148: (34, 32), 149: (32, 42), 150: (42, 40), 151: (40, 34),
-                     164: (36, 34), 165: (34, 40), 166: (40, 38), 167: (38, 36)}
-        entries += [(step, "IfcOrientedEdge", attr, ("reference", ref), ("derived", None),
-                     "Invalid explicit reference at a DERIVE-redeclared endpoint; IfcOpenShell exposes the derived marker")
-                    for step, refs in endpoints.items() for attr, ref in zip(("EdgeStart", "EdgeEnd"), refs)]
+        entries += [(step, "IfcOrientedEdge", attr, ("reference", ref), ("derived", None), _DERIVED_ENDPOINT)
+                    for step, refs in _ADVANCED_BREP_ENDPOINTS.items() for attr, ref in zip(("EdgeStart", "EdgeEnd"), refs)]
     return entries
+
+
+_DERIVED_ENDPOINT = "Invalid explicit reference at a DERIVE-redeclared endpoint; IfcOpenShell exposes the derived marker"
+_ADVANCED_BREP_ENDPOINTS = {94: (30, 36), 95: (36, 34), 96: (34, 32), 97: (32, 30),
+                            105: (38, 44), 106: (44, 42), 107: (42, 40), 108: (40, 38),
+                            116: (36, 38), 117: (38, 44), 118: (44, 30), 119: (30, 36),
+                            132: (32, 30), 133: (30, 44), 134: (44, 42), 135: (42, 32),
+                            148: (34, 32), 149: (32, 42), 150: (42, 40), 151: (40, 34),
+                            164: (36, 34), 165: (34, 40), 166: (40, 38), 167: (38, 36)}
 
 
 @pytest.mark.parametrize("source", _FILES)
@@ -467,3 +469,132 @@ def test_operator_frame_hashes_follow_ifcopenshell_frames(tmp_path):
     # takes Z x X, the frame of variant 6.
     assert _class_disagreements(keys, matrices) == {(5, 6)}, list(zip(variants, keys))
     assert len(set(keys)) == 6
+
+
+def _ifcos_references(entity):
+    def walk(value):
+        if isinstance(value, ifcopenshell.entity_instance):
+            if value.id():
+                yield value.id()
+            else:
+                for item in value:
+                    yield from walk(item)
+        elif isinstance(value, tuple):
+            for item in value:
+                yield from walk(item)
+
+    return [(entity.attribute_name(i), target) for i, value in enumerate(entity) for target in walk(value)]
+
+
+def _reference_policy(schema):
+    policy = native().reference_policy()
+    expected = {(keyword, attr): ("none", reason) for keyword, attr, reason in policy["denied_references"]}
+    expected.update({(keyword, attr): ("reversed", "content points at the entity it describes; the owner includes it")
+                     for keyword, attr, _ in policy["reverse_attachments"]})
+    for keyword, links, ignored in native().relationship_policy():
+        if ignored:
+            entities = {e.name().upper(): e for e in schema.entities()}
+            if keyword in entities:
+                expected.update({(keyword, attr.name()): ("none", f"ignored relationship: {ignored}")
+                                 for attr in entities[keyword].all_attributes()})
+            continue
+        for source, target, kind in links:
+            for attr in (source, target):
+                expected[(keyword, attr)] = ("projected", f"{kind} role, projected onto the pairs of related entities")
+    return expected
+
+
+def _graph_disagreements(path):
+    from athar.bottom.native_schema import schema_descriptors_json
+
+    model = ifcopenshell.open(str(path))
+    schema = ifcopenshell.ifcopenshell_wrapper.schema_by_name(model.schema_identifier)
+    refs, includes, context, spatial = native().reference_graph(str(path), schema_descriptors_json(model.schema))
+    ids = {entity.id() for entity in model}
+    native_refs = {}
+    for source, attr, target in refs:
+        if target in ids:
+            native_refs.setdefault(source, []).append((attr, target))
+    edges = {(source, target, label) for source, target, label, _ in includes}
+    adjacent = {frozenset(pair) for pair in context + spatial} | {frozenset((s, t)) for s, t, _ in edges}
+    policy = _reference_policy(schema)
+    referrers = {}
+    for source, pairs in native_refs.items():
+        for _, target in pairs:
+            referrers.setdefault(target, set()).add(source)
+    links_of = {keyword: links for keyword, links, ignored in native().relationship_policy() if not ignored}
+    differences, explained, dispositions = [], set(), {}
+    for entity in model:
+        keyword, step = entity.is_a().upper(), entity.id()
+        oracle = _ifcos_references(entity)
+        if sorted(oracle) != sorted(native_refs.get(step, [])):
+            differences.append(("references", step, entity.is_a(), sorted(oracle), sorted(native_refs.get(step, []))))
+        if {target for _, target in oracle} != {e.id() for e in model.traverse(entity, max_levels=1) if e.id()} - {step}:
+            differences.append(("traverse", step, entity.is_a()))
+        if len(model.get_inverse(entity)) != len(referrers.get(step, ())):
+            differences.append(("inverse", step, entity.is_a()))
+        for attr, target in oracle:
+            disposition, _ = policy.get((keyword, attr)) or policy.get(("*", attr)) or ("edge", "")
+            if (step, target, attr) in edges or frozenset((step, target)) in adjacent and disposition == "edge":
+                found = "edge"
+            elif (target, step, f"~{keyword}.{attr}") in edges:
+                found = "reversed"
+            elif disposition == "projected":
+                found = "projected"
+            else:
+                found = "none" if frozenset((step, target)) not in adjacent else "edge"
+            if found != disposition:
+                differences.append(("disposition", step, entity.is_a(), attr, target, disposition, found))
+            dispositions[found] = dispositions.get(found, 0) + 1
+            explained.add(frozenset((step, target)))
+    for rel in model.by_type("IfcRelationship"):
+        references = _ifcos_references(rel)
+        for source_attr, target_attr, _ in links_of.get(rel.is_a().upper(), ()):
+            for s in (t for a, t in references if a == source_attr):
+                for t in (t for a, t in references if a == target_attr):
+                    if s != t:
+                        explained.add(frozenset((s, t)))
+                        if frozenset((s, t)) not in adjacent:
+                            differences.append(("projection", rel.id(), rel.is_a(), source_attr, s, target_attr, t))
+    differences += [("unexplained", tuple(sorted(pair))) for pair in adjacent - explained]
+    owners = {}
+    for source, target, label in edges:
+        if label.startswith("~"):
+            owners[(source, label)] = owners.get((source, label), 0) + 1
+    for (owner, label), count in owners.items():
+        keyword, attr = label[1:].split(".")
+        attached = [e for e in model.get_inverse(model[owner]) if e.is_a().upper() == keyword
+                    and owner in {t for a, t in _ifcos_references(e) if a == attr}]
+        if count != len(attached):
+            differences.append(("attached", owner, label, count, len(attached)))
+    return differences, dispositions
+
+
+def _expected_graph_differences(name):
+    if name != "advanced_brep.ifc":
+        return set()
+    return ({("references", step) for step in _ADVANCED_BREP_ENDPOINTS}
+            | {("unexplained", tuple(sorted((step, ref)))) for step, refs in _ADVANCED_BREP_ENDPOINTS.items() for ref in refs})
+
+
+@pytest.mark.parametrize("source", _FILES)
+def test_graph_agreement(source):
+    path = source if isinstance(source, Path) else Path(corpus_path(source))
+    differences, _ = _graph_disagreements(path)
+    keys = {(kind, detail[0]) for kind, *detail in differences}
+    assert keys == _expected_graph_differences(path.name), (
+        f"{len(differences)} reference graph disagreements in {path}:\n" + "\n".join(map(repr, differences))
+    )
+
+
+def test_graph_policy_dispositions(tmp_path):
+    from tests.test_change_coverage import _build
+
+    path = tmp_path / "coverage.ifc"
+    _build().write(str(path))
+    differences, dispositions = _graph_disagreements(path)
+    assert differences == []
+    assert set(dispositions) == {"edge", "none", "reversed", "projected"}, dispositions
+    model = ifcopenshell.open(str(path))
+    policy = _reference_policy(ifcopenshell.ifcopenshell_wrapper.schema_by_name(model.schema_identifier))
+    assert all(reason for _, reason in policy.values())
