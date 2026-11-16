@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import os
 import pickle
+import re
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,10 +44,20 @@ def load_or_build_bundle(
     key: str | None = None,
     cache_dir: str | os.PathLike[str] | None = None,
 ) -> CacheResult:
-    """Load a signature bundle from persistent cache or build and store it."""
+    """Load a signature bundle from persistent cache or build and store it.
+
+    Git LFS pointer files are handled transparently: the pointer's recorded
+    content sha256 becomes the cache key (so a cached diff never downloads the
+    blob), and on a miss the real content is materialized via
+    ``git lfs smudge`` before signature building.
+    """
 
     source_path = Path(path)
-    cache_key = _cache_key(source_path, key)
+    lfs_oid = _lfs_pointer_oid(source_path)
+    if lfs_oid is not None:
+        cache_key = f"sha256-{lfs_oid}"
+    else:
+        cache_key = _cache_key(source_path, key)
     directory = Path(cache_dir) if cache_dir is not None else default_cache_dir()
     entry_path = _entry_path(directory, cache_key)
 
@@ -53,9 +65,50 @@ def load_or_build_bundle(
     if cached is not None:
         return CacheResult(bundle=cached, key=cache_key, hit=True, path=entry_path)
 
-    bundle = build_signature_bundle(str(source_path))
+    if lfs_oid is not None:
+        with tempfile.TemporaryDirectory(prefix="athar-lfs-") as tmp:
+            smudged = Path(tmp) / source_path.name
+            _smudge_lfs_pointer(source_path, smudged, expected_sha256=lfs_oid)
+            bundle = build_signature_bundle(str(smudged))
+    else:
+        bundle = build_signature_bundle(str(source_path))
     _write_entry(entry_path, bundle, cache_key)
     return CacheResult(bundle=bundle, key=cache_key, hit=False, path=entry_path)
+
+
+_LFS_POINTER_PREFIX = b"version https://git-lfs"
+_LFS_POINTER_MAX_BYTES = 1024
+_LFS_OID_RE = re.compile(rb"^oid sha256:([0-9a-f]{64})$", re.MULTILINE)
+
+
+def _lfs_pointer_oid(path: Path) -> str | None:
+    try:
+        if path.stat().st_size > _LFS_POINTER_MAX_BYTES:
+            return None
+        blob = path.read_bytes()
+    except OSError:
+        return None
+    if not blob.startswith(_LFS_POINTER_PREFIX):
+        return None
+    match = _LFS_OID_RE.search(blob)
+    return match.group(1).decode("ascii") if match else None
+
+
+def _smudge_lfs_pointer(pointer: Path, dest: Path, *, expected_sha256: str) -> None:
+    with open(pointer, "rb") as src, open(dest, "wb") as out:
+        result = subprocess.run(
+            ["git", "lfs", "smudge"], stdin=src, stdout=out, stderr=subprocess.PIPE
+        )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"{pointer} is a Git LFS pointer and `git lfs smudge` failed "
+            f"({result.returncode}): {result.stderr.decode().strip()} "
+            "(is git-lfs installed and the object fetched?)"
+        )
+    if _file_sha256(dest) != expected_sha256:
+        raise RuntimeError(
+            f"git lfs smudge produced content not matching the pointer oid for {pointer}"
+        )
 
 
 def _cache_key(path: Path, supplied: str | None) -> str:

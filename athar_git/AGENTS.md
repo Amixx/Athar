@@ -12,6 +12,12 @@ core engine, but `athar/` must never depend on `athar_git/`.
   are canon-version scoped and invalidated when pickle metadata or bundle canon
   version differs. V1 has no eviction policy; document cleanup rather than
   implying bounded storage.
+- Git LFS pointer files are resolved transparently in `load_or_build_bundle`:
+  the pointer's `oid sha256:` becomes the cache key (a cached diff never
+  downloads the blob), and a miss materializes content via `git lfs smudge`
+  with a hash check. Modern Git usually smudges blobs before invoking the
+  external driver, so this path is the safety net for `GIT_LFS_SKIP_SMUDGE=1`
+  checkouts, partial fetches, and direct invocations on pointer files.
 - `cli.py` implements `athar git diff` and `athar git install`. The external
   diff driver accepts Git's seven-argument shape:
   `path old-file old-hex old-mode new-file new-hex new-mode`.
