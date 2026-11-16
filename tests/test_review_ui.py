@@ -133,7 +133,7 @@ def test_upload_baseline_creates_new_lineage(server, seeded):
     body = seeded["baseline"].read_bytes()
     status, event = _post(
         server,
-        "/api/projects/acme/models/structure/baseline?actor=alice",
+        "/api/projects/acme/models/structure/baseline?actor=alice&filename=structure.ifc",
         body,
         headers={"Content-Type": "application/x-step"},
     )

@@ -18,10 +18,10 @@ import re
 import ifcopenshell
 import pytest
 
-from athar.bottom.parser import IfcParseError
 from athar_store.cli import build_store_parser, run_store
 from athar_store import (
     BaselineStore,
+    EngineError,
     UnknownBaselineError,
     UnknownReviewError,
 )
@@ -101,7 +101,7 @@ def test_set_baseline_rejects_unparseable_ifc(store, models, tmp_path):
     corrupt = tmp_path / "corrupt.ifc"
     text = models["baseline"].read_text(encoding="utf-8")
     corrupt.write_text(re.sub(r"IFCUNITASSIGNMENT\(\(#\d+", "IFCUNITASSIGNMENT((#99999999999", text))
-    with pytest.raises(IfcParseError, match="corrupt.ifc"):
+    with pytest.raises(EngineError, match="corrupt.ifc"):
         store.set_baseline("acme", "architecture", corrupt, actor="alice")
     assert store.current_baseline("acme", "architecture") is None
     assert not list((store.root / "projects" / "acme" / "artifacts").glob("*.ifc"))
@@ -241,7 +241,8 @@ def test_review_persists_full_report(store, models):
     assert report is not None
     assert report["stats"]["added"] == 1
     assert report["stats"]["added"] == review["diff"]["stats"]["added"]
-    assert store.review_report("acme", "evt-999999") is None
+    with pytest.raises(UnknownReviewError, match="No review evt-999999"):
+        store.review_report("acme", "evt-999999")
 
 
 def test_concurrent_candidates_conflict_on_shared_entities(store, models, tmp_path):

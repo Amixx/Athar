@@ -20,7 +20,13 @@ from pathlib import Path
 from typing import Any
 
 from athar.check import resolve_policy
-from athar_store import BaselineStore, StoreError
+from athar_store import (
+    BaselineStore,
+    EngineError,
+    StoreConflictError,
+    StoreError,
+    UnknownReviewError,
+)
 
 from athar_review import __version__
 
@@ -98,6 +104,10 @@ class ReviewRequestHandler(BaseHTTPRequestHandler):
                 raise ApiError(HTTPStatus.NOT_FOUND, f"no such endpoint: {path}")
         except ApiError as exc:
             self._send_json({"error": str(exc)}, status=exc.status)
+        except StoreConflictError as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.CONFLICT)
+        except EngineError as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.UNPROCESSABLE_ENTITY)
         except StoreError as exc:
             self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
         except BrokenPipeError:
@@ -122,7 +132,10 @@ class ReviewRequestHandler(BaseHTTPRequestHandler):
             return
 
         if method == "GET" and len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3] == "reviews":
-            report = store.review_report(_checked_id(parts[2]), _checked_id(parts[4]))
+            try:
+                report = store.review_report(_checked_id(parts[2]), _checked_id(parts[4]))
+            except UnknownReviewError as exc:
+                raise ApiError(HTTPStatus.NOT_FOUND, str(exc)) from exc
             if report is None:
                 raise ApiError(HTTPStatus.NOT_FOUND, f"no stored report for review {parts[4]}")
             self._send_json(report)
@@ -177,15 +190,17 @@ class ReviewRequestHandler(BaseHTTPRequestHandler):
     def _post_candidate(
         self, project_id: str, model_key: str, params: dict[str, str], *, kind: str
     ) -> None:
-        actor = params.get("actor") or "reviewer"
-        filename = Path(params.get("filename") or "candidate.ifc").name
+        actor = params.get("actor")
+        source_name = params.get("filename", "")
+        if not source_name.strip():
+            raise ApiError(HTTPStatus.BAD_REQUEST, "filename is required: name the uploaded IFC file")
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
             raise ApiError(HTTPStatus.BAD_REQUEST, "empty upload: send the IFC bytes as the request body")
         if length > _MAX_UPLOAD_BYTES:
             raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "upload too large")
         with tempfile.TemporaryDirectory(prefix="athar-review-") as tmp:
-            candidate = Path(tmp) / filename
+            candidate = Path(tmp) / "upload.ifc"
             with open(candidate, "wb") as out:
                 remaining = length
                 while remaining > 0:
@@ -195,10 +210,24 @@ class ReviewRequestHandler(BaseHTTPRequestHandler):
                     out.write(chunk)
                     remaining -= len(chunk)
             if kind == "baseline":
-                event = self.server.store.set_baseline(project_id, model_key, candidate, actor=actor)
+                event = self.server.store.set_baseline(
+                    project_id,
+                    model_key,
+                    candidate,
+                    actor=actor,
+                    source_name=source_name,
+                    replace=params.get("replace") == "true",
+                )
             else:
                 policy = resolve_policy(params["policy"]) if params.get("policy") else None
-                event = self.server.store.review(project_id, model_key, candidate, actor=actor, policy=policy)
+                event = self.server.store.review(
+                    project_id,
+                    model_key,
+                    candidate,
+                    actor=actor,
+                    policy=policy,
+                    source_name=source_name,
+                )
         self._send_json(event)
 
     def _post_resolution(self, project_id: str, model_key: str, action: str) -> None:
@@ -210,7 +239,7 @@ class ReviewRequestHandler(BaseHTTPRequestHandler):
         review_id = body.get("review_id")
         if not review_id:
             raise ApiError(HTTPStatus.BAD_REQUEST, "review_id is required")
-        actor = body.get("actor") or "reviewer"
+        actor = body.get("actor")
         note = body.get("note")
         store = self.server.store
         if action == "approve":

@@ -9,6 +9,10 @@ engine.
 from athar_store.pack import ArtifactPack, PackError
 from athar_store.store import (
     BaselineStore,
+    EngineError,
+    ReviewStateError,
+    StaleBaselineError,
+    StoreConflictError,
     StoreError,
     UnknownBaselineError,
     UnknownReviewError,
@@ -17,7 +21,11 @@ from athar_store.store import (
 __all__ = [
     "ArtifactPack",
     "BaselineStore",
+    "EngineError",
     "PackError",
+    "ReviewStateError",
+    "StaleBaselineError",
+    "StoreConflictError",
     "StoreError",
     "UnknownBaselineError",
     "UnknownReviewError",
