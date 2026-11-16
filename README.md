@@ -11,7 +11,7 @@ For each IFC file, Athar builds a **signature vector** per product, spatial elem
 - `vh_geometry` — sha256 Merkle hash over the entity's geometry-domain subgraph, **excluding placement**, so identical components share it across locations. A host element also covers its openings and projections and where each sits relative to it.
 - `vh_data` — Merkle hash over everything else the entity owns or uses: attributes, properties, materials, classifications, groups, typing, styles; for the project also units, contexts and georeferencing. GlobalId and OwnerHistory never enter any hash.
 - `vh_topology` — WL-style gossip hash over context and spatial neighborhoods.
-- World-space placement matrix (quantized), centroid, and AABB from the resolved `ObjectPlacement` chain; a digest of the chain's content where it cannot be resolved (grid placements, placement cycles). Coordinates are converted to metres before composing the chain; matrices are quantized only after composition at one micrometre for translations and `1e-6` for rotation entries.
+- World-space placement matrix (quantized) from the resolved `ObjectPlacement` chain; a digest of the chain's content where it cannot be resolved (grid placements, placement cycles). Coordinates are converted to metres before composing the chain; matrices are quantized only after composition at one micrometre for translations and `1e-6` for rotation entries.
 
 Coverage is the default: every attribute and reference is examined unless an explicit table excludes it with a reason. What no signature reaches is counted and digested per class, and the report's `stats.coverage.unexamined_changes` names the classes that differ there.
 

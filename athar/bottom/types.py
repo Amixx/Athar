@@ -102,8 +102,7 @@ class SignatureVector:
 
     ``placement`` is the quantized world matrix. A chain through a placement
     the engine does not evaluate (``IfcGridPlacement``) has no matrix;
-    ``placement_unresolved`` then holds a digest of the chain's content and
-    ``centroid`` and ``aabb`` are ``None``.
+    ``placement_unresolved`` then holds a digest of the chain's content.
 
     ``local_placement`` is the quantized frame relative to the object
     placement of ``placement_parent``, the root (by step id) owning the
@@ -119,8 +118,6 @@ class SignatureVector:
     vh_data: HashHex
     vh_topology: HashHex
     placement: tuple[int, ...] | None
-    centroid: tuple[float, float, float] | None
-    aabb: tuple[float, float, float, float, float, float] | None
     canon_version: str
     name: str | None = None
     data_facts: tuple[tuple[str, str], ...] = ()

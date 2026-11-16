@@ -26,8 +26,6 @@ def _signature(
         vh_data=vh_data,
         vh_topology=vh_topology,
         placement=placement,
-        centroid=None,
-        aabb=None,
         canon_version="athar-canon-v1",
         data_facts=data_facts,
     )

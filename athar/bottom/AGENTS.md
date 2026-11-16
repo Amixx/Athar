@@ -29,7 +29,7 @@ surface is thin glue:
 The Rust side (`athar/_native/src/`): `step.rs` tokenize → `canon.rs`
 canonicalize (NFC, round-half-even quantization, `data_facts`) → `edges.rs`
 edge classification → Merkle (geometry/data), coverage accounting and fact
-collection → WL topology → `spatial.rs` placement/centroid/AABB. `make
+collection → WL topology → `spatial.rs` placements. `make
 native-test` runs the crate's unit tests; CI runs it before the default suite.
 
 `step.rs` reads every byte from the `DATA` statement (found after the header's

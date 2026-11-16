@@ -69,8 +69,6 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
         vh_data,
         vh_topology,
         (placement, placement_unresolved, local_placement, placement_parent),
-        centroid,
-        aabb,
         (data_facts, relation_targets),
     ) in sigs:
         signatures[step_id] = SignatureVector(
@@ -83,8 +81,6 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
             vh_data=vh_data,
             vh_topology=vh_topology,
             placement=tuple(placement) if placement is not None else None,
-            centroid=tuple(centroid) if centroid is not None else None,
-            aabb=tuple(aabb) if aabb is not None else None,
             canon_version=CANON_VERSION,
             data_facts=tuple((path, value) for path, value in data_facts),
             placement_unresolved=placement_unresolved,

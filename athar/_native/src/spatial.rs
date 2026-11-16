@@ -1,5 +1,4 @@
-//! Resolve `ObjectPlacement` chains into quantized world matrices, and compute
-//! centroid + AABB from each root's geometry point cloud.
+//! Resolve `ObjectPlacement` chains into quantized world matrices.
 
 use std::collections::{HashMap, HashSet};
 
@@ -25,9 +24,6 @@ pub struct SpatialFeature {
     pub local_placement: Option<Vec<i64>>,
     /// Entity index of the root owning that nearest placement.
     pub placement_parent: Option<u32>,
-    /// World-space centroid and bounding box; `None` for an unresolved chain.
-    pub centroid: Option<[f64; 3]>,
-    pub aabb: Option<[f64; 6]>,
     /// For every feature element of this root (entity index): a digest of
     /// where the feature sits relative to the root.
     pub feature_positions: Vec<(u32, [u8; 32])>,
@@ -254,7 +250,6 @@ impl<'a> Resolver<'a> {
 pub fn build_spatial_features(ctx: &SpatialCtx) -> Result<HashMap<u32, SpatialFeature>, String> {
     let mut out = HashMap::new();
     let mut resolver = Resolver::new(ctx);
-    let mut visited: Vec<u32> = vec![u32::MAX; ctx.entities.len()];
 
     // Per placement record, the root it places. Among several roots sharing
     // one record the choice is by content: a root with a GlobalId first, a
@@ -308,27 +303,6 @@ pub fn build_spatial_features(ctx: &SpatialCtx) -> Result<HashMap<u32, SpatialFe
             feature_positions.push((edge.target, relative_position(&edge.label, placed, feature_placed)));
         }
 
-        // Local points have no world position under an unresolved placement.
-        let (mut centroid, mut aabb) = (None, None);
-        if placement_unresolved.is_none() {
-            let points = collect_geometry_points(i as u32, ctx, &mut visited);
-            let world_points: Vec<[f64; 3]> = match &matrix {
-                Some(m) => points.iter().map(|p| transform_point(m, *p)).collect(),
-                None => points,
-            };
-            centroid = compute_centroid(&world_points);
-            aabb = compute_aabb(&world_points);
-        }
-        if centroid.is_none() {
-            if let Some(m) = &matrix {
-                centroid = Some([m[0][3], m[1][3], m[2][3]]);
-            }
-        }
-        if aabb.is_none() {
-            if let Some(c) = centroid {
-                aabb = Some([c[0], c[1], c[2], c[0], c[1], c[2]]);
-            }
-        }
         out.insert(
             i as u32,
             SpatialFeature {
@@ -336,8 +310,6 @@ pub fn build_spatial_features(ctx: &SpatialCtx) -> Result<HashMap<u32, SpatialFe
                 placement_unresolved,
                 local_placement: local_placement.map(quantize_matrix),
                 placement_parent,
-                centroid,
-                aabb,
                 feature_positions,
             },
         );
@@ -458,78 +430,6 @@ fn axis2placement_matrix(step: i64, ctx: &SpatialCtx) -> Matrix {
     ]
 }
 
-/// Points of the shape entities in the geometry-edge closure of `root`; a
-/// feature element is a root with a placement of its own and is not entered.
-/// `visited[i] == root` marks entity `i` as seen for this root.
-fn collect_geometry_points(root: u32, ctx: &SpatialCtx, visited: &mut [u32]) -> Vec<[f64; 3]> {
-    let mut stack = vec![root];
-    visited[root as usize] = root;
-    let mut points = Vec::new();
-    while let Some(current) = stack.pop() {
-        let ent = &ctx.entities[current as usize];
-        if &*ent.keyword == "IFCCARTESIANPOINT" {
-            if let Some(c) = ctx.point_coords.get(&ent.step_id) {
-                points.push(*c);
-            }
-        }
-        for edge in ctx.graph.children(current) {
-            if edge.domain == Domain::Geometry
-                && ctx.entities[edge.target as usize].is_geometric
-                && visited[edge.target as usize] != root
-            {
-                visited[edge.target as usize] = root;
-                stack.push(edge.target);
-            }
-        }
-    }
-    points
-}
-
-fn transform_point(m: &Matrix, p: [f64; 3]) -> [f64; 3] {
-    let [x, y, z] = p;
-    let tx = m[0][0] * x + m[0][1] * y + m[0][2] * z + m[0][3];
-    let ty = m[1][0] * x + m[1][1] * y + m[1][2] * z + m[1][3];
-    let tz = m[2][0] * x + m[2][1] * y + m[2][2] * z + m[2][3];
-    let tw = m[3][0] * x + m[3][1] * y + m[3][2] * z + m[3][3];
-    if tw.abs() > 1e-12 && (tw - 1.0).abs() > 1e-12 {
-        [tx / tw, ty / tw, tz / tw]
-    } else {
-        [tx, ty, tz]
-    }
-}
-
-fn compute_centroid(points: &[[f64; 3]]) -> Option<[f64; 3]> {
-    if points.is_empty() {
-        return None;
-    }
-    let n = points.len() as f64;
-    let mut s = [0.0f64; 3];
-    for p in points {
-        s[0] += p[0];
-        s[1] += p[1];
-        s[2] += p[2];
-    }
-    Some([s[0] / n, s[1] / n, s[2] / n])
-}
-
-fn compute_aabb(points: &[[f64; 3]]) -> Option<[f64; 6]> {
-    if points.is_empty() {
-        return None;
-    }
-    let mut min = points[0];
-    let mut max = points[0];
-    for p in &points[1..] {
-        for i in 0..3 {
-            if p[i] < min[i] {
-                min[i] = p[i];
-            }
-            if p[i] > max[i] {
-                max[i] = p[i];
-            }
-        }
-    }
-    Some([min[0], min[1], min[2], max[0], max[1], max[2]])
-}
 
 fn quantize_matrix(m: Matrix) -> Vec<i64> {
     let mut q = Vec::with_capacity(16);
@@ -599,43 +499,18 @@ mod tests {
     }
 
     #[test]
-    fn placement_chain_yields_world_space_geometry() {
-        // Wall placed at (10,0,0) with one local geometry point (1,2,3).
+    fn placement_chain_yields_a_world_matrix() {
         let entities = vec![
-            ent(1, "IFCWALL", product(), &[("ObjectPlacement", 2), ("Representation", 5)]),
+            ent(1, "IFCWALL", product(), &[("ObjectPlacement", 2)]),
             ent(2, "IFCLOCALPLACEMENT", Flags::default(), &[("RelativePlacement", 3)]),
             ent(3, "IFCAXIS2PLACEMENT3D", shape(), &[("Location", 4)]),
             ent(4, "IFCCARTESIANPOINT", shape(), &[]),
-            ent(5, "IFCCARTESIANPOINT", shape(), &[]),
         ];
-        let feats = features(&entities, &[(4, [10.0, 0.0, 0.0]), (5, [1.0, 2.0, 3.0])]);
+        let feats = features(&entities, &[(4, [10.0, 0.0, 0.0])]);
         let f = feats.get(&0).expect("wall feature");
 
-        assert_eq!(f.centroid, Some([11.0, 2.0, 3.0]));
-        assert_eq!(f.aabb, Some([11.0, 2.0, 3.0, 11.0, 2.0, 3.0]));
         let placement = f.placement.as_ref().expect("placement matrix");
         assert_eq!(placement[3], 10_000_000);
-    }
-
-    #[test]
-    fn host_extent_excludes_the_points_of_its_feature_elements() {
-        let entities = vec![
-            ent(1, "IFCWALL", product(), &[("Representation", 4)]),
-            ent(2, "IFCOPENINGELEMENT", product(), &[("Representation", 5)]),
-            ent(
-                3,
-                "IFCRELVOIDSELEMENT",
-                Flags { relationship: true, ..Flags::default() },
-                &[("RelatingBuildingElement", 1), ("RelatedOpeningElement", 2)],
-            ),
-            ent(4, "IFCCARTESIANPOINT", shape(), &[]),
-            ent(5, "IFCCARTESIANPOINT", shape(), &[]),
-        ];
-        let feats = features(&entities, &[(4, [1.0, 2.0, 3.0]), (5, [9.0, 9.0, 9.0])]);
-
-        assert_eq!(feats[&0].centroid, Some([1.0, 2.0, 3.0]));
-        assert_eq!(feats[&0].aabb, Some([1.0, 2.0, 3.0, 1.0, 2.0, 3.0]));
-        assert_eq!(feats[&1].centroid, Some([9.0, 9.0, 9.0]));
     }
 
     #[test]

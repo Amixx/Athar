@@ -16,7 +16,6 @@ def _sig(
     data: str = "d",
     topo: str = "t",
     placement: tuple[int, ...] | None = None,
-    centroid: tuple[float, float, float] | None = None,
     name: str | None = None,
 ) -> SignatureVector:
     return SignatureVector(
@@ -29,8 +28,6 @@ def _sig(
         vh_data=data,
         vh_topology=topo,
         placement=placement,
-        centroid=centroid,
-        aabb=None,
         canon_version="athar-canon-v1",
     )
 
@@ -135,7 +132,7 @@ def test_no_guid_entities_never_match_through_the_guid_tier():
 
 def test_identical_twins_zip_one_to_one_in_step_order():
     n = 50
-    shared = dict(geom="g", data="d", topo="t", centroid=(1.0, 2.0, 3.0))
+    shared = dict(geom="g", data="d", topo="t")
     old = {i: _sig(i, **shared) for i in range(1, n + 1)}
     new = {i + 1000: _sig(i + 1000, **shared) for i in range(1, n + 1)}
 
@@ -207,12 +204,11 @@ def test_vector_zip_requires_all_hashes_present():
 
 
 def test_identical_vectors_with_different_classes_never_match():
-    # identical hashes, placement, and centroid — only the class differs.
+    # identical hashes and placement — only the class differs.
     # No tier may pair them: class substitution must surface as added+deleted.
     shared = dict(
         geom="g", data="d", topo="t",
         placement=(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1),
-        centroid=(0.0, 0.0, 0.0),
     )
     old = {1: _sig(1, klass="IfcWall", **shared)}
     new = {10: _sig(10, klass="IfcBeam", **shared)}
@@ -224,7 +220,7 @@ def test_identical_vectors_with_different_classes_never_match():
 
 
 def test_vector_zip_leftovers_stay_unmatched():
-    shared = dict(geom="g", data="d", topo="t", centroid=(0.0, 0.0, 0.0))
+    shared = dict(geom="g", data="d", topo="t")
     old = {1: _sig(1, **shared), 2: _sig(2, **shared)}
     new = {10: _sig(10, **shared)}
 
@@ -242,41 +238,27 @@ def test_vector_zip_leftovers_stay_unmatched():
 
 
 def test_shared_topology_alone_never_matches():
-    old = {1: _sig(1, geom="g-old", data="d-old", topo="t-shared", centroid=(0.0, 0.0, 0.0))}
-    new = {10: _sig(10, geom="g-new", data="d-new", topo="t-shared", centroid=(0.2, 0.0, 0.0))}
+    old = {1: _sig(1, geom="g-old", data="d-old", topo="t-shared")}
+    new = {10: _sig(10, geom="g-new", data="d-new", topo="t-shared")}
 
     matches, unmatched_old, unmatched_new, _ = match_signatures(old, new, {}, {})
 
     assert matches == []
     assert unmatched_old == [1] and unmatched_new == [10]
-
-
-def test_shared_position_alone_never_matches():
-    shared_centroid = (5.0, 5.0, 5.0)
-    old = {1: _sig(1, geom="g1", data="d1", topo="t1", centroid=shared_centroid)}
-    new = {10: _sig(10, geom="g2", data="d2", topo="t2", centroid=shared_centroid)}
-
-    matches, unmatched_old, unmatched_new, _ = match_signatures(old, new, {}, {})
-
-    assert matches == []
-    assert unmatched_old == [1] and unmatched_new == [10]
-
-
-# --- whole-matcher invariants ---
 
 
 def test_same_inputs_match_completely_with_zero_unmatched():
     old = {
-        1: _sig(1, guid="A", centroid=(0.0, 0.0, 0.0)),
-        2: _sig(2, guid="DUP", data="dx", centroid=(1.0, 0.0, 0.0)),
-        3: _sig(3, guid="DUP", data="dy", centroid=(2.0, 0.0, 0.0)),
-        4: _sig(4, geom="g4", data="d4", topo="t4", centroid=(3.0, 0.0, 0.0)),
+        1: _sig(1, guid="A"),
+        2: _sig(2, guid="DUP", data="dx"),
+        3: _sig(3, guid="DUP", data="dy"),
+        4: _sig(4, geom="g4", data="d4", topo="t4"),
     }
     new = {step + 100: _sig(step + 100, **kwargs) for step, kwargs in (
-        (1, dict(guid="A", centroid=(0.0, 0.0, 0.0))),
-        (2, dict(guid="DUP", data="dx", centroid=(1.0, 0.0, 0.0))),
-        (3, dict(guid="DUP", data="dy", centroid=(2.0, 0.0, 0.0))),
-        (4, dict(geom="g4", data="d4", topo="t4", centroid=(3.0, 0.0, 0.0))),
+        (1, dict(guid="A")),
+        (2, dict(guid="DUP", data="dx")),
+        (3, dict(guid="DUP", data="dy")),
+        (4, dict(geom="g4", data="d4", topo="t4")),
     )}
 
     matches, unmatched_old, unmatched_new, diag = match_signatures(old, new, {}, {})
@@ -290,17 +272,17 @@ def test_same_inputs_match_completely_with_zero_unmatched():
 def test_match_results_are_deterministic_under_input_dict_order():
     def _old(order):
         sigs = {
-            1: _sig(1, guid="A", centroid=(0.0, 0.0, 0.0)),
-            2: _sig(2, geom="gx", data="dx", topo="tx", centroid=(1.0, 0.0, 0.0)),
-            3: _sig(3, klass="IfcBeam", geom="gb", data="db", topo="tb", centroid=(5.0, 0.0, 0.0)),
+            1: _sig(1, guid="A"),
+            2: _sig(2, geom="gx", data="dx", topo="tx"),
+            3: _sig(3, klass="IfcBeam", geom="gb", data="db", topo="tb"),
         }
         return {k: sigs[k] for k in order}
 
     def _new(order):
         sigs = {
-            10: _sig(10, guid="A", centroid=(0.0, 0.0, 0.0)),
-            20: _sig(20, geom="gx", data="dx", topo="tx", centroid=(1.0, 0.0, 0.0)),
-            30: _sig(30, klass="IfcBeam", geom="gB", data="dB", topo="tb", centroid=(5.1, 0.0, 0.0)),
+            10: _sig(10, guid="A"),
+            20: _sig(20, geom="gx", data="dx", topo="tx"),
+            30: _sig(30, klass="IfcBeam", geom="gB", data="dB", topo="tb"),
         }
         return {k: sigs[k] for k in order}
 
@@ -319,7 +301,7 @@ def test_diagnostics_account_for_every_entity():
     old = {
         1: _sig(1, guid="A"),
         2: _sig(2, geom="gx", data="dx", topo="tx"),
-        3: _sig(3, geom="lone", data="lone", topo="", centroid=None),
+        3: _sig(3, geom="lone", data="lone", topo=""),
     }
     new = {
         10: _sig(10, guid="A"),

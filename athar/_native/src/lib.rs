@@ -835,7 +835,7 @@ fn topology_hashes(entities: &[canon::Entity], graph: &edges::Graph) -> HashMap<
 /// One root signature, flattened for the FFI boundary:
 /// (step_id, guid, name, entity_type, canonical_class, vh_geometry, vh_data,
 ///  vh_topology, (placement, placement_unresolved, local_placement,
-///  placement_parent), centroid, aabb, (data_facts, relation_targets)).
+///  placement_parent), (data_facts, relation_targets)).
 ///
 /// `placement_parent` is the step id of the root whose object placement the
 /// local placement is relative to.
@@ -852,8 +852,6 @@ type SigTuple = (
     String,
     String,
     (Option<Vec<i64>>, Option<String>, Option<Vec<i64>>, Option<i64>),
-    Option<Vec<f64>>,
-    Option<Vec<f64>>,
     (Vec<(String, String)>, Vec<(u32, i64)>),
 );
 
@@ -1021,8 +1019,6 @@ fn build_bundle(
         let placement_unresolved = feat.placement_unresolved.clone();
         let local_placement = feat.local_placement.clone();
         let placement_parent = feat.placement_parent.map(|parent| parsed.entities[parent as usize].step_id);
-        let centroid = feat.centroid.map(|c| c.to_vec());
-        let aabb = feat.aabb.map(|a| a.to_vec());
         let data_facts = facts.collect(entity);
         let mut relation_targets: Vec<(u32, i64)> = Vec::new();
         while let Some(&(_, label, target)) = relations.next_if(|relation| relation.0 == entity) {
@@ -1038,8 +1034,6 @@ fn build_bundle(
             vh_data,
             vh_topology,
             (placement, placement_unresolved, local_placement, placement_parent),
-            centroid,
-            aabb,
             (data_facts, relation_targets),
         ));
     }

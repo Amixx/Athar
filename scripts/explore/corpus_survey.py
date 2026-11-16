@@ -240,7 +240,6 @@ def file_stats(key: str, path: Path, bundle, seconds: float) -> dict:
         "signatures": len(sigs),
         "guid_collisions": engine._guid_collision_count(sigs),
         "missing_guid": sum(1 for s in sigs.values() if not s.guid),
-        "missing_centroid": sum(1 for s in sigs.values() if s.centroid is None),
         "missing_topology": sum(1 for s in sigs.values() if not s.vh_topology),
         "diagnostics": {
             "dangling_refs": bundle.diagnostics.dangling_refs,
