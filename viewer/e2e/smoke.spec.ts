@@ -80,6 +80,50 @@ async function waitReady(page: Page): Promise<Record<string, any>> {
   return state
 }
 
+for (const width of [375, 800, 1280, 1920]) {
+  test(`panels do not overlap at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    const step = {
+      label: 'Revision comparison',
+      old: { name: 'ammerforum-v1-1237.ifc', url: '/old.ifc' },
+      new: { name: 'ammerforum-v2-1347.ifc', url: '/new.ifc' },
+      report: { url: '/report.json' },
+    }
+    await page.route(`${srcOrigin}/manifest.json`, route => route.fulfill({ json: {
+      athar_viewer_manifest: 1, schema_version: 999, steps: [step, step], active_step: 0,
+    } }))
+    await page.goto(`/?src=${srcOrigin}`)
+    await waitReady(page)
+    await page.getByTestId('undrawn').getByRole('button').filter({ hasText: 'Storey' }).click()
+    const layout = await page.evaluate(() => {
+      const panels = Array.from(document.querySelectorAll('.app > .panel, .brand-stack > .panel'))
+        .map(el => ({ name: el.className, rect: el.getBoundingClientRect() }))
+        .filter(({ rect }) => rect.width > 0 && rect.height > 0)
+      const overlaps: string[] = []
+      for (let i = 0; i < panels.length; i++) {
+        for (const b of panels.slice(i + 1)) {
+          const a = panels[i]
+          if (Math.min(a.rect.right, b.rect.right) > Math.max(a.rect.left, b.rect.left) + 1 &&
+              Math.min(a.rect.bottom, b.rect.bottom) > Math.max(a.rect.top, b.rect.top) + 1) {
+            overlaps.push(`${a.name} / ${b.name}`)
+          }
+        }
+      }
+      return { overlaps, width: document.documentElement.scrollWidth, panels: panels.map(({ rect }) => ({ left: rect.left, right: rect.right })) }
+    })
+    expect(layout.overlaps).toEqual([])
+    expect(layout.width).toBe(width)
+    for (const rect of layout.panels) {
+      expect(rect.left).toBeGreaterThanOrEqual(0)
+      expect(rect.right).toBeLessThanOrEqual(width)
+    }
+    for (const button of await page.locator('.toolbar button, .viewbtns button, .inspector .close').all()) {
+      await button.scrollIntoViewIfNeeded()
+      await button.click({ trial: true })
+    }
+  })
+}
+
 test('loads a pair via ?src= hand-off and buckets entities', async ({ page }) => {
   await page.goto(`/?src=${srcOrigin}`)
   const state = await waitReady(page)
