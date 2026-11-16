@@ -6,11 +6,13 @@
     selectedProject,
     selectedModel,
     onselect,
+    onnew,
   }: {
     projects: ProjectSummary[]
     selectedProject: string | null
     selectedModel: string | null
     onselect: (projectId: string, modelKey: string) => void
+    onnew: (projectId: string | null) => void
   } = $props()
 </script>
 
@@ -22,6 +24,9 @@
         <button
           class="model"
           class:active={project.project_id === selectedProject && model.model_key === selectedModel}
+          aria-current={project.project_id === selectedProject && model.model_key === selectedModel
+            ? 'page'
+            : undefined}
           onclick={() => onselect(project.project_id, model.model_key)}
         >
           <span class="key">{model.model_key}</span>
@@ -30,15 +35,14 @@
           {/if}
         </button>
       {:else}
-        <div class="empty">no model lineages yet</div>
+        <div class="empty">No model has an accepted baseline yet.</div>
+        <button class="link" onclick={() => onnew(project.project_id)}>Set a first baseline</button>
       {/each}
     </section>
   {:else}
-    <div class="empty">
-      No projects in this store yet. Upload a first accepted model below, or seed one with
-      <span class="mono">athar store set-baseline</span>.
-    </div>
+    <div class="empty">No projects in this store yet.</div>
   {/each}
+  <button class="btn new" onclick={() => onnew(selectedProject)}>New model lineage</button>
 </nav>
 
 <style>
@@ -89,5 +93,18 @@
     color: var(--ink-dim);
     font-size: 13px;
     padding: 4px 8px;
+  }
+
+  .link {
+    border: none;
+    background: none;
+    color: var(--stamp);
+    padding: 2px 8px;
+    text-decoration: underline;
+  }
+
+  .new {
+    font-size: 13px;
+    padding: 6px 12px;
   }
 </style>

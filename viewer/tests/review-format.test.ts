@@ -7,6 +7,7 @@ import {
   isCleanDiff,
   modifiedAspects,
   placementDeltaMm,
+  propertyRows,
   revisionLetter,
   revisionLetters,
   statSummary,
@@ -88,6 +89,25 @@ describe('groupChanges', () => {
   })
 })
 
+test('changed property values retain distinguishing precision', () => {
+  const rows = propertyRows({
+    old: { class: 'IfcDoor', step_id: 1 },
+    new: { class: 'IfcDoor', step_id: 2 },
+    property_deltas: {
+      changed: [
+        { pset: 'Dimensions', name: 'Height', old_value: 12.340000001, new_value: 12.34 },
+        { pset: 'Dimensions', name: 'Tiny', old_value: 1.234567891e-9, new_value: 1.234567892e-9 },
+        { pset: 'Dimensions', name: 'List', old_value: [12.340000001], new_value: [12.34] },
+      ],
+    },
+  })
+  expect(rows.map(({ before, after }) => [before, after])).toEqual([
+    ['12.340000001', '12.34'],
+    ['0.000000001234567891', '0.000000001234567892'],
+    ['12.340000001', '12.34'],
+  ])
+})
+
 describe('modified helpers', () => {
   test('lists changed aspects and computes placement delta norm', () => {
     const entry = {
@@ -100,7 +120,7 @@ describe('modified helpers', () => {
         placement_delta_mm: [3, 4, 0],
       },
     }
-    expect(modifiedAspects(entry)).toEqual(['data', 'placement'])
+    expect(modifiedAspects(entry)).toEqual(['data', 'position'])
     expect(placementDeltaMm(entry)).toBe(5)
     expect(placementDeltaMm({ ...entry, aspects: {} })).toBeNull()
     expect(placementDeltaMm({ ...entry, aspects: { placement_delta_mm: [0, 0, 0] } })).toBeNull()

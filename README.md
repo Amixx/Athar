@@ -315,8 +315,18 @@ athar review
 Every baseline, review, approval, and rejection requires a nonblank actor and
 records the original delivery filename, UTC time, Athar version, and canonical
 signature version. Only pending reviews against the current baseline can be
-decided; errors name the event that decided or invalidated a review. The HTTP
-API returns 400 for missing actors and 409 for conflicting decisions.
+decided; errors name the event that decided or invalidated a review.
+
+`athar review` prints its URL (`http://127.0.0.1:<port>/`) and the store path,
+and listens on loopback only. In the browser a reviewer starts a model lineage
+from a first accepted file, uploads deliveries, reads the change report against
+the baseline, and accepts or rejects each review under their own name. Uploads
+above `--max-upload-mb` (default 2,000) are refused. The server answers only
+requests addressed to its own loopback host and port, refuses cross-site
+writes, and returns errors as `{"error": {"code", "message"}}`: 400 for a
+missing reviewer name, 404 for an unknown project or review, 409 for a
+decision on a review that is no longer pending or a baseline that already
+exists, 422 when the engine cannot read or compare the delivered file.
 
 `athar store verify PROJECT` checks consecutive event IDs, artifact hashes through
 every delta chain, a readable report for every review and a review for every

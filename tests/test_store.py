@@ -22,6 +22,7 @@ from athar_store.cli import build_store_parser, run_store
 from athar_store import (
     BaselineStore,
     EngineError,
+    StoreError,
     UnknownBaselineError,
     UnknownReviewError,
 )
@@ -97,6 +98,15 @@ def test_set_baseline_retains_artifact_and_pointer(store, models):
     assert hashlib.sha256(exported.read_bytes()).hexdigest() == sha
 
 
+@pytest.mark.parametrize("value", [".", "..", "valid\n"])
+@pytest.mark.parametrize("field", ["project_id", "model_key"])
+def test_baseline_ids_reject_dot_components_and_trailing_newlines(store, models, field, value):
+    ids = {"project_id": "acme", "model_key": "architecture", field: value}
+    with pytest.raises(StoreError, match="Invalid"):
+        store.set_baseline(**ids, ifc_path=models["baseline"], actor="alice")
+    assert store.list_projects() == []
+
+
 def test_set_baseline_rejects_unparseable_ifc(store, models, tmp_path):
     corrupt = tmp_path / "corrupt.ifc"
     text = models["baseline"].read_text(encoding="utf-8")
@@ -104,7 +114,8 @@ def test_set_baseline_rejects_unparseable_ifc(store, models, tmp_path):
     with pytest.raises(EngineError, match="corrupt.ifc"):
         store.set_baseline("acme", "architecture", corrupt, actor="alice")
     assert store.current_baseline("acme", "architecture") is None
-    assert not list((store.root / "projects" / "acme" / "artifacts").glob("*.ifc"))
+    assert store.list_projects() == []
+    assert not store.root.exists()
 
 
 def test_review_records_verdict_without_promoting(store, models):
