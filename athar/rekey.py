@@ -183,12 +183,21 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
     old, new = _Graph(base_model), _Graph(new_model)
     mapping, reverse, reasons = {}, {}, {}
     queue = deque()
+    globalid_refusals = set()
 
-    def match(a, b, reason):
-        if a in reverse or b in mapping or old.entities[a].is_a() != new.entities[b].is_a():
+    def distinct_objects(a, b):
+        x, y = old.entities[a], new.entities[b]
+        if x.is_a("IfcObjectDefinition") and x.GlobalId != y.GlobalId:
+            globalid_refusals.add((a, b))
+            return True
+        return False
+
+    def match(a, b, reason, *, enqueue=True):
+        if a in reverse or b in mapping or old.entities[a].is_a() != new.entities[b].is_a() or distinct_objects(a, b):
             return
         mapping[b], reverse[a], reasons[b] = a, b, reason
-        queue.append((a, b))
+        if enqueue:
+            queue.append((a, b))
 
     for guid, ids in sorted(old.guids.items()):
         other = new.guids.get(guid, ())
@@ -218,18 +227,24 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
                     buckets[k].append(i)
             return buckets
 
-        # Equal content is interchangeable; role-only matches must be unique.
-        for key, interchangeable in (
+        for key, content in (
             (lambda g, i: g.hashes.get(i), True),
             (lambda g, i: g.role(i), False),
         ):
             la, lb = bucket(left, old, key), bucket(right, new, key)
             for k in la.keys() & lb.keys():
-                if interchangeable or len(la[k]) == len(lb[k]) == 1:
-                    for a, b in zip(la[k], lb[k]):
-                        result.append((a, b))
-                        left.remove(a)
-                        right.remove(b)
+                if len(la[k]) == len(lb[k]) == 1:
+                    candidates = list(zip(la[k], lb[k]))
+                elif content and ordered:
+                    old_bucket, new_bucket = set(la[k]), set(lb[k])
+                    candidates = [(a, b) for a, b in zip(aa, bb) if a in old_bucket and b in new_bucket]
+                elif content and len(la[k]) == len(lb[k]):
+                    candidates = list(zip(la[k], lb[k]))
+                else:
+                    continue
+                result.extend(candidates)
+                left.difference_update(a for a, _ in candidates)
+                right.difference_update(b for _, b in candidates)
         if ordered and len(aa) == len(bb):
             result.extend((a, b) for a, b in zip(aa, bb) if a in left and b in right)
         return result
@@ -252,15 +267,7 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
                     agg = attributes[cls][index].type_of_attribute().as_aggregation_type()
                     ordered = agg is None or agg.type_of_aggregation_string() in {"list", "array"}
                     for x, y in child_pairs(aa, bb, ordered):
-                        if old.entities[x].is_a() == new.entities[y].is_a():
-                            # Products cannot inherit the identity of a different role occupant.
-                            gx = getattr(old.entities[x], "GlobalId", None)
-                            gy = getattr(new.entities[y], "GlobalId", None)
-                            if gx != gy and not (
-                                old.entities[x].is_a("IfcPropertyDefinition")
-                                or old.entities[x].is_a("IfcRelationship")
-                            ):
-                                continue
+                        if old.entities[x].is_a() == new.entities[y].is_a() and not distinct_objects(x, y):
                             proposals.add((x, y))
             counts_a, counts_b = Counter(a for a, _ in proposals), Counter(b for _, b in proposals)
             for a, b in sorted(proposals):
@@ -279,28 +286,48 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
                 new_buckets[new.hashes[b]].append(b)
         return [(buckets[k], new_buckets[k]) for k in sorted(buckets.keys() & new_buckets.keys())]
 
+    def match_unique_content():
+        while unique := [(aa[0], bb[0]) for aa, bb in content_buckets() if len(aa) == len(bb) == 1]:
+            for a, b in unique:
+                match(a, b, "content")
+            propagate()
+
     propagate()
     # Equal-content twins wait until unique content matches have propagated roles to them.
-    while unique := [(aa[0], bb[0]) for aa, bb in content_buckets() if len(aa) == len(bb) == 1]:
-        for a, b in unique:
-            match(a, b, "content")
-        propagate()
+    match_unique_content()
+    # Arbitrary twin pairings require identical rewritten bodies and no incoming
+    # NEW references. They provide no role identity evidence for propagation.
+    referenced = {t for value in new.values.values() for t in new.refs(value)}
     for aa, bb in content_buckets():
-        for a, b in zip(aa, bb):
-            match(a, b, "content")
-    # Role keys ignore GlobalId, so rooted entities whose exporter regenerated it
-    # still match; the output keeps NEW's GlobalId.
-    by_role = defaultdict(list)
+        if len(aa) != len(bb) or not referenced.isdisjoint(bb):
+            continue
+        if any(t not in mapping for b in bb for t in new.refs(new.values[b])):
+            continue
+        bodies = [_value(new.values[b], lambda i: ("ref", mapping[i])) for b in bb]
+        if all(body == bodies[0] for body in bodies[1:]):
+            for a, b in zip(aa, bb):
+                match(a, b, "content", enqueue=False)
+    old_roles, new_roles = defaultdict(list), defaultdict(list)
     for a in old.entities:
         if a not in reverse:
-            by_role[old.role(a)].append(a)
-    for b in sorted(new.entities):
-        if b in mapping:
+            old_roles[old.role(a)].append(a)
+    for b in new.entities:
+        if b not in mapping:
+            new_roles[new.role(b)].append(b)
+    before_roles = len(mapping)
+    role_ambiguous = 0
+    for key, bb in new_roles.items():
+        aa = old_roles.get(key)
+        if not aa:
             continue
-        candidates = by_role.get(new.role(b), ())
-        if len(candidates) == 1 and candidates[0] not in reverse:
-            match(candidates[0], b, "role")
+        if len(aa) == len(bb) == 1:
+            match(aa[0], bb[0], "role")
+        else:
+            role_ambiguous += len(bb)
+    role_matches = len(mapping) - before_roles
     propagate()
+    match_unique_content()
+    unmatched_twins = sum(len(bb) for _, bb in content_buckets())
 
     matched = dict(mapping)
     next_id = max(old.entities, default=0) + 1
@@ -317,6 +344,8 @@ def rekey_files(base_path: str, new_path: str, output_path: str) -> dict:
         "entities": len(new.entities), "matched": len(matched),
         "fresh": len(new.entities) - len(matched), "base_max_id": max(old.entities, default=0),
         "matched_by": dict(Counter(reasons.values())), "role_conflicts": conflicts,
+        "role_fallback_matches": role_matches, "role_fallback_ambiguous": role_ambiguous,
+        "globalid_refusals": len(globalid_refusals), "unmatched_twins": unmatched_twins,
         "cyclic_content_unavailable": {"base": old.cycles, "new": new.cycles},
         "classes": {k: dict(v) for k, v in sorted(classes.items())},
     }
