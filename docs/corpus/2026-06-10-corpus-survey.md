@@ -1,5 +1,10 @@
 # Corpus survey — 2026-06-10
 
+> **Correction (2026-11-14):** The "revision" pairs here (`bl_v0..v3`,
+> `advanced_project→adv_changed`) are the repository author's own re-saves of
+> sample models, not revisions from an independent project history. "Never
+> fired on a same-project revision pair" holds for those re-saves only.
+
 **Historical record.** Facts gathered by `scripts/explore/corpus_survey.py`
 against the *pre-simplification* engine as of commit `bb4d58c` (tiers: guid /
 geometry_hash / tier2_signature / spatial_fallback). Raw output:

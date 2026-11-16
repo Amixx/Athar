@@ -27,31 +27,32 @@ CATEGORIES = ("added", "deleted", "modified")
 Changeset = Mapping[str, Iterable[str]]
 
 
-def _ratio(numerator: int, denominator: int) -> float | None:
-    if denominator == 0:
-        return None
-    return round(numerator / denominator, 4)
+def prf(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
+    """Precision, recall and F1 from counts.
 
-
-def _f1(precision: float | None, recall: float | None) -> float | None:
-    if precision is None or recall is None or (precision + recall) == 0:
-        return None
-    return round(2 * precision * recall / (precision + recall), 4)
+    Nothing reported has precision 1 (no false claim); nothing to find has
+    recall 1 (nothing missed). So an empty report on an empty truth scores 1
+    everywhere, and any false positive on an empty truth scores precision 0
+    and F1 0.
+    """
+    precision = 1.0 if tp + fp == 0 else tp / (tp + fp)
+    recall = 1.0 if tp + fn == 0 else tp / (tp + fn)
+    f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
+    return round(precision, 4), round(recall, 4), round(f1, 4)
 
 
 def _category_score(reported: set[str], truth: set[str], optional: set[str]) -> dict:
     tp = len(reported & truth)
     fp = len(reported - truth - optional)
     fn = len(truth - reported)
-    precision = _ratio(tp, tp + fp)
-    recall = _ratio(tp, tp + fn)
+    precision, recall, f1 = prf(tp, fp, fn)
     score = {
         "tp": tp,
         "fp": fp,
         "fn": fn,
         "precision": precision,
         "recall": recall,
-        "f1": _f1(precision, recall),
+        "f1": f1,
         "false_positives": sorted(reported - truth - optional),
         "false_negatives": sorted(truth - reported),
     }
@@ -78,14 +79,13 @@ def score_changeset(reported: Changeset, truth: Changeset) -> dict:
         tp += score["tp"]
         fp += score["fp"]
         fn += score["fn"]
-    precision = _ratio(tp, tp + fp)
-    recall = _ratio(tp, tp + fn)
+    precision, recall, f1 = prf(tp, fp, fn)
     return {
         "tp": tp,
         "fp": fp,
         "fn": fn,
         "precision": precision,
         "recall": recall,
-        "f1": _f1(precision, recall),
+        "f1": f1,
         "per_category": per_category,
     }

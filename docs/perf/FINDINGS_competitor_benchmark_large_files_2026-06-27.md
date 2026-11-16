@@ -1,5 +1,10 @@
 # Findings: competitor benchmark + large-file memory (post-Rust)
 
+> **Correction (2026-11-14):** When this note was written the harness timed
+> Athar in-process and the competitors as subprocesses, whose times include
+> interpreter start and imports. "Athar 4–6× faster than ifcdiff" compares those
+> two and is withdrawn; it is not a measured like-for-like speed ratio.
+
 Date: 2026-06-27
 
 ## Context

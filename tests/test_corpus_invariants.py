@@ -9,6 +9,7 @@ ATHAR_RUN_LARGE_ACCEPTANCE=1.
 from __future__ import annotations
 
 import re
+import shutil
 import uuid
 from pathlib import Path
 
@@ -48,9 +49,11 @@ REVISION_PAIRS = (
 
 
 @pytest.mark.parametrize("key", SMALL_FILES)
-def test_same_file_diff_is_clean(key):
+def test_same_file_diff_is_clean(key, tmp_path):
     path = corpus_path(key)
-    report = diff_files(path, path)
+    copy = tmp_path / f"{key}-copy.ifc"
+    shutil.copyfile(path, copy)
+    report = diff_files(path, str(copy))
     assert_report_invariants(report)
     assert_zero_diff(report)
 
@@ -211,9 +214,11 @@ def test_duplicated_guid_is_surfaced_and_never_identity_evidence(duplicated_guid
     assert diag["matched_by_tier"]["geometry_hash"] >= 2
 
 
-def test_duplicated_guid_same_file_diff_is_clean(duplicated_guid_pair):
+def test_duplicated_guid_same_file_diff_is_clean(duplicated_guid_pair, tmp_path):
     _, duplicated = duplicated_guid_pair
-    report = diff_files(duplicated, duplicated)
+    copy = tmp_path / "duplicated-copy.ifc"
+    shutil.copyfile(duplicated, copy)
+    report = diff_files(duplicated, str(copy))
     assert_report_invariants(report)
     assert_zero_diff(report)
     assert report["stats"]["guid_collisions"] == {"old": 1, "new": 1}

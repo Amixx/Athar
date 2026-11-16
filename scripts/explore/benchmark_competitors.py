@@ -18,12 +18,10 @@ import argparse
 import importlib.metadata
 import importlib.util
 import json
-import math
 import os
 import platform
-import re
-import resource
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -40,14 +38,17 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import athar.engine as athar_engine  # noqa: E402
 from athar_dev import ifc_mutations as mutations  # noqa: E402
-from athar_dev.changeset_scoring import score_changeset  # noqa: E402
+from athar_dev.changeset_scoring import CATEGORIES, prf, score_changeset  # noqa: E402
 from tests.corpus import CORPUS, acceptance_path, assert_report_invariants, corpus_path  # noqa: E402
 
 _SCRAMBLE_NAMESPACE = uuid.UUID("f43a7c2b-8fd4-4d2d-9898-8891d75432b2")
-_TIME_MAX_RSS_RE = re.compile(r"(?P<rss>\d+)\s+maximum resident set size")
+COMPLETED_STATUSES = frozenset({"ok", "refused"})
+FAILED_STATUSES = frozenset({"error", "timeout"})
+TIMING_REFERENCE = "athar"
+RATIO_METRICS = ("seconds_median", "peak_rss_mb_max", "gb_seconds_median")
 
 Counts = dict[str, int]
-PairBuilder = Callable[[Path], tuple[str, str]]
+PairBuilder = Callable[[Path], "tuple[str, str, Expected | None]"]
 
 
 @dataclass(frozen=True)
@@ -70,13 +71,32 @@ class Pair:
     large: bool = False
     revit: bool = False
     set_name: str = "synthetic"
+    unscored: str = ""
 
 
 def _static_pair(old_key: str, new_key: str, *, acceptance: bool = False) -> PairBuilder:
     resolver = acceptance_path if acceptance else corpus_path
 
-    def build(_workdir: Path) -> tuple[str, str]:
-        return resolver(old_key), resolver(new_key)
+    def build(_workdir: Path) -> tuple[str, str, Expected | None]:
+        return resolver(old_key), resolver(new_key), None
+
+    return build
+
+
+def _same_file_pair(key: str, *, acceptance: bool = False) -> PairBuilder:
+    """The file against a byte-identical copy at a second path.
+
+    Two paths, because a tool may shortcut when both arguments name one file
+    (``athar.engine.diff_files`` then parses once).
+    """
+    resolver = acceptance_path if acceptance else corpus_path
+
+    def build(workdir: Path) -> tuple[str, str, Expected | None]:
+        src = Path(resolver(key))
+        workdir.mkdir(parents=True, exist_ok=True)
+        copy = workdir / f"{key}-copy{src.suffix}"
+        shutil.copyfile(src, copy)
+        return str(src), str(copy), None
 
     return build
 
@@ -84,7 +104,7 @@ def _static_pair(old_key: str, new_key: str, *, acceptance: bool = False) -> Pai
 def _ifcopenshell_rewrite_pair(key: str) -> PairBuilder:
     """Same model, both sides written through IfcOpenShell."""
 
-    def build(workdir: Path) -> tuple[str, str]:
+    def build(workdir: Path) -> tuple[str, str, Expected | None]:
         import ifcopenshell
 
         src = corpus_path(key)
@@ -93,7 +113,7 @@ def _ifcopenshell_rewrite_pair(key: str) -> PairBuilder:
         new_path = workdir / f"{key}-rewrite-new.ifc"
         ifcopenshell.open(src).write(old_path)
         ifcopenshell.open(src).write(new_path)
-        return str(old_path), str(new_path)
+        return str(old_path), str(new_path), None
 
     return build
 
@@ -101,14 +121,14 @@ def _ifcopenshell_rewrite_pair(key: str) -> PairBuilder:
 def _asymmetric_rewrite_pair(key: str) -> PairBuilder:
     """Original file vs its IfcOpenShell rewrite — the export-churn scenario."""
 
-    def build(workdir: Path) -> tuple[str, str]:
+    def build(workdir: Path) -> tuple[str, str, Expected | None]:
         import ifcopenshell
 
         src = corpus_path(key)
         workdir.mkdir(parents=True, exist_ok=True)
         new_path = workdir / f"{key}-rewritten.ifc"
         ifcopenshell.open(src).write(new_path)
-        return src, str(new_path)
+        return src, str(new_path), None
 
     return build
 
@@ -116,7 +136,7 @@ def _asymmetric_rewrite_pair(key: str) -> PairBuilder:
 def _owner_history_churn_pair(key: str) -> PairBuilder:
     """Only OwnerHistory metadata changes; core hashes intentionally ignore it."""
 
-    def build(workdir: Path) -> tuple[str, str]:
+    def build(workdir: Path) -> tuple[str, str, Expected | None]:
         import ifcopenshell
 
         src = corpus_path(key)
@@ -136,13 +156,13 @@ def _owner_history_churn_pair(key: str) -> PairBuilder:
         if changed == 0:
             raise RuntimeError(f"{key} has no editable OwnerHistory metadata")
         model.write(new_path)
-        return str(old_path), str(new_path)
+        return str(old_path), str(new_path), None
 
     return build
 
 
 def _guid_scramble_pair(key: str) -> PairBuilder:
-    def build(workdir: Path) -> tuple[str, str]:
+    def build(workdir: Path) -> tuple[str, str, Expected | None]:
         import ifcopenshell
         import ifcopenshell.guid
 
@@ -159,31 +179,117 @@ def _guid_scramble_pair(key: str) -> PairBuilder:
             if isinstance(guid, str) and guid.strip():
                 entity.GlobalId = ifcopenshell.guid.compress(uuid.uuid5(_SCRAMBLE_NAMESPACE, guid).hex)
         model.write(str(scrambled))
-        return str(clean), str(scrambled)
+        return str(clean), str(scrambled), None
 
     return build
 
 
 def _mutation_pair(key: str, mutator: Callable[[Any], mutations.Mutation]) -> PairBuilder:
-    def build(workdir: Path) -> tuple[str, str]:
+    def build(workdir: Path) -> tuple[str, str, Expected]:
         import ifcopenshell
 
         src = corpus_path(key)
         workdir.mkdir(parents=True, exist_ok=True)
         baseline = workdir / f"{key}-{mutator.__name__}-baseline.ifc"
         mutated = workdir / f"{key}-{mutator.__name__}.ifc"
-        ifcopenshell.open(src).write(baseline)
-        model = ifcopenshell.open(src)
-        mutator(model)
-        model.write(mutated)
-        return str(baseline), str(mutated)
+        before = ifcopenshell.open(src)
+        before.write(baseline)
+        after = ifcopenshell.open(src)
+        manifest = mutator(after)
+        after.write(mutated)
+        return str(baseline), str(mutated), mutation_truth(before, after, manifest)
 
     return build
 
 
+def mutation_truth(before: Any, after: Any, manifest: mutations.Mutation) -> Expected:
+    """GUID-level truth of one constructed edit, from its manifest and the two models.
+
+    ``required`` holds the products whose own content the edit changed: the
+    victim renamed, re-valued, moved, deleted or added, or, for a type property
+    edit, the occurrences that inherit the value.
+
+    ``optional_modified`` holds entities whose change is a consequence of the
+    edit, so reporting them is defensible but not required:
+    - the relating side of every relationship whose member list the edit
+      changed (container, type, property sets of a deleted product; container
+      of an added one);
+    - the type object whose property was edited, which is not a product and
+      whose change the occurrences carry;
+    - products placed relative to a moved product, whose world placement
+      moved with it.
+
+    Anything else a tool reports is a false positive.
+    """
+    op = manifest.operation
+    athar: dict[str, Any] | None = None
+    required: dict[str, list[str]] = {"added": [], "deleted": [], "modified": []}
+    optional: set[str] = set()
+    if op == "scramble_guids":
+        athar = {"matched_by_tier": {"guid": 0}}
+    elif op == "duplicate_guid":
+        athar = {"guid_collisions": {"old": 0, "new": 1}}
+    elif op in {"rename_product", "edit_pset_value"}:
+        required["modified"] = [manifest.victim_guid]
+    elif op == "edit_type_pset_value":
+        required["modified"] = list(manifest.affected_guids)
+        optional.add(manifest.victim_guid)
+    elif op == "move_product":
+        required["modified"] = [manifest.victim_guid]
+        moved = after.by_guid(manifest.victim_guid).ObjectPlacement
+        for product in after.by_type("IfcProduct"):
+            if product.GlobalId != manifest.victim_guid and moved in _placement_chain(product):
+                optional.add(product.GlobalId)
+    elif op == "delete_product":
+        required["deleted"] = [manifest.victim_guid]
+        for rel in before.get_inverse(before.by_guid(manifest.victim_guid)):
+            optional.update(_relating_guids(rel))
+    elif op == "add_product":
+        required["added"] = [manifest.victim_guid]
+        for rel in after.get_inverse(after.by_guid(manifest.victim_guid)):
+            optional.update(_relating_guids(rel))
+    else:
+        raise ValueError(f"no truth rule for mutation {op!r}")
+    changed_guids = {**required, "optional_modified": sorted(optional)} if optional else required
+    return Expected(counts=_counts_from_truth(changed_guids), athar=athar, changed_guids=changed_guids)
+
+
+def _placement_chain(product: Any) -> list[Any]:
+    chain = []
+    placement = product.ObjectPlacement
+    while placement is not None:
+        chain.append(placement)
+        placement = getattr(placement, "PlacementRelTo", None)
+    return chain
+
+
+def _relating_guids(rel: Any) -> set[str]:
+    guids = set()
+    for name, value in rel.get_info(recursive=False).items():
+        if name.startswith("Relating") and value is not None and getattr(value, "GlobalId", None):
+            guids.add(value.GlobalId)
+    return guids
+
+
+def _counts_from_truth(changed_guids: dict[str, list[str]]) -> Counts:
+    counts: Counts = {}
+    for category in CATEGORIES:
+        required = len(changed_guids.get(category, ()))
+        optional = len(changed_guids.get(f"optional_{category}", ()))
+        if optional:
+            counts[f"{category}_min"] = required
+            counts[f"{category}_max"] = required + optional
+        else:
+            counts[category] = required
+    return counts
+
+
+EMPTY_CHANGESET: dict[str, list[str]] = {"added": [], "deleted": [], "modified": []}
+NO_CHANGE = Expected(counts={"added": 0, "deleted": 0, "modified": 0}, changed_guids=EMPTY_CHANGESET)
 ZERO_DIFF = Expected(
     counts={"added": 0, "deleted": 0, "modified": 0},
     athar={"matched_by_tier": {"guid": 0}},
+    changed_guids=EMPTY_CHANGESET,
     note="No semantic product changes expected.",
 )
 
@@ -192,36 +298,37 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
     Pair(
         name="same_file_gni_190",
         kind="same_file",
-        builder=_static_pair("gni_190", "gni_190"),
+        builder=_same_file_pair("gni_190"),
         expectation="zero semantic changes",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        expected=NO_CHANGE,
     ),
     Pair(
         name="reserialize_gni_190",
         kind="reserialize",
         builder=_ifcopenshell_rewrite_pair("gni_190"),
         expectation="zero semantic changes after IfcOpenShell rewrite",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        expected=NO_CHANGE,
     ),
     Pair(
         name="reserialize_asymmetric_gni_190",
         kind="reserialize_asymmetric",
         builder=_asymmetric_rewrite_pair("gni_190"),
         expectation="zero semantic changes when only one side is rewritten (line order/formatting churn)",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        expected=NO_CHANGE,
     ),
     Pair(
         name="owner_history_churn_gni_190",
         kind="metadata_churn",
         builder=_owner_history_churn_pair("gni_190"),
         expectation="zero semantic changes when only OwnerHistory changes",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        expected=NO_CHANGE,
     ),
     Pair(
         name="revision_building_landscaping_v1_v2",
         kind="revision",
         builder=_static_pair("bl_v1", "bl_v2"),
         expectation="mostly GUID matches, limited added/deleted churn",
+        unscored="no independent record of the edits between the two versions",
     ),
     Pair(
         name="guid_scramble_gni_190",
@@ -235,74 +342,63 @@ BENCHMARK_PAIRS: tuple[Pair, ...] = (
         kind="synthetic_guid_scramble",
         builder=_mutation_pair("gni_190", mutations.scramble_guids),
         expectation="synthetic GUID scramble: zero semantic changes without GUID-tier matches",
-        expected=ZERO_DIFF,
     ),
     Pair(
         name="mutation_duplicate_guid_gni_190",
         kind="synthetic_duplicate_guid",
         builder=_mutation_pair("gni_190", mutations.duplicate_guid),
         expectation="duplicated GlobalId is surfaced but not used as identity evidence",
-        expected=Expected(
-            counts={"added": 0, "deleted": 0, "modified": 0},
-            athar={"guid_collisions": {"old": 0, "new": 1}},
-        ),
     ),
     Pair(
         name="mutation_rename_product_gni_190",
         kind="synthetic_data",
         builder=_mutation_pair("gni_190", mutations.rename_product),
         expectation="one product Name scalar changed",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 1}),
     ),
     Pair(
         name="mutation_pset_value_gni_190",
         kind="synthetic_data",
         builder=_mutation_pair("gni_190", mutations.edit_pset_value),
         expectation="one exclusive property-set value changed",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 1}),
     ),
     Pair(
         name="mutation_type_pset_value_gni_190",
         kind="synthetic_inherited_data",
         builder=_mutation_pair("gni_190", mutations.edit_type_pset_value),
-        expectation="one type property value changes inherited occurrence data",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 28}),
+        expectation="one type property value changes inherited occurrence data; the type may be reported",
     ),
     Pair(
         name="mutation_move_product_gni_190",
         kind="synthetic_placement",
         builder=_mutation_pair("gni_190", mutations.move_product),
         expectation="one product placement changed",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 1}),
     ),
     Pair(
         name="mutation_delete_product_gni_190",
         kind="synthetic_delete",
         builder=_mutation_pair("gni_190", mutations.delete_product),
-        expectation="one product deleted, with possible transitive fallout",
-        expected=Expected(counts={"added": 0, "deleted": 1, "modified_max": 20}),
+        expectation="one product deleted; its container, type and property sets may be reported modified",
     ),
     Pair(
         name="mutation_add_product_gni_190",
         kind="synthetic_add",
         builder=_mutation_pair("gni_190", mutations.add_product),
-        expectation="one product added, with possible transitive fallout",
-        expected=Expected(counts={"added": 1, "deleted": 0, "modified_max": 20}),
+        expectation="one product added; its container may be reported modified",
     ),
     Pair(
         name="large_same_file_gni_p5_arc",
         kind="large_same_file",
-        builder=_static_pair("gni_p5_arc", "gni_p5_arc", acceptance=True),
+        builder=_same_file_pair("gni_p5_arc", acceptance=True),
         expectation="76MB same-file: zero semantic changes, isolates parse cost",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        expected=NO_CHANGE,
         large=True,
     ),
     Pair(
         name="large_same_file_spanish_180mb",
         kind="large_same_file",
-        builder=_static_pair("spanish", "spanish", acceptance=True),
+        builder=_same_file_pair("spanish", acceptance=True),
         expectation="180MB same-file: zero semantic changes, parse-bound stress",
-        expected=Expected(counts={"added": 0, "deleted": 0, "modified": 0}),
+        expected=NO_CHANGE,
         large=True,
     ),
 )
@@ -331,8 +427,8 @@ def _revit_export_path(name: str) -> Path:
 
 
 def _revit_pair(old_name: str, new_name: str) -> PairBuilder:
-    def build(_workdir: Path) -> tuple[str, str]:
-        return str(_revit_export_path(old_name)), str(_revit_export_path(new_name))
+    def build(_workdir: Path) -> tuple[str, str, Expected | None]:
+        return str(_revit_export_path(old_name)), str(_revit_export_path(new_name)), None
 
     return build
 
@@ -478,8 +574,12 @@ def main() -> int:
     parser.add_argument("--workdir", default="/tmp/athar_competitor_benchmark")
     parser.add_argument("--timeout-s", type=int, default=300)
     parser.add_argument("--repeats", type=int, default=3, help="runs per tool; medians are reported")
-    parser.add_argument("--large", action="store_true", help="include opt-in large corpus pairs")
-    parser.add_argument("--revit", action="store_true", help="include opt-in Revit round-trip corpus pairs")
+    parser.add_argument(
+        "--large",
+        action="store_true",
+        help="add the 76 MB and 180 MB same-file pairs (parse-bound time and memory stress)",
+    )
+    parser.add_argument("--revit", action="store_true", help="include Revit round-trip corpus pairs")
     parser.add_argument("--only", default=None, help="run only pairs whose name contains this substring")
     parser.add_argument("--no-ifcfast", action="store_true", help="disable optional ifcfast runner even if installed")
     parser.add_argument("--no-speckle", action="store_true", help="disable optional Speckle runner even if installed")
@@ -496,13 +596,15 @@ def main() -> int:
         include_ifcgit=not args.no_ifcgit,
     )
     results = {
-        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S%z"),
         "repo": str(REPO_ROOT),
+        "provenance": _provenance(tools),
         "environment": _environment(),
         "settings": {"timeout_s": args.timeout_s, "repeats": args.repeats, "large": args.large, "revit": args.revit},
         "tools": tools,
         "pairs": [],
         "summary": [],
+        "aggregates": {},
     }
 
     for pair in ALL_PAIRS:
@@ -515,7 +617,8 @@ def main() -> int:
         print(f"[{time.strftime('%H:%M:%S')}] pair {pair.name}", flush=True)
         pair_workdir = workdir / pair.name
         try:
-            old_path, new_path = pair.builder(pair_workdir)
+            old_path, new_path, derived_expected = pair.builder(pair_workdir)
+            expected = derived_expected if derived_expected is not None else pair.expected
         except BaseException as exc:  # noqa: BLE001 - benchmark records skips/failures
             entry = {
                 "name": pair.name,
@@ -528,6 +631,7 @@ def main() -> int:
             }
             results["pairs"].append(entry)
             results["summary"].append(_summary_row(entry))
+            results["aggregates"] = aggregate_tools(results["summary"])
             _write_json(Path(args.out), results)
             continue
 
@@ -536,7 +640,8 @@ def main() -> int:
             "kind": pair.kind,
             "set": pair.set_name,
             "expectation": pair.expectation,
-            "expected": _expected_json(pair.expected),
+            "expected": _expected_json(expected),
+            "unscored": pair.unscored,
             "old": _input_summary(old_path),
             "new": _input_summary(new_path),
             "runs": {
@@ -567,10 +672,9 @@ def main() -> int:
             entry["runs"]["ifcgit_port"] = _repeat(
                 lambda: _run_json_runner(_IFCGIT_RUNNER, old_path, new_path, args.timeout_s), args.repeats
             )
-        entry["assessment"] = _assess_pair(entry, pair.expected)
-        entry["changeset_scores"] = _score_pair(entry, pair.expected)
         results["pairs"].append(entry)
-        results["summary"].append(_summary_row(entry))
+        results["summary"].append(finish_pair(entry, expected))
+        results["aggregates"] = aggregate_tools(results["summary"])
         _write_json(Path(args.out), results)
 
     _write_json(Path(args.out), results)
@@ -579,40 +683,52 @@ def main() -> int:
 
 
 def _repeat(fn: Callable[[], dict], repeats: int) -> dict:
-    runs = [fn() for _ in range(repeats)]
-    best_counts = _first_counts(runs)
-    ok_seconds = [
-        run["seconds"]
-        for run in runs
-        if run.get("status") in ("ok", "refused") and isinstance(run.get("seconds"), (int, float))
-    ]
-    peak_rss_values = [
-        run["peak_rss_mb"] for run in runs if run.get("peak_rss_mb") is not None and isinstance(run.get("peak_rss_mb"), (int, float))
-    ]
-    gb_seconds_values = [
-        run["gb_seconds"] for run in runs if run.get("gb_seconds") is not None and isinstance(run.get("gb_seconds"), (int, float))
-    ]
-    result = dict(runs[-1])
+    return combine_repeats([fn() for _ in range(repeats)])
+
+
+def combine_repeats(runs: list[dict]) -> dict:
+    """Fold repeats of one tool on one pair into a single result.
+
+    Timings are medians over completed repeats. Status, counts and reported
+    GUID sets must agree across repeats; when they do not, the result carries
+    ``nondeterministic`` with the distinct outcomes seen.
+    """
+    completed = [run for run in runs if run.get("status") in COMPLETED_STATUSES]
+
+    def numbers(key: str) -> list[float]:
+        return [run[key] for run in completed if isinstance(run.get(key), (int, float))]
+
+    failed = next((run for run in runs if run.get("status") in FAILED_STATUSES), None)
+    result = dict(failed or runs[0])
     result["runs"] = runs
-    result["repeat_count"] = repeats
-    if ok_seconds:
-        result["seconds_median"] = round(statistics.median(ok_seconds), 3)
-        result["seconds_min"] = round(min(ok_seconds), 3)
-        result["seconds_max"] = round(max(ok_seconds), 3)
+    result["repeat_count"] = len(runs)
+    seconds = numbers("seconds")
+    if seconds:
+        result["seconds_median"] = round(statistics.median(seconds), 3)
+        result["seconds_min"] = round(min(seconds), 3)
+        result["seconds_max"] = round(max(seconds), 3)
+    peak_rss_values = numbers("peak_rss_mb")
     if peak_rss_values:
         result["peak_rss_mb_max"] = round(max(peak_rss_values), 1)
+    gb_seconds_values = numbers("gb_seconds")
     if gb_seconds_values:
         result["gb_seconds_median"] = round(statistics.median(gb_seconds_values), 3)
-    if best_counts is not None:
-        result["counts"] = best_counts
+    outcomes = {json.dumps(_repeat_outcome(run), sort_keys=True) for run in runs}
+    if len(outcomes) > 1:
+        result["nondeterministic"] = [json.loads(outcome) for outcome in sorted(outcomes)]
     return result
 
 
+def _repeat_outcome(run: dict) -> dict:
+    reported = run.get("reported_guids")
+    return {
+        "status": run.get("status"),
+        "counts": _run_counts(run),
+        "reported_guids": None if reported is None else {key: sorted(value) for key, value in reported.items()},
+    }
+
+
 def _run_athar(old_path: str, new_path: str, timeout_s: int) -> dict:
-    # Run via the CLI as a subprocess, sampled by the same mechanism as every
-    # other tool (no in-process special-casing) — same startup cost, same RSS
-    # sampling, same GB-seconds definition. `python -m athar old new` prints the report
-    # JSON to stdout.
     argv = [sys.executable, "-m", "athar", old_path, new_path]
     start = time.perf_counter()
     completed = _run_subprocess(argv, timeout_s)
@@ -683,7 +799,7 @@ def _run_ifcdiff(
     relationships: str | None = None,
 ) -> dict:
     if importlib.util.find_spec("ifcdiff") is None:
-        return {"status": "error", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
+        return {"status": "not_installed", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
 
     output_path = workdir / "ifcdiff.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -763,8 +879,7 @@ _IFCFAST_RUNNER = (
 
 def _run_ifcfast(old_path: str, new_path: str, timeout_s: int) -> dict:
     if importlib.util.find_spec("ifcfast") is None:
-        return {"status": "error", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
-    # Subprocess, sampled identically to the other tools (was in-process before).
+        return {"status": "not_installed", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
     argv = [sys.executable, "-c", _IFCFAST_RUNNER, old_path, new_path]
     start = time.perf_counter()
     completed = _run_subprocess(argv, timeout_s)
@@ -789,39 +904,57 @@ def _run_ifcfast(old_path: str, new_path: str, timeout_s: int) -> dict:
 
 
 def _run_subprocess(argv: list[str], timeout_s: int) -> dict:
-    # Run the tool directly under Popen and sample its RSS over time, so the
-    # same mechanism yields both peak RSS and GB-seconds. (Replaces the previous
-    # `/usr/bin/time -l` wrapper, whose exact peak we trade for a sampled one —
-    # acceptable since peak RSS is itself noisy and GB-seconds is the better metric.)
-    try:
-        proc = subprocess.Popen(
-            argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+    """Run one tool process; every tool is measured through this function.
 
-    sampler = _RssTimeSampler(proc.pid)
-    timed_out = False
-    with sampler:
+    Peak RSS is the kernel's ``ru_maxrss`` from ``wait4``, which covers the
+    process and the descendants it waited for. GB-seconds integrate the summed
+    RSS of every live process in the tool's process group (the tool and the
+    descendants that stay in the group it starts), sampled with ``ps``. Once the
+    tool is reaped, whatever remains of its group is killed.
+    """
+    with tempfile.TemporaryFile("w+") as stdout, tempfile.TemporaryFile("w+") as stderr:
         try:
-            stdout, stderr = proc.communicate(timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            stdout, stderr = proc.communicate()
-            timed_out = True
-    if timed_out:
-        return {"status": "timeout", "seconds": timeout_s}
-    return {
-        "status": "completed",
-        "returncode": proc.returncode,
-        "stdout": stdout,
-        "stderr": stderr,
-        "peak_rss_mb": sampler.peak_mb(),
-        "gb_seconds": sampler.gb_seconds(0.0),
-    }
+            proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr, text=True, start_new_session=True)
+        except OSError as exc:
+            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        deadline = time.perf_counter() + timeout_s
+        try:
+            with _RssTimeSampler(proc.pid) as sampler:
+                while True:
+                    pid, wait_status, rusage = os.wait4(proc.pid, os.WNOHANG)
+                    if pid:
+                        break
+                    if time.perf_counter() > deadline:
+                        _kill_group(proc.pid)
+                        os.wait4(proc.pid, 0)
+                        proc.returncode = -9
+                        return {"status": "timeout", "seconds": timeout_s}
+                    time.sleep(0.005)
+        finally:
+            _kill_group(proc.pid)
+        proc.returncode = os.waitstatus_to_exitcode(wait_status)
+        stdout.seek(0)
+        stderr.seek(0)
+        return {
+            "status": "completed",
+            "returncode": proc.returncode,
+            "stdout": stdout.read(),
+            "stderr": stderr.read(),
+            "peak_rss_mb": _maxrss_mb(rusage.ru_maxrss),
+            "gb_seconds": sampler.gb_seconds(),
+        }
+
+
+def _kill_group(pgid: int) -> None:
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _maxrss_mb(ru_maxrss: int) -> float:
+    # macOS reports bytes, Linux KiB.
+    return round(ru_maxrss / (1024 * 1024) if platform.system() == "Darwin" else ru_maxrss / 1024, 1)
 
 
 def _ifcdiff_counts(payload: object) -> dict | None:
@@ -878,25 +1011,30 @@ def _ifcfast_reported_guids(payload: object) -> dict[str, list[str]] | None:
     }
 
 
-def _assess_pair(entry: dict, expected: Expected | None) -> dict[str, str]:
+def finish_pair(entry: dict, expected: Expected | None) -> dict:
+    """Assess and score a pair's runs in place; return its summary row."""
+    entry["assessment"] = {name: assess_run(name, run, expected) for name, run in entry["runs"].items()}
+    entry["changeset_scores"] = score_pair(entry, expected)
+    return _summary_row(entry)
+
+
+def assess_run(name: str, run: dict, expected: Expected | None) -> str:
+    status = run.get("status")
+    if status == "not_installed":
+        return "not_installed"
+    if status in FAILED_STATUSES:
+        return status
     if expected is None:
-        return {name: "observed" for name in entry.get("runs", {})}
-    return {name: _assess_run(name, run, expected) for name, run in entry.get("runs", {}).items()}
-
-
-def _assess_run(name: str, run: dict, expected: Expected) -> str:
+        return "observed"
     expected_refusal = (expected.athar or {}).get("refused") if name == "athar" and expected.athar else None
     if expected_refusal:
-        if run.get("status") == "refused":
+        if status == "refused":
             return "expected" if run.get("reason") == expected_refusal else "unexpected"
-        if run.get("status") == "ok":
-            return "unexpected"
-        return "not_run"
-    if run.get("status") == "refused":
-        # Athar refused a pair no expectation said it should; other tools never refuse today.
-        return "unexpected" if name == "athar" else "not_run"
-    if run.get("status") != "ok":
-        return "not_run"
+        return "unexpected"
+    if status == "refused":
+        return "unexpected"
+    if status != "ok":
+        raise ValueError(f"{name}: unknown run status {status!r}")
     counts = _run_counts(run)
     assessed = False
     if expected.counts and counts:
@@ -932,15 +1070,27 @@ def _assess_run(name: str, run: dict, expected: Expected) -> str:
     return "expected" if assessed else "observed"
 
 
-def _score_pair(entry: dict, expected: Expected | None) -> dict[str, dict]:
-    if expected is None or not expected.changed_guids:
+def score_pair(entry: dict, expected: Expected | None) -> dict[str, dict]:
+    """Changeset score per tool; a refusal, error or timeout scores as a total miss."""
+    if expected is None or expected.changed_guids is None:
         return {}
     scores = {}
     for name, run in entry.get("runs", {}).items():
-        reported = run.get("reported_guids")
-        if run.get("status") == "ok" and reported is not None:
-            scores[name] = score_changeset(reported, expected.changed_guids)
+        status = run.get("status")
+        if status == "not_installed":
+            continue
+        if status == "ok":
+            if run.get("reported_guids") is None:
+                raise ValueError(f"{name}: completed run carries no reported_guids to score")
+            scores[name] = score_changeset(run["reported_guids"], expected.changed_guids)
+        else:
+            scores[name] = _missed_changeset(expected.changed_guids, status)
     return scores
+
+
+def _missed_changeset(truth: dict[str, list[str]], status: str) -> dict:
+    fn = sum(len({guid for guid in truth.get(category, ()) if guid}) for category in CATEGORIES)
+    return {"tp": 0, "fp": 0, "fn": fn, "precision": 0.0, "recall": 0.0, "f1": 0.0, "failed": status}
 
 
 def _summary_row(entry: dict) -> dict:
@@ -949,6 +1099,7 @@ def _summary_row(entry: dict) -> dict:
         "kind": entry.get("kind"),
         "set": entry.get("set"),
         "expectation": entry.get("expectation"),
+        "has_expectation": entry.get("expected") is not None,
         "assessment": entry.get("assessment", {}),
     }
     if entry.get("error"):
@@ -962,23 +1113,99 @@ def _summary_row(entry: dict) -> dict:
             "seconds_median": run.get("seconds_median", run.get("seconds")),
             "peak_rss_mb_max": run.get("peak_rss_mb_max", run.get("peak_rss_mb")),
             "gb_seconds_median": run.get("gb_seconds_median", run.get("gb_seconds")),
+            "nondeterministic": "nondeterministic" in run,
         }
         score = scores.get(name)
         if score is not None:
-            row[name]["changeset"] = {key: score[key] for key in ("precision", "recall", "f1", "tp", "fp", "fn")}
+            row[name]["changeset"] = {
+                key: score[key] for key in ("precision", "recall", "f1", "tp", "fp", "fn", "failed") if key in score
+            }
     return row
+
+
+def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
+    """Per dataset and tool: coverage, correctness and changeset averages over the summary rows.
+
+    A pair counts as attempted for a tool unless the tool is not installed; an error or
+    timeout stays in every denominator (correctness, coverage, changeset average).
+    Changeset scores are averaged both macro (mean of per-pair values) and micro (from
+    TP/FP/FN summed over pairs). Time and memory are the geometric mean of per-pair
+    ratios to ``TIMING_REFERENCE``, over pairs both completed.
+    """
+    out: dict[str, dict[str, dict]] = {}
+    for row in rows:
+        if row.get("error"):
+            continue
+        dataset = row["set"]
+        for tool, result in row.items():
+            if not isinstance(result, dict) or "status" not in result:
+                continue
+            status = result["status"]
+            if status == "not_installed":
+                continue
+            stats = out.setdefault(dataset, {}).setdefault(
+                tool,
+                {
+                    "attempted": 0,
+                    "completed": 0,
+                    "failed": 0,
+                    "judged": 0,
+                    "expected": 0,
+                    "unexpected": 0,
+                    "nondeterministic": 0,
+                    "_scores": [],
+                    "_ratios": {metric: [] for metric in RATIO_METRICS},
+                },
+            )
+            stats["attempted"] += 1
+            stats["nondeterministic"] += bool(result.get("nondeterministic"))
+            reference = row.get(TIMING_REFERENCE)
+            if status in COMPLETED_STATUSES and isinstance(reference, dict) and reference.get("status") in COMPLETED_STATUSES:
+                for metric, values in stats["_ratios"].items():
+                    mine, theirs = result.get(metric), reference.get(metric)
+                    if isinstance(mine, (int, float)) and isinstance(theirs, (int, float)) and mine > 0 and theirs > 0:
+                        values.append(mine / theirs)
+            stats["completed"] += status in COMPLETED_STATUSES
+            stats["failed"] += status in FAILED_STATUSES
+            assessment = row.get("assessment", {}).get(tool)
+            if assessment in {"expected", "unexpected"} or (row.get("has_expectation") and status in FAILED_STATUSES):
+                stats["judged"] += 1
+                stats["expected"] += assessment == "expected"
+                stats["unexpected"] += assessment != "expected"
+            if isinstance(result.get("changeset"), dict):
+                stats["_scores"].append(result["changeset"])
+    for tools in out.values():
+        for stats in tools.values():
+            scores = stats.pop("_scores")
+            stats["vs_reference"] = {
+                metric: {"geomean_ratio": round(statistics.geometric_mean(values), 4), "pairs": len(values)}
+                if values
+                else None
+                for metric, values in stats.pop("_ratios").items()
+            }
+            stats["coverage"] = round(stats["completed"] / stats["attempted"], 4)
+            stats["correctness"] = round(stats["expected"] / stats["judged"], 4) if stats["judged"] else None
+            stats["changeset"] = _changeset_averages(scores)
+    return out
+
+
+def _changeset_averages(scores: list[dict]) -> dict | None:
+    if not scores:
+        return None
+    tp, fp, fn = (sum(score[key] for score in scores) for key in ("tp", "fp", "fn"))
+    precision, recall, f1 = prf(tp, fp, fn)
+    return {
+        "pairs": len(scores),
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "macro": {key: round(statistics.fmean(score[key] for score in scores), 4) for key in ("precision", "recall", "f1")},
+        "micro": {"precision": precision, "recall": recall, "f1": f1},
+    }
 
 
 def _run_counts(run: dict) -> dict | None:
     return run.get("counts") or run.get("sections")
-
-
-def _first_counts(runs: list[dict]) -> dict | None:
-    for run in runs:
-        counts = _run_counts(run)
-        if counts is not None:
-            return counts
-    return None
 
 
 def _tool_inventory(*, include_ifcfast: bool, include_speckle: bool = True, include_ifcgit: bool = True) -> dict:
@@ -1021,28 +1248,33 @@ def _tool_inventory(*, include_ifcfast: bool, include_speckle: bool = True, incl
     return tools
 
 
+def _provenance(tools: dict) -> dict:
+    from athar.bottom.constants import CANON_VERSION
+
+    return {
+        "athar_commit": _git_commit(),
+        "canon_version": CANON_VERSION,
+        "tools": {name: info.get("version") for name, info in tools.items() if isinstance(info, dict)},
+        "run_date": time.strftime("%Y-%m-%d"),
+    }
+
+
 def _environment() -> dict:
     return {
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "machine": platform.machine(),
-        "git_commit": _git_commit(),
     }
 
 
-def _git_commit() -> str | None:
-    try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=REPO_ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except Exception:
-        return None
-    return completed.stdout.strip() if completed.returncode == 0 else None
+def _git_commit() -> str:
+    """HEAD of the checkout, suffixed ``-dirty`` when tracked files differ from it."""
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=REPO_ROOT, check=True, capture_output=True, text=True).stdout.strip()
+
+    head = git("rev-parse", "HEAD")
+    return f"{head}-dirty" if git("status", "--porcelain", "--untracked-files=no") else head
 
 
 def _package_version(package: str) -> str | None:
@@ -1072,47 +1304,30 @@ def _expected_json(expected: Expected | None) -> dict | None:
     }
 
 
-def _current_peak_rss_mb() -> float | None:
-    usage = resource.getrusage(resource.RUSAGE_SELF)
-    rss = usage.ru_maxrss
-    if not rss:
-        return None
-    # macOS reports bytes; Linux reports KiB.
-    return round(rss / (1024 * 1024), 1) if platform.system() == "Darwin" else round(rss / 1024, 1)
-
-
-def _read_rss_mb(pid: int) -> float | None:
-    """Current RSS of `pid` in MiB via `ps` (KiB on macOS and Linux).
-
-    Every tool runs as a subprocess and is sampled this way, so the sampling
-    harness stays small — `ps` is only ever forked from the lightweight parent,
-    never from a process holding gigabytes (which is what inflated timings when
-    Athar ran in-process). Same mechanism for every tool, by design.
-    """
+def _read_group_rss_mb(pgid: int) -> float | None:
+    """Summed RSS in MiB of the processes in group `pgid` via `ps` (KiB on macOS and Linux)."""
     try:
         out = subprocess.run(
-            ["ps", "-o", "rss=", "-p", str(pid)],
+            ["ps", "-A", "-o", "pgid=,rss="],
             capture_output=True,
             text=True,
             check=True,
-        ).stdout.strip()
+        ).stdout
     except (subprocess.CalledProcessError, OSError):
         return None
-    return int(out) / 1024.0 if out else None
+    rss_kib = [int(rss) for group, rss in (line.split() for line in out.splitlines() if line.strip()) if int(group) == pgid]
+    return sum(rss_kib) / 1024.0 if rss_kib else None
 
 
 class _RssTimeSampler:
-    """Background thread that records (t, rss_mb) for a pid, to integrate GB-seconds.
+    """Background thread that records (t, rss_mb) for a process group, to integrate GB-seconds.
 
     GB-seconds (the area under the RSS curve) fuses "how much memory" and "for how
-    long" into the unit cloud platforms bill — a fairer cost metric than a
-    one-point peak. For in-process tools pass the harness baseline to
-    ``gb_seconds`` so only the diff's marginal memory is counted; subprocess
-    tools start near zero so their raw integral is already the diff's cost.
+    long" into the unit cloud platforms bill.
     """
 
-    def __init__(self, pid: int, interval: float = 0.03) -> None:
-        self.pid = pid
+    def __init__(self, pgid: int, interval: float = 0.03) -> None:
+        self.pgid = pgid
         self.interval = interval
         self.samples: list[tuple[float, float]] = []
         self._stop = threading.Event()
@@ -1120,7 +1335,7 @@ class _RssTimeSampler:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            mb = _read_rss_mb(self.pid)
+            mb = _read_group_rss_mb(self.pgid)
             if mb is not None:
                 self.samples.append((time.perf_counter(), mb))
             self._stop.wait(self.interval)
@@ -1133,25 +1348,13 @@ class _RssTimeSampler:
         self._stop.set()
         self._thread.join(timeout=1.0)
 
-    def gb_seconds(self, baseline_mb: float = 0.0) -> float | None:
+    def gb_seconds(self) -> float | None:
         if len(self.samples) < 2:
             return None
         total = 0.0
         for (t0, m0), (t1, m1) in zip(self.samples, self.samples[1:]):
-            a = max(m0 - baseline_mb, 0.0)
-            b = max(m1 - baseline_mb, 0.0)
-            total += (a + b) / 2.0 / 1024.0 * (t1 - t0)  # MB->GB, * dt
+            total += (m0 + m1) / 2.0 / 1024.0 * (t1 - t0)  # MB->GB, * dt
         return round(total, 3)
-
-    def peak_mb(self) -> float | None:
-        return round(max(m for _, m in self.samples), 1) if self.samples else None
-
-
-def _parse_time_peak_rss(stderr: str) -> float | None:
-    match = _TIME_MAX_RSS_RE.search(stderr)
-    if not match:
-        return None
-    return round(int(match.group("rss")) / (1024 * 1024), 1)
 
 
 def _write_json(path: Path, payload: dict) -> None:

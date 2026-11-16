@@ -23,10 +23,11 @@ candidate explosion and no ambiguous fan-out by construction.
 | `geometry_hash` | same class + full signature-vector equality (interchangeable entities, zipped 1:1) | 0.8 |
 
 Anything weaker is reported as added+deleted rather than guessed: a corpus
-survey over real revision, discipline, and unrelated model pairs
-(`docs/corpus/2026-06-10-corpus-survey.md`) showed that topology-only and
-spatial-proximity fallback matching never fired on a genuine revision pair and
-only manufactured cross-model matches, so those tiers were removed. Duplicated
+survey over revision, discipline, and unrelated model pairs
+(`docs/corpus/2026-06-10-corpus-survey.md`) found that topology-only and
+spatial-proximity fallback matching never fired on its revision pairs, which
+are the author's own re-saves of sample models, and only manufactured
+cross-model matches, so those tiers were removed. Duplicated
 GlobalIds are never trusted as identity — those entities fall through to the
 vector tier. Matching is deterministic and entirely algorithmic, with no
 tuning knobs.

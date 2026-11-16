@@ -48,10 +48,12 @@ Run the full default suite before committing.
 - Edits whose ground truth needs authored geometry/units use controlled
   synthetic pairs instead of seed mutators, because real-seed geometry is too
   heterogeneous to target reliably:
-  - `test_geometry_change.py` moves one explicit mesh vertex (the path that
-    feeds `vh_geometry` — parametric scalars like extrusion `Depth` deliberately
-    do not) to prove a clean geometry change stays `intrinsic`: class-only WL
-    seeds mean a content edit never flips the victim's own topology aspect.
+  - `test_geometry_change.py` moves one explicit mesh vertex to prove a clean
+    geometry change stays `intrinsic`: class-only WL seeds mean a content edit
+    never flips the victim's own topology aspect.
+    `test_parametric_geometry_change.py` covers parametric shape values
+    (extrusion `Depth`, profile dimensions, positions, mapped-item scale),
+    each of which is a geometry change too.
   - `test_unit_normalization.py` builds the same model in metres and millimetres
     to prove length quantization is unit-normalized (zero diff).
 
@@ -59,6 +61,11 @@ Run the full default suite before committing.
 
 - `tests/test_acceptance_large_ifc.py` is opt-in via
   `ATHAR_RUN_LARGE_ACCEPTANCE=1`.
-- It covers medium/large same-file invariants, real revision pairs, discipline
-  pairs, unrelated pairs, and GUID-scramble at scale.
+- It covers medium/large same-file invariants (file against a byte-identical
+  copy at a second path), revision pairs (the author's own re-saves of sample
+  models, so observations rather than independent ground truth), the Revit
+  re-export pairs `r2_r3` and `r8_r9` (no model edits, so an empty report),
+  discipline pairs, unrelated pairs, and GUID-scramble at scale.
+- Same-file tests always diff a copy at a second path: `diff_files` parses
+  once and shares the bundle when both arguments are the same path.
 - Optional per-test bound: `ATHAR_ACCEPTANCE_TIMEOUT_S`.
