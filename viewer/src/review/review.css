@@ -1,0 +1,179 @@
+/* Athar Review — drawing-register theme. The 3D viewer is dark model space;
+   this is its paper counterpart: technical paper, graphite ink, ruled register
+   rows, one checking-stamp blue accent. The four diff hues match the viewer. */
+
+:root {
+  --paper: #f5f4ef;
+  --surface: #fdfdfb;
+  --ink: #23262a;
+  --ink-dim: #6a7076;
+  --ink-faint: #a2a7ab;
+  --rule: #dedcd3;
+  --rule-strong: #23262a;
+  --stamp: #2b5cb8;
+  --stamp-soft: rgba(43, 92, 184, 0.09);
+
+  --c-add: #1e8a56;
+  --c-del: #cf3a3f;
+  --c-mod: #4a63d8;
+  --c-pend: #a87a3c;
+  --c-add-soft: rgba(30, 138, 86, 0.1);
+  --c-del-soft: rgba(207, 58, 63, 0.09);
+  --c-mod-soft: rgba(74, 99, 216, 0.1);
+  --c-pend-soft: rgba(168, 122, 60, 0.12);
+
+  --sans: -apple-system, 'Segoe UI', 'Inter', Roboto, sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+
+  font: 14px/1.5 var(--sans);
+  color: var(--ink);
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  min-height: 100vh;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--stamp);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ---- shared vocabulary ---- */
+
+.eyebrow {
+  font: 600 10.5px/1.2 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 3px;
+  font: 600 12px/1.6 var(--mono);
+  white-space: nowrap;
+}
+
+.chip.add {
+  color: var(--c-add);
+  background: var(--c-add-soft);
+}
+
+.chip.del {
+  color: var(--c-del);
+  background: var(--c-del-soft);
+}
+
+.chip.mod {
+  color: var(--c-mod);
+  background: var(--c-mod-soft);
+}
+
+.chip.pend {
+  color: var(--c-pend);
+  background: var(--c-pend-soft);
+}
+
+.chip.clean {
+  color: var(--ink-dim);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* The signature: a drawing-control stamp. Double ring, slight tilt, ink blue
+   for ACCEPTED, ink red for REJECTED. Used where a real checker would stamp. */
+.stamp {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 2.5px currentColor;
+  font: 700 11px/1.7 var(--mono);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  transform: rotate(-3deg);
+  color: var(--stamp);
+  background: var(--surface);
+}
+
+.stamp.rejected {
+  color: var(--c-del);
+  transform: rotate(2deg);
+}
+
+.btn {
+  padding: 7px 16px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.btn:hover {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.btn.primary {
+  border-color: var(--stamp);
+  background: var(--stamp);
+  color: #fff;
+}
+
+.btn.primary:hover {
+  background: #234c99;
+}
+
+.btn.danger {
+  border-color: var(--c-del);
+  color: var(--c-del);
+  background: var(--surface);
+}
+
+.btn.danger:hover {
+  background: var(--c-del);
+  color: #fff;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

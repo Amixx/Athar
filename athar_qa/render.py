@@ -134,7 +134,16 @@ def _event_line(event: dict[str, Any]) -> str:
         verdict = (event.get("verdict") or "?").upper()
         stats = (event.get("diff") or {}).get("stats") or {}
         policy = " [policy]" if event.get("has_policy") else ""
-        return f"{eid}  {at}  review {verdict}{policy}  {model_key} by {actor}  ({_stats_brief(stats)})"
+        conflicts = event.get("conflicts") or []
+        conflict_note = ""
+        if conflicts:
+            others = ", ".join(c.get("review_id", "?") for c in conflicts)
+            overlap = sum(c.get("overlap_count", 0) for c in conflicts)
+            conflict_note = f"  !! conflicts with {others} ({overlap} shared entities)"
+        return (
+            f"{eid}  {at}  review {verdict}{policy}  {model_key} by {actor}"
+            f"  ({_stats_brief(stats)}){conflict_note}"
+        )
     if kind == "approval":
         return f"{eid}  {at}  approval  {model_key} by {actor}  (review {event.get('review_id')})"
     if kind == "rejection":

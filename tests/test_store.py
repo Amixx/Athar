@@ -11,6 +11,7 @@ clock) byte-stable.
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import re
 
@@ -91,7 +92,9 @@ def test_set_baseline_retains_artifact_and_pointer(store, models):
     # The accepted IFC is retained content-addressed so future candidates can be
     # re-diffed without the customer keeping old exports — the lock-in.
     sha = pointer["artifact"]["sha256"]
-    assert (store.root / "projects" / "acme" / "artifacts" / f"{sha}.ifc").is_file()
+    assert store.has_artifact("acme", sha)
+    exported = store.export_artifact("acme", sha, store.root / "exported.ifc")
+    assert hashlib.sha256(exported.read_bytes()).hexdigest() == sha
 
 
 def test_set_baseline_rejects_unparseable_ifc(store, models, tmp_path):
@@ -187,11 +190,9 @@ def test_content_addressed_ingest_is_idempotent(store, models):
     store.set_baseline("acme", "architecture", models["baseline"], actor="alice")
     # Re-ingesting identical bytes (same file content) must not duplicate.
     store.review("acme", "architecture", models["same"], actor="bob")
-    artifacts = list((store.root / "projects" / "acme" / "artifacts").glob("*.ifc"))
-    # baseline + the (distinct-content) same-guid candidate share one guid but
-    # differ only if bytes differ; identical names here means identical bytes.
-    shas = {p.stem for p in artifacts}
-    assert len(shas) == len(artifacts)  # no duplicate sha files
+    count = store.artifact_stats("acme")["artifacts"]
+    store.review("acme", "architecture", models["same"], actor="bob")
+    assert store.artifact_stats("acme")["artifacts"] == count
 
 
 def test_review_requires_existing_baseline(store, models):
@@ -230,3 +231,69 @@ def test_store_cli_reports_unparseable_ifc_without_traceback(models, tmp_path, c
     args = parser.parse_args(["--root", root, "set-baseline", "acme", "arch", str(corrupt), "--actor", "alice"])
     assert run_store(args) == 1
     assert "Error: Cannot parse IFC file" in capsys.readouterr().err
+
+
+def test_review_persists_full_report(store, models):
+    store.set_baseline("acme", "architecture", models["baseline"], actor="alice")
+    review = store.review("acme", "architecture", models["added"], actor="bob")
+
+    report = store.review_report("acme", review["id"])
+    assert report is not None
+    assert report["stats"]["added"] == 1
+    assert report["stats"]["added"] == review["diff"]["stats"]["added"]
+    assert store.review_report("acme", "evt-999999") is None
+
+
+def test_concurrent_candidates_conflict_on_shared_entities(store, models, tmp_path):
+    edited_a = tmp_path / "edited-a.ifc"
+    edited_b = tmp_path / "edited-b.ifc"
+    _write_model(edited_a, [(_GUID_A, "wall-A-renamed")])
+    _write_model(edited_b, [(_GUID_A, "wall-A-other-name")])
+
+    store.set_baseline("acme", "architecture", models["baseline"], actor="alice")
+    first = store.review("acme", "architecture", edited_a, actor="bob")
+    assert first["conflicts"] == []
+
+    second = store.review("acme", "architecture", edited_b, actor="carol")
+    assert len(second["conflicts"]) == 1
+    conflict = second["conflicts"][0]
+    assert conflict["review_id"] == first["id"]
+    assert conflict["actor"] == "bob"
+    assert conflict["overlap_guids"] == [_GUID_A]
+    assert conflict["overlap_count"] == 1
+
+
+def test_disjoint_candidates_do_not_conflict(store, models, tmp_path):
+    added_other = tmp_path / "added-other.ifc"
+    _write_model(added_other, [(_GUID_A, "wall-A"), ("0ccccccccccccccccccccc", "wall-C")])
+
+    store.set_baseline("acme", "architecture", models["baseline"], actor="alice")
+    store.review("acme", "architecture", models["added"], actor="bob")
+    second = store.review("acme", "architecture", added_other, actor="carol")
+    assert second["conflicts"] == []
+
+
+def test_resolved_reviews_stop_conflicting(store, models, tmp_path):
+    edited = tmp_path / "edited.ifc"
+    _write_model(edited, [(_GUID_A, "wall-A-renamed")])
+
+    store.set_baseline("acme", "architecture", models["baseline"], actor="alice")
+    first = store.review("acme", "architecture", edited, actor="bob")
+    store.reject("acme", "architecture", first["id"], actor="alice")
+    after_reject = store.review("acme", "architecture", edited, actor="carol")
+    assert after_reject["conflicts"] == []
+
+    store.approve("acme", "architecture", after_reject["id"], actor="alice")
+    assert store.pending_reviews("acme", "architecture") == []
+    after_approve = store.review("acme", "architecture", models["baseline"], actor="dana")
+    assert after_approve["conflicts"] == []
+
+
+def test_pending_reviews_track_current_baseline(store, models):
+    store.set_baseline("acme", "architecture", models["baseline"], actor="alice")
+    review = store.review("acme", "architecture", models["added"], actor="bob")
+    pending = store.pending_reviews("acme", "architecture")
+    assert [e["id"] for e in pending] == [review["id"]]
+
+    store.approve("acme", "architecture", review["id"], actor="alice")
+    assert store.pending_reviews("acme", "architecture") == []

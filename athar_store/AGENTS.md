@@ -28,11 +28,37 @@ content `sha256` of its IFC file. The store keeps three durable things:
 
 ```
 <root>/projects/<project_id>/
-  project.json                # name, created
-  artifacts/<sha256>.ifc      # content-addressed accepted / reviewed models
-  baselines/<model_key>.json  # current accepted-version pointer (derived head)
-  history.jsonl               # append-only event log (source of truth)
+  project.json                     # name, created
+  artifacts/<sha256>.ifc           # raw bytes (legacy layout / no-zstd fallback)
+  artifacts/<sha256>.ifc.zst       # full zstd snapshot
+  artifacts/<sha256>.ifc.patch.zst # zstd --patch-from delta against base_sha256
+  artifacts/<sha256>.meta.json     # encoding, base, chain depth, sizes
+  baselines/<model_key>.json       # current accepted-version pointer (derived head)
+  reports/<review_id>.json.gz      # full delta report of each review (deterministic gzip)
+  history.jsonl                    # append-only event log (source of truth)
 ```
+
+## Delta Artifact Pack (`pack.py`)
+
+Artifacts are stored git-style — a lineage costs one full snapshot plus small
+per-revision deltas — but without any Git dependency, via `ArtifactPack`:
+
+- Identity is always the sha256 of the exact decompressed IFC bytes.
+- A review candidate is ingested with the current baseline as delta base
+  (`zstd --patch-from`); `set_baseline` starts a fresh chain with a full
+  snapshot. Chains are capped at `MAX_CHAIN_DEPTH` (8); the next ingest past
+  the cap stores a full snapshot and roots a new chain.
+- Every delta is decoded and sha-verified at ingest before the pack commits to
+  it; a failed verification, an over-large delta (≥50% of logical size), or a
+  missing base falls back to a full zstd snapshot, then to a raw copy.
+- The `zstd` executable is an optional external tool: without it the pack
+  degrades to raw copies (the legacy layout, which stays readable forever);
+  reading compressed artifacts requires it again. Semantic deltas are *not*
+  used for storage — the engine's diff report is not byte-invertible, so
+  reconstruction correctness comes from byte deltas.
+- Reads go through `BaselineStore.export_artifact` / `ArtifactPack.open`
+  (temporary materialization); `review` materializes the baseline the same
+  way. `athar store export` and `athar store stats` expose this on the CLI.
 
 `project_id` and `model_key` are validated to `[A-Za-z0-9._-]` to keep them
 safe as path components. The default root is `~/.athar/store` (override with
@@ -50,6 +76,14 @@ sequential `id` (`evt-000001`), `model_key`, `at` (UTC), and `actor`:
   `evaluate_report` verdict, and `verdict` = `pass|fail`. A review **does not**
   promote; it only records. The candidate is ingested into `artifacts/` at
   review time so the verdict is reproducible and approval is a pointer flip.
+  The full delta report is persisted to `reports/<review_id>.json.gz`
+  (`review_report` reads it back; reviews predating this return None). The
+  event also carries `conflicts`: for every *pending* review (same model_key,
+  same current baseline, not yet approved/rejected — see `pending_reviews`),
+  the overlap between both candidates' changed GUIDs (adds, deletes, and
+  non-transitive modifications; pure ripples are excluded so disjoint edits
+  in one storey do not conflict). Conflict *detection* is deliberately the
+  ceiling: semantic IFC merge stays out of scope.
 - `approval` — promote a prior review's candidate to the new baseline. Carries
   `review_id`, approver, and note. Updates the baseline pointer.
 - `rejection` — reject a prior review's candidate. References `review_id`;

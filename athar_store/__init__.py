@@ -6,6 +6,7 @@ append-only review log. Integration layer only; never imported by the core
 engine.
 """
 
+from athar_store.pack import ArtifactPack, PackError
 from athar_store.store import (
     BaselineStore,
     StoreError,
@@ -14,7 +15,9 @@ from athar_store.store import (
 )
 
 __all__ = [
+    "ArtifactPack",
     "BaselineStore",
+    "PackError",
     "StoreError",
     "UnknownBaselineError",
     "UnknownReviewError",
