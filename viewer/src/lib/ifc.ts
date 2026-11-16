@@ -1,23 +1,19 @@
 /**
- * Thin wrapper around @ifc-lite/geometry: bytes in, per-entity meshes out.
- * All tessellation happens in the browser (WASM); no Python-side geometry.
- *
- * The wrapper is the swap point if ifc-lite stalls — nothing outside this
- * module touches the library.
+ * Wrapper around @ifc-lite/geometry: bytes in, per-entity meshes out. All
+ * tessellation happens in the browser (WASM). Nothing outside this module
+ * imports the library at runtime.
  */
 
 import { GeometryProcessor } from '@ifc-lite/geometry'
-import type { MeshData, Vec3 } from '@ifc-lite/geometry'
+import type { MeshData } from '@ifc-lite/geometry'
+import { modelOrigin, type Vec3 } from './frame'
 
 export interface ModelGeometry {
   /** expressId (STEP id) → mesh pieces for that entity. */
   byEntity: Map<number, MeshData[]>
   meshCount: number
-  /**
-   * RTC offset the WASM tessellator subtracted (IFC Z-up coordinates).
-   * Feed it to the second model so both sides share one origin.
-   */
-  rtcOffset: Vec3 | null
+  /** Scene-space (Y-up) position of the local frame the mesh positions are relative to. */
+  origin: Vec3
 }
 
 let processorPromise: Promise<GeometryProcessor> | null = null
@@ -32,24 +28,15 @@ function getProcessor(): Promise<GeometryProcessor> {
 
 export async function tessellate(
   buffer: ArrayBuffer,
-  options: {
-    sharedRtcOffset?: Vec3 | null
-    onProgress?: (meshCount: number) => void
-  } = {},
+  options: { onProgress?: (meshCount: number) => void } = {},
 ): Promise<ModelGeometry> {
   const processor = await getProcessor()
   const byEntity = new Map<number, MeshData[]>()
   let meshCount = 0
   let rtcOffset: Vec3 | null = null
+  let originShift: Vec3 | null = null
 
-  const bytes = new Uint8Array(buffer)
-  const stream = processor.processStreaming(
-    bytes,
-    undefined,
-    undefined,
-    options.sharedRtcOffset ?? undefined,
-  )
-  for await (const event of stream) {
+  for await (const event of processor.processStreaming(new Uint8Array(buffer))) {
     if (event.type === 'batch') {
       for (const mesh of event.meshes) {
         const list = byEntity.get(mesh.expressId)
@@ -63,7 +50,9 @@ export async function tessellate(
       options.onProgress?.(meshCount)
     } else if (event.type === 'rtcOffset' && event.hasRtc) {
       rtcOffset = event.rtcOffset
+    } else if (event.type === 'complete') {
+      originShift = event.coordinateInfo.originShift
     }
   }
-  return { byEntity, meshCount, rtcOffset }
+  return { byEntity, meshCount, origin: modelOrigin(rtcOffset, originShift) }
 }

@@ -10,7 +10,7 @@
  * spatial containers do not):
  *   deleted=WallC, added=WallE, modifiedOld/New=WallB (moved +1 m),
  *   modifiedStatic=WallD (data-only), transitive=WallA,
- *   meshless: modified=Building+Storey, unchanged=Site; 1 displacement line.
+ *   not drawn: transitive=Building+Storey, unchanged=Site; 1 displacement line.
  */
 
 import { createServer, type Server } from 'node:http'
@@ -30,7 +30,8 @@ const EXPECTED_BUCKETS = {
   modifiedStatic: 1,
   transitive: 1,
 }
-const EXPECTED_MESHLESS = { added: 0, deleted: 0, modified: 2, unchanged: 1 }
+const EXPECTED_IN_REPORT = { added: 1, deleted: 1, modified: 2, transitive: 3, unchanged: 1 }
+const EXPECTED_DRAWN = { added: 1, deleted: 1, modified: 2, transitive: 1, unchanged: 0 }
 
 let server: Server
 let srcOrigin: string
@@ -84,7 +85,8 @@ test('loads a pair via ?src= hand-off and buckets entities', async ({ page }) =>
   const state = await waitReady(page)
 
   expect(state.bucketEntityCounts).toEqual(EXPECTED_BUCKETS)
-  expect(state.meshlessBySection).toEqual(EXPECTED_MESHLESS)
+  expect(state.reportCoverage.inReport).toEqual(EXPECTED_IN_REPORT)
+  expect(state.reportCoverage.drawn).toEqual(EXPECTED_DRAWN)
   expect(state.displacementLines).toBe(1)
   expect(state.reportStats.added).toBe(1)
   expect(state.reportStats.deleted).toBe(1)
@@ -97,13 +99,49 @@ test('loads a pair via ?src= hand-off and buckets entities', async ({ page }) =>
   await page.screenshot({ path: 'test-results/smoke-both.png' })
 })
 
-test('loads a pair via the three file inputs', async ({ page }) => {
-  await page.goto('/')
-  await page.setInputFiles('[data-testid=input-old]', join(FIXTURES, 'old.ifc'))
-  await page.setInputFiles('[data-testid=input-new]', join(FIXTURES, 'new.ifc'))
-  await page.setInputFiles('[data-testid=input-report]', join(FIXTURES, 'report.json'))
+test('the legend shows report and drawn counts and lists undrawn entities for inspection', async ({ page }) => {
+  await page.goto(`/?src=${srcOrigin}`)
+  await waitReady(page)
+
+  await expect(page.getByTestId('legend-transitive')).toContainText('3 in report, 1 drawn')
+  await expect(page.getByTestId('legend-unchanged')).toContainText('1 in report, 0 drawn')
+  const undrawn = page.getByTestId('undrawn').getByRole('button')
+  await expect(undrawn).toHaveText([/Building/, /Storey/, /Site/])
+
+  await undrawn.filter({ hasText: 'Storey' }).click()
+  await expect(page.locator('.inspector .title')).toHaveText('Storey')
+  await expect(page.locator('.inspector .badge')).toHaveText('modified')
+})
+
+test('every legend row keeps its label visibly apart from its count', async ({ page }) => {
+  await page.goto(`/?src=${srcOrigin}`)
+  await waitReady(page)
+
+  const rows = page.locator('.legendrow')
+  expect(await rows.count()).toBeGreaterThan(1)
+  for (const row of await rows.all()) {
+    const gap = await row.evaluate((el) => {
+      const [label, count] = Array.from(el.children).map((child) => child.getBoundingClientRect())
+      return count.left - label.right
+    })
+    expect(gap, await row.innerText()).toBeGreaterThanOrEqual(8)
+  }
+})
+
+test('the legend says drawing is unavailable instead of drawn counts without WebGL', async ({ page }) => {
+  await page.addInitScript(() => {
+    const getContext = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+      return kind.startsWith('webgl') ? null : (getContext as any).call(this, kind, ...rest)
+    } as typeof getContext
+  })
+  await page.goto(`/?src=${srcOrigin}`)
   const state = await waitReady(page)
-  expect(state.bucketEntityCounts).toEqual(EXPECTED_BUCKETS)
+  expect(state.rendererReady).toBe(false)
+
+  await expect(page.getByTestId('legend-transitive')).toHaveText(/Indirect\s*3 in report$/)
+  await expect(page.getByTestId('legend-extra')).toHaveText(/Extra\s*0 old, 0 new$/)
+  await expect(page.getByTestId('legend-drawing')).toHaveText('3D drawing unavailable: nothing is drawn.')
 })
 
 test('slider snaps and section toggles drive bucket appearances', async ({ page }) => {
@@ -165,6 +203,29 @@ test('slider snaps and section toggles drive bucket appearances', async ({ page 
   )
 })
 
+test('picking excludes ghosted and toggled-off geometry', async ({ page }) => {
+  const report = JSON.parse(await readFile(join(FIXTURES, 'report.json'), 'utf8'))
+  report.unchanged.push(...report.modified)
+  report.modified = []
+  report.added = []
+  report.deleted = []
+  await page.route(`${srcOrigin}/report.json`, route => route.fulfill({ json: report }))
+  await page.goto(`/?src=${srcOrigin}`)
+  const state = await waitReady(page)
+  expect(state.rendererReady).toBe(true)
+  const viewport = page.viewportSize()!
+  await page.mouse.click(viewport.width / 2, viewport.height / 2)
+  await expect(page.locator('.inspector')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Ghost', exact: true }).click()
+  await page.mouse.click(viewport.width / 2, viewport.height / 2)
+  await expect(page.locator('.inspector')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Ghost', exact: true }).click()
+  await page.getByRole('button', { name: 'Unchanged', exact: true }).click()
+  await page.mouse.click(viewport.width / 2, viewport.height / 2)
+  await expect(page.locator('.inspector')).toHaveCount(0)
+})
+
 test('clicking an entity opens the inspector; Escape clears it', async ({ page }) => {
   await page.goto(`/?src=${srcOrigin}`)
   const state = await waitReady(page)
@@ -180,6 +241,16 @@ test('clicking an entity opens the inspector; Escape clears it', async ({ page }
   expect(selection.stepId).toBeGreaterThan(0)
   await expect(page.locator('.inspector')).toBeVisible()
   await expect(page.locator('.inspector .title')).not.toBeEmpty()
+  const firstHighlight = await page.evaluate(() => (window as any).__athar_viewer.highlightObjects)
+  expect(firstHighlight).not.toBeNull()
+
+  for (let i = 0; i < 3; i += 1) {
+    await page.keyboard.press('Escape')
+    await page.mouse.click(viewport.width / 2, viewport.height / 2)
+    await page.waitForFunction(() => Boolean((window as any).__athar_viewer?.selection))
+  }
+  const repeatedHighlight = await page.evaluate(() => (window as any).__athar_viewer.highlightObjects)
+  expect(repeatedHighlight).toEqual(firstHighlight)
 
   await page.keyboard.press('Escape')
   await page.waitForFunction(() => (window as any).__athar_viewer?.selection === null)

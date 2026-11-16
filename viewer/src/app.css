@@ -16,6 +16,7 @@
   --c-mod: #5472e4;
   --c-transitive: #a87a3c;
   --c-unch: #8b8d98;
+  --c-extra: #d6409f;
 
   --sans: -apple-system, 'Segoe UI', 'Inter', Roboto, sans-serif;
   --mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
@@ -194,6 +195,7 @@ button.active {
 .dot.mod { background: var(--c-mod); }
 .dot.transitive { background: var(--c-transitive); opacity: 0.6; }
 .dot.unch { background: var(--c-unch); opacity: 0.55; }
+.dot.extra { background: var(--c-extra); }
 
 /* ---------- slider bar ---------- */
 
@@ -338,6 +340,49 @@ button.active {
 .classrow .nums .d { color: var(--c-del); }
 .classrow .nums .m { color: var(--c-mod); }
 
+.legendrows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.undrawn {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.undrawn button.classrow {
+  border: none;
+  border-radius: 5px;
+  padding: 3px 2px;
+  text-align: left;
+  width: 100%;
+}
+
+.undrawn .cls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legendrow {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.legendrow > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .footnote {
   color: var(--text-faint);
   font-size: 11.5px;
@@ -389,6 +434,7 @@ button.active {
 .badge.added { background: rgba(48, 164, 108, 0.18); color: var(--c-add); }
 .badge.modified { background: rgba(84, 114, 228, 0.2); color: #8da4f0; }
 .badge.unchanged { background: rgba(139, 141, 152, 0.16); color: var(--c-unch); }
+.badge.extra { background: rgba(214, 64, 159, 0.18); color: var(--c-extra); }
 
 .kv {
   display: grid;
@@ -539,7 +585,7 @@ button.active {
 
 .dropzones {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 2fr 1fr;
   gap: 10px;
 }
 
@@ -640,6 +686,37 @@ button.active {
   border-color: rgba(217, 168, 107, 0.45);
   z-index: 6;
   max-width: min(620px, calc(100vw - 30px));
+}
+
+.hero .banner.warn {
+  position: static;
+  transform: none;
+  margin: 0;
+  max-width: none;
+}
+
+.assign {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.assignrow {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.assignrow .mono {
+  overflow-wrap: anywhere;
+}
+
+.assignrow label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
 }
 
 .banner.error {

@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'bun:test'
 
-import { classifyDrop, MANIFEST_SCHEMA_VERSION, parseManifest } from '../src/lib/sources'
+import {
+  addDroppedFiles,
+  assignRoles,
+  chainFromFiles,
+  dataUrl,
+  hashFile,
+  MANIFEST_SCHEMA_VERSION,
+  NO_DROPS,
+  parseManifest,
+  readReportFile,
+  reportInputHashes,
+  sha256Hex,
+} from '../src/lib/sources'
+import type { AtharReport } from '../src/lib/types'
 
 const singlePair = {
   athar_viewer_manifest: 1,
@@ -50,9 +63,10 @@ describe('parseManifest', () => {
     expect(parsed.steps[0].new.url).toBe(parsed.steps[1].old.url)
   })
 
-  it('clamps an out-of-range active_step to 0', () => {
-    expect(parseManifest({ ...chain, active_step: 9 }).activeStep).toBe(0)
-    expect(parseManifest({ ...chain, active_step: -1 }).activeStep).toBe(0)
+  it('rejects an out-of-range active_step', () => {
+    expect(() => parseManifest({ ...chain, active_step: 9 })).toThrow('active_step')
+    expect(() => parseManifest({ ...chain, active_step: -1 })).toThrow('active_step')
+    expect(() => parseManifest({ ...chain, active_step: 0.5 })).toThrow('active_step')
   })
 
   it('warns when the manifest schema is newer than the viewer', () => {
@@ -76,18 +90,152 @@ describe('parseManifest', () => {
     expect(() => parseManifest(missingUrl)).toThrow()
   })
 
+  it('rejects a protocol-relative file url', () => {
+    expect(() => parseManifest({ ...singlePair, old: { url: '//elsewhere.example/x.ifc' } })).toThrow('protocol-relative')
+  })
+
   it('rejects a single-pair manifest missing a section', () => {
     expect(() => parseManifest({ athar_viewer_manifest: 1, old: { url: '/o' } })).toThrow()
   })
 })
 
-describe('classifyDrop', () => {
+describe('addDroppedFiles', () => {
   const file = (name: string) => new File(['x'], name)
 
-  it('assigns two ifcs by sorted order and a json report', () => {
-    const result = classifyDrop([file('b.ifc'), file('a.ifc'), file('r.json')], {})
-    expect(result.oldFile?.name).toBe('a.ifc')
-    expect(result.newFile?.name).toBe('b.ifc')
-    expect(result.reportFile?.name).toBe('r.json')
+  it('keeps ifcs in drop order without assigning roles, and takes the json as report', () => {
+    const { drops, notes } = addDroppedFiles([file('final.ifc'), file('r.json'), file('draft.ifc')], NO_DROPS)
+    expect(drops.ifcs.map((f) => f.name)).toEqual(['final.ifc', 'draft.ifc'])
+    expect(drops.reportFile?.name).toBe('r.json')
+    expect(notes).toEqual([])
+  })
+
+  it('keeps the two most recent ifcs across drops and names the one it replaced', () => {
+    const first = addDroppedFiles([file('a.ifc')], NO_DROPS)
+    const { drops, notes } = addDroppedFiles([file('b.ifc'), file('c.ifc')], first.drops)
+    expect(drops.ifcs.map((f) => f.name)).toEqual(['b.ifc', 'c.ifc'])
+    expect(notes).toEqual(['a.ifc was replaced: only the two most recent .ifc files are kept.'])
+  })
+
+  it('names a replaced report and the files it ignores', () => {
+    const first = addDroppedFiles([file('old.json')], NO_DROPS)
+    const { drops, notes } = addDroppedFiles([file('notes.txt'), file('new.json'), file('extra.json')], first.drops)
+    expect(drops.reportFile?.name).toBe('new.json')
+    expect(notes).toEqual([
+      'notes.txt was ignored: only .ifc files and a .json report are accepted.',
+      'extra.json was ignored: only one report is used.',
+      'old.json was replaced by new.json.',
+    ])
+  })
+})
+
+describe('chainFromFiles', () => {
+  it('serves each dropped file under its own role', async () => {
+    const a = await hashFile(new File(['first'], 'same.ifc'))
+    const b = await hashFile(new File(['second'], 'same.ifc'))
+    const step = chainFromFiles(a, b, {} as AtharReport).steps[0]
+    expect(step.oldKey).not.toBe(step.newKey)
+    expect(await step.fetchOldBytes()).toEqual(await a.file.arrayBuffer())
+    expect(await step.fetchNewBytes()).toEqual(await b.file.arrayBuffer())
+  })
+})
+
+describe('sha256Hex', () => {
+  it('hashes bytes as lowercase hex', async () => {
+    expect(await sha256Hex(new TextEncoder().encode('abc').buffer as ArrayBuffer)).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    )
+  })
+})
+
+describe('assignRoles', () => {
+  const hashed = (name: string, sha256: string) => ({ file: { name }, sha256 })
+  const inputs = { old: 'aaa', new: 'bbb' }
+  const report = (old: unknown, new_: unknown) => ({ audit: { inputs: { old: { sha256: old }, new: { sha256: new_ } } } })
+
+  it('assigns by hash when the names sort the other way', () => {
+    const final = hashed('final.ifc', 'aaa')
+    const draft = hashed('draft.ifc', 'bbb')
+    const roles = assignRoles([draft, final], inputs)
+    expect(roles).toEqual({ verified: true, old: final, new: draft })
+  })
+
+  it('assigns by hash in drop order too', () => {
+    const a = hashed('a.ifc', 'aaa')
+    const b = hashed('b.ifc', 'bbb')
+    expect(assignRoles([a, b], inputs)).toEqual({ verified: true, old: a, new: b })
+  })
+
+  it('refuses a file the report did not compare and names it', () => {
+    const roles = assignRoles([hashed('a.ifc', 'aaa'), hashed('other.ifc', 'ccc')], inputs)
+    expect(roles.verified).toBe(false)
+    if (!roles.verified) expect(roles.reason).toContain('other.ifc')
+  })
+
+  it('refuses the same input dropped twice', () => {
+    const roles = assignRoles([hashed('a.ifc', 'aaa'), hashed('copy.ifc', 'aaa')], inputs)
+    expect(roles.verified).toBe(false)
+  })
+
+  it('refuses when the report records no input hashes', () => {
+    expect(assignRoles([hashed('a.ifc', 'aaa'), hashed('b.ifc', 'bbb')], null).verified).toBe(false)
+  })
+
+  it('reads input hashes from the report audit block', () => {
+    expect(reportInputHashes(report('AAA', 'bbb'))).toEqual({ old: 'aaa', new: 'bbb' })
+    expect(reportInputHashes({})).toBeNull()
+    expect(reportInputHashes(report('aaa', undefined))).toBeNull()
+  })
+})
+
+describe('dataUrl', () => {
+  const page = 'https://viewer.example/app/?src=http%3A%2F%2F127.0.0.1%3A4799'
+
+  it('resolves manifest file urls against the src origin', () => {
+    expect(dataUrl(page, 'http://127.0.0.1:4799', '/files/old.ifc')).toBe('http://127.0.0.1:4799/files/old.ifc')
+    expect(dataUrl(page, 'http://127.0.0.1:4799/', 'manifest.json')).toBe('http://127.0.0.1:4799/manifest.json')
+  })
+
+  it('keeps a path prefix in the src', () => {
+    expect(dataUrl(page, 'http://127.0.0.1:4799/s/tok', '/files/report/0.json')).toBe(
+      'http://127.0.0.1:4799/s/tok/files/report/0.json',
+    )
+  })
+
+  it('carries a token in the src query', () => {
+    expect(dataUrl(page, 'http://127.0.0.1:4799/?token=abc', 'manifest.json')).toBe(
+      'http://127.0.0.1:4799/manifest.json?token=abc',
+    )
+  })
+
+  it('carries the page query, except src, and resolves a relative src against the page', () => {
+    const served = 'http://127.0.0.1:4799/?token=abc&src=.'
+    expect(dataUrl(served, '.', '/files/new.ifc')).toBe('http://127.0.0.1:4799/files/new.ifc?token=abc')
+  })
+
+  it('carries the page query only when the page is served from the src origin', () => {
+    const hosted = 'https://viewer.example/?key=secret&src=http%3A%2F%2F127.0.0.1%3A4799%2F%3Ftoken%3Dabc'
+    expect(dataUrl(hosted, 'http://127.0.0.1:4799/?token=abc', 'manifest.json')).toBe(
+      'http://127.0.0.1:4799/manifest.json?token=abc',
+    )
+  })
+
+  it('does not carry the query to another origin', () => {
+    expect(dataUrl(page, 'http://127.0.0.1:4799/?token=abc', 'https://elsewhere.example/x.ifc')).toBe(
+      'https://elsewhere.example/x.ifc',
+    )
+  })
+})
+
+describe('readReportFile', () => {
+  const minimal = { engine: 'athar', schemas: { old: 'IFC4', new: 'IFC4' }, added: [], deleted: [], modified: [], unchanged: [] }
+
+  it('returns the validated report', async () => {
+    const read = await readReportFile(new File([JSON.stringify(minimal)], 'report.json'))
+    expect(read.engine).toBe('athar')
+  })
+
+  it('names the file when it is not JSON and rejects a JSON file that is not a report', async () => {
+    await expect(readReportFile(new File(['{'], 'broken.json'))).rejects.toThrow('broken.json is not valid JSON.')
+    await expect(readReportFile(new File(['{}'], 'other.json'))).rejects.toThrow('Not an Athar report')
   })
 })

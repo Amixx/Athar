@@ -7,8 +7,10 @@ is the only JavaScript in the repository; everything else stays Python.
 ## Stack
 
 - Svelte 5 (runes) + Vite + TypeScript, managed with [bun](https://bun.sh).
-- `@ifc-lite/geometry` for in-browser WASM tessellation (streaming; model 1's
-  RTC offset is reused for model 2 so both share one coordinate frame).
+- `@ifc-lite/geometry` for in-browser WASM tessellation (streaming). Each
+  file is tessellated in its own local frame (the tessellator subtracts a
+  per-file RTC offset); the new model's meshes are translated by the
+  difference of the two offsets so both sit in the old model's frame.
 - three.js for rendering. `@ifc-lite/renderer` was evaluated and rejected:
   per-entity color overrides are not public API there (they require internal
   GPU device/pipeline handles), and its federation registry assumes a single
@@ -24,7 +26,8 @@ is the only JavaScript in the repository; everything else stays Python.
 | `src/lib/types.ts` | TS mirror of the engine report shape (`athar/delta/report.py`) |
 | `src/lib/report.ts` | Report validation + `DiffIndex` (side × STEP id → entity record) |
 | `src/lib/renderState.ts` | Pure core: bucket assignment, crossfade appearances, count helpers, displacement grouping |
-| `src/lib/ifc.ts` | ifc-lite tessellation (the only ifc-lite import) |
+| `src/lib/ifc.ts` | ifc-lite tessellation (the only runtime ifc-lite import) |
+| `src/lib/frame.ts` | Pure coordinate-frame arithmetic: IFC Z-up to scene Y-up, per-model origins, per-side overlay translations |
 | `src/lib/scene.ts` | three.js scene: merged per-bucket meshes, picking, highlight, displacement arrows (one averaged arrow per placement cohort), camera fits |
 | `src/lib/sources.ts` | Input paths: `?src=` manifest handoff and drag-drop classification |
 | `src/lib/debug.ts` | `window.__athar_viewer` state mirror for headless tests |
@@ -33,28 +36,56 @@ is the only JavaScript in the repository; everything else stays Python.
 Every report entity lands in exactly one visual bucket — `deleted`, `added`,
 `modifiedOld`, `modifiedNew`, `modifiedStatic` (modified pairs with identical
 geometry+placement, rendered once to avoid z-fighting), `unchanged` (new side
-only), or `extra` (meshes the report doesn't mention). Each bucket is one
+only), or `extra` (new-side meshes the report doesn't mention, drawn magenta
+with their own toggle and legend count, since the diff makes no claim about
+them). Each bucket is one
 merged `THREE.Mesh`, so slider drags update O(buckets) materials regardless of
 entity count; per-entity index ranges drive raycast picking and a zero-copy
-highlight overlay.
+highlight overlay. Picking skips hidden buckets and, with Ghost on, the
+ghosted unchanged geometry: unchanged entities cannot be clicked while Ghost is
+on, so a click reaches the changed geometry behind them.
+
+The summary legend shows, for each row (added, deleted, direct, indirect,
+unchanged), how many entities the report lists and how many the scene draws;
+without WebGL it shows the report counts and says that nothing is drawn.
+Report entities with no drawn geometry (spatial containers, property-only
+objects) are listed under it and open in the inspector when clicked. The
+`extra` row counts meshes without a report record in the old and the new file;
+the new file's are drawn, and the old file's are listed (not drawn) so that no
+tessellated entity in either file goes unaccounted for.
 
 ## Inputs
 
-1. **Drag-drop / file pickers**: `old.ifc`, `new.ifc`, and the report JSON
-   (`python -m athar old.ifc new.ifc > report.json`).
+1. **Drag-drop / file pickers**: two IFC files and the report JSON
+   (`python -m athar old.ifc new.ifc > report.json`). Old and new are assigned
+   by matching each file's SHA-256 against the report's
+   `audit.inputs.{old,new}.sha256`. When a file matches neither or the report
+   records no hashes, the app shows a warning and asks the user to assign the
+   roles before it starts; it never assigns them by file name. Only the two
+   most recent `.ifc` files and the first `.json` of a drop are kept; a note
+   names every file a drop replaces or ignores. Hashing needs a secure
+   context: through a LAN address over plain http the drop fails with a
+   message to open the viewer through `localhost`, `127.0.0.1` or https. Files are
+   accepted only on the empty view, and Start over clears the mesh and report
+   caches and the scene.
 2. **`?src=<origin>`**: fetches `<origin>/manifest.json`
    (`athar_viewer_manifest: 1`, `schema_version` handshake) and the files it
-   points at. This is what `athar view` (in `athar_view/`) serves.
+   points at. This is what `athar view` (in `athar_view/`) serves. `src` is the
+   url of the directory that contains `manifest.json`, not of the file itself.
+   A protocol-relative manifest file url (`//host/...`) is a load error. `src` may
+   carry a path prefix and query (for example an access token): every data
+   url, manifest file urls with a leading slash included, resolves under the
+   src path and carries the src's query parameters, plus the page's when the
+   page is served from the src origin.
 
    The manifest has two forms. **v1** is a single pair (`old`, `new`, `report`
    at the top level). **v2** is a revision chain: `steps: [{label, old, new,
    report}, ...]` plus `active_step`, where each step is one consecutive pair
-   (`athar view a.ifc b.ifc c.ifc …`). A v1 manifest is treated as a one-step
-   chain, so single-pair loads are unchanged. When a chain has more than one
+   (`athar view a.ifc b.ifc c.ifc …`). A v1 manifest is a one-step chain. An
+   `active_step` that is not an index into `steps` is a load error. When a chain has more than one
    step the app shows a prev/next navigator (`[` / `]`) and a `n/N: label`
-   indicator; adjacent steps share a file url, so a per-url mesh cache and one
-   chain-wide RTC offset mean switching a step re-tessellates only the new
-   revision.
+   indicator; adjacent steps share a file url, so a per-url mesh cache means
+   switching a step re-tessellates only the new revision.
 
 ## Commands
 
@@ -79,8 +110,16 @@ before building the Python distribution.
 - `e2e/smoke.spec.ts` — headless playwright against the committed fixture
   pair in `e2e/fixtures/` (regenerate with
   `python scripts/make_viewer_fixture.py` from the repo root). Asserts bucket
-  and meshless counts through `window.__athar_viewer` instead of pixels, and
-  covers both input paths, slider snaps, toggles, and click selection.
+  counts and report coverage through `window.__athar_viewer` instead of
+  pixels, and covers the `?src=` path, the legend and undrawn list, slider
+  snaps, toggles, and click selection.
+- `e2e/extra.spec.ts` — a report that omits one wall: the wall's new mesh is
+  counted, drawn and toggled as `extra`, and its old mesh is counted and listed.
+- `e2e/drop.spec.ts` — dropped files: roles assigned by report hash despite
+  misleading names, and the confirm step for an unverifiable report.
+- `e2e/frame.spec.ts` — the fixture pair moved to a large world coordinate so
+  each file gets a different RTC offset; asserts an element's old and new
+  bounds coincide (`entityBounds` debug probe).
 - `e2e/corpus.spec.ts` — opt-in acceptance against a live launcher:
 
   ```bash
@@ -89,7 +128,7 @@ before building the Python distribution.
   ```
 
 The app publishes its state to `window.__athar_viewer` (phase, bucket entity
-counts, meshless counts per section, appearances, slider position, selection,
+counts, report coverage per legend row, appearances, slider position, selection,
 `rendererReady`). WebGL failure degrades gracefully — panels and counts still
 work with `rendererReady: false` — which keeps every assertion runnable in
 headless environments.

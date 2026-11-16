@@ -5,7 +5,8 @@ bundle cache; nothing in `athar/` may depend on it.
 
 Onshape-style visual overlay diff: both models tessellated in the browser and
 rendered in one 3D scene, colored by the engine's report (green added, red
-deleted, blue modified, gray ghosted unchanged), with an old↔new crossfade
+deleted, blue modified, gray unchanged, magenta `extra` for meshes the report
+has no record of), with an old↔new crossfade
 slider, amber displacement arrows for placement moves (each engine
 `placement_cohort` — a group move — collapses to one averaged arrow, and the
 summary panel lists cohorts as "N moved together, Δ x m"), a summary panel,
@@ -18,8 +19,11 @@ mapping layer exists anywhere.
 
 Standalone SPA: Svelte 5 + Vite + TypeScript, managed with bun. The only
 JavaScript in the repo; everything outside `viewer/` stays Python. Tessellation
-is `@ifc-lite/geometry` (WASM, streaming; model 1's RTC offset is reused for
-model 2 so both land in one coordinate frame). Rendering is three.js:
+is `@ifc-lite/geometry` (WASM, streaming). Each file comes back in its own
+local frame (the tessellator subtracts a per-file RTC offset in IFC Z-up);
+`src/lib/frame.ts` maps that offset to three.js Y-up and the scene translates
+the new model by the origin difference so both land in the old model's frame.
+Rendering is three.js:
 `@ifc-lite/renderer` was evaluated and rejected because per-entity color
 overrides are not public API there (they take internal GPU handles) and its
 federation registry assumes one expressID namespace, while a diff holds two
@@ -32,23 +36,33 @@ so parser and renderer can be swapped independently.
   model. Every entity lands in exactly one visual bucket
   (`deleted/added/modifiedOld/modifiedNew/modifiedStatic/unchanged/extra`);
   modified pairs whose geometry+placement are identical render once
-  (`modifiedStatic`) to avoid z-fighting; unchanged renders new-side only.
+  (`modifiedStatic`) to avoid z-fighting; unchanged and extra render new-side
+  only, and `unreportedEntities` lists old-side meshes without a report record
+  for the legend.
   Per-bucket appearance (visible/opacity/color) is a pure function of slider t
   and toggles.
 - `src/lib/scene.ts` — three.js scene: one merged mesh per bucket, so slider
   drags are O(buckets) material updates regardless of entity count; per-entity
   index ranges drive raycast picking and a zero-copy highlight overlay.
-- `src/lib/sources.ts` — both input paths: drag-drop (old.ifc + new.ifc +
-  report.json) and `?src=<origin>` manifest handoff. `parseManifest` is a pure,
+- `src/lib/sources.ts` — both input paths: drag-drop (two IFC files +
+  report.json; `assignRoles` takes old/new from the report's
+  `audit.inputs.*.sha256`, and an unverifiable pair goes to an explicit
+  confirm step, never name order) and `?src=<origin>` manifest handoff.
+  `dataUrl` resolves every fetched url under the src path and carries the
+  src's query, plus the page's when the page is served from the src origin,
+  so a launch token in either reaches the server and never another origin.
+  `parseManifest` is a pure,
   unit-tested function that normalizes v1 single-pair and v2 chain manifests
   into one `steps[]` shape (a v1 manifest is one step); each `StepSource`
   carries display names, per-file cache keys, and lazy byte/report resolvers so
   App.svelte fetches and tessellates a step only when it becomes active.
-  App.svelte keeps a per-url mesh cache and one shared RTC offset (captured from
-  the first file tessellated) across the whole chain, so switching to an
-  adjacent step re-tessellates only the one new revision.
+  App.svelte keeps a per-url mesh cache across the whole chain, so switching
+  to an adjacent step re-tessellates only the one new revision. Files are
+  dropped only onto the empty view, so dropped meshes and reports are keyed by
+  role; Start over clears both caches and disposes the scene.
 - `src/lib/debug.ts` — `window.__athar_viewer` state mirror (phase, bucket
-  counts, meshless counts, appearances, selection) so headless tests assert
+  counts, report coverage per legend row, appearances, selection) so headless
+  tests assert
   state, not pixels; the app stays usable without WebGL (panels work, canvas
   degrades).
 - `viewer/dist/` is generated and ignored. Use `make viewer-build` for local
@@ -98,15 +112,18 @@ cache; nothing depends on it.
 Viewer tests live in `viewer/`. `bun test tests` unit-tests the pure
 report→render-state mapping (parsing, bucket assignment, crossfade appearances)
 and manifest parsing (`sources.test.ts`: v1 accepted, v2 chain parsed,
-`active_step` honored, malformed chain rejected). `bunx playwright test` runs a
-headless smoke against the committed fixture pair in `viewer/e2e/fixtures/`
-(regenerate with `scripts/make_viewer_fixture.py`), asserting bucket/meshless
-counts through the `window.__athar_viewer` debug state rather than pixels — it
+`active_step` honored, out-of-range `active_step` and malformed chain
+rejected). `bunx playwright test` runs a headless smoke against the committed
+fixture pair in `viewer/e2e/fixtures/` (regenerate with
+`scripts/make_viewer_fixture.py`), asserting bucket counts and report coverage
+through the `window.__athar_viewer` debug state rather than pixels — it
 covers the `?src=` handoff path, the file-input path, slider snaps/toggles, and
 click selection. `chain.spec.ts` synthesizes a 2-step v2 manifest over the same
 fixtures and asserts prev/next + `[`/`]` navigation swaps the step
 (`activeStep`/`stepLabel` in the debug state) with bucket counts stable across
-the switch.
+the switch. `frame.spec.ts` moves the fixture site to a large world coordinate
+(so each file gets a different RTC offset) and asserts an element's old and new
+bounds coincide through the `entityBounds` debug probe.
 `viewer/e2e/corpus.spec.ts` is opt-in acceptance against a live launcher:
 `athar view OLD NEW --offline --no-open --port 4799`, then
 `ATHAR_E2E_SRC=http://127.0.0.1:4799 bunx playwright test corpus` (verified on

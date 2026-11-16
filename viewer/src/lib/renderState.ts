@@ -1,5 +1,5 @@
 /**
- * Pure report → render-state mapping. No three.js, no DOM — unit-tested.
+ * Pure report → render-state mapping; no three.js, no DOM.
  *
  * Entities are grouped into a small set of visual buckets; the whole bucket
  * shares one color/opacity, so the old↔new slider only touches per-bucket
@@ -12,26 +12,25 @@
  *                actually differs between the two sides)
  * - modifiedNew  new side, blue, fades in (counterpart of modifiedOld)
  * - modifiedStatic  new side, blue, constant — modified pairs whose geometry
- *                and placement are both unchanged (data/topology-only edits);
- *                old+new meshes would be coincident and crossfading two
- *                identical transparent meshes just z-fights.
+ *                and placement are both unchanged (data/topology-only edits),
+ *                drawn once because coincident crossfading meshes z-fight.
  * - transitive   new side, bronze, constant + semi-transparent — modified pairs
  *                with change_scope 'transitive', i.e. flagged only because a
- *                dependency changed (no intrinsic edit). Kept visually
- *                subordinate (and separately toggleable) so a diff doesn't read
- *                as "everything changed" when one source edit propagates outward.
- *                Surfaced to users as "Indirect".
+ *                dependency changed (no intrinsic edit). Separately
+ *                toggleable; labelled "Indirect" in the UI.
  * - unchanged    new side only (old copy is geometrically identical), gray,
  *                ghosted, constant across the slider
  * - extra        new-side meshes with no report record (e.g. products the
- *                engine doesn't signature) — treated like unchanged.
+ *                engine doesn't signature), magenta and separately toggleable:
+ *                the report makes no claim about them.
  *
  * Old-side meshes for unchanged/extra entities are not rendered at all to
- * avoid duplicate coincident geometry.
+ * avoid duplicate coincident geometry; `unreportedEntities` lists the old-side
+ * ones without a report record so the legend still accounts for them.
  */
 
 import type { EntityRecord } from './report'
-import type { AtharReport, MatchedItem, PlacementCohort, Section, Side } from './types'
+import type { AtharReport, EntitySummary, MatchedItem, PlacementCohort, Side } from './types'
 
 export type Bucket =
   | 'deleted'
@@ -72,13 +71,12 @@ export const BUCKET_COLORS: Record<Bucket, string> = {
   modifiedOld: '#3e63dd',
   modifiedNew: '#3e63dd',
   modifiedStatic: '#3e63dd',
-  // Transitive (indirect) changes: warm bronze, distinct from the blue of direct edits.
   transitive: '#a87a3c',
   unchanged: '#8b8d98',
-  extra: '#8b8d98',
+  extra: '#d6409f',
 }
 
-/** Slider snap points (Onshape-style old → new sweep). */
+/** Slider snap points along the old → new sweep. */
 export const SNAP = { old: 0, both: 0.5, new: 1 } as const
 
 const VISIBILITY_EPS = 0.02
@@ -92,9 +90,9 @@ export const TRANSITIVE_OPACITY = 0.5
  */
 export function bucketFor(side: Side, rec: EntityRecord | undefined): Bucket | null {
   if (rec === undefined) {
-    // Mesh without a report record: render the new-side copy as uncategorized
-    // gray; skip the old-side copy (it would coincide when nothing changed,
-    // and we have no identity evidence to do better).
+    // Mesh without a report record: render the new-side copy only; the old-side
+    // copy would coincide when nothing changed, and there is no identity
+    // evidence to pair them.
     return side === 'new' ? 'extra' : null
   }
   switch (rec.section) {
@@ -105,9 +103,6 @@ export function bucketFor(side: Side, rec: EntityRecord | undefined): Bucket | n
     case 'unchanged':
       return side === 'new' ? 'unchanged' : null
     case 'modified': {
-      // Transitive-only change: the entity itself did not change; it is flagged
-      // only because something it depends on did. Render once from the new side
-      // as a subordinate bucket so demos don't read as "everything changed".
       if (rec.pair?.change_scope === 'transitive') {
         return side === 'new' ? 'transitive' : null
       }
@@ -131,6 +126,7 @@ export interface Toggles {
   unchanged: boolean
   /** Ghost (translucent) unchanged geometry instead of solid gray. */
   ghostUnchanged: boolean
+  extra: boolean
 }
 
 export const DEFAULT_TOGGLES: Toggles = {
@@ -140,6 +136,7 @@ export const DEFAULT_TOGGLES: Toggles = {
   transitive: true,
   unchanged: true,
   ghostUnchanged: false,
+  extra: true,
 }
 
 export interface Appearance {
@@ -170,7 +167,7 @@ export function computeAppearances(t: number, toggles: Toggles): Record<Bucket, 
     modifiedStatic: appearance('modifiedStatic', toggles.modified, 1),
     transitive: appearance('transitive', toggles.transitive, TRANSITIVE_OPACITY),
     unchanged: appearance('unchanged', toggles.unchanged, ghost),
-    extra: appearance('extra', toggles.unchanged, ghost),
+    extra: appearance('extra', toggles.extra, 1),
   }
 }
 
@@ -220,11 +217,7 @@ export function placementDeltaNorm(item: MatchedItem): number | null {
   return Math.hypot(delta[0], delta[1], delta[2])
 }
 
-/**
- * Entities-per-bucket over the tessellated entity id sets. Pure counterpart
- * of the scene build — the debug hook and tests use it so headless runs
- * without WebGL still report deterministic counts.
- */
+/** Entities per bucket over the tessellated entity id sets, as the scene build assigns them. */
 export function countBucketEntities(
   oldIds: Iterable<number>,
   newIds: Iterable<number>,
@@ -243,22 +236,73 @@ export function countBucketEntities(
   return counts
 }
 
+/** Tessellated entities of each side that have no report record, in ascending step id order. */
+export function unreportedEntities(
+  oldIds: Iterable<number>,
+  newIds: Iterable<number>,
+  hasRecord: (side: Side, stepId: number) => boolean,
+): Record<Side, number[]> {
+  const missing = (side: Side, ids: Iterable<number>) =>
+    [...ids].filter((stepId) => !hasRecord(side, stepId)).sort((a, b) => a - b)
+  return { old: missing('old', oldIds), new: missing('new', newIds) }
+}
+
+/** Legend rows that count report entities; `extra` meshes have no report record. */
+export type ReportKey = 'added' | 'deleted' | 'modified' | 'transitive' | 'unchanged'
+
+export const REPORT_KEYS: ReportKey[] = ['added', 'deleted', 'modified', 'transitive', 'unchanged']
+
+export interface UndrawnEntity {
+  key: ReportKey
+  side: Side
+  stepId: number
+  name: string | null
+  klass: string
+}
+
+export interface ReportCoverage {
+  inReport: Record<ReportKey, number>
+  drawn: Record<ReportKey, number>
+  /** Report entities none of whose meshes the scene renders, in report order. */
+  undrawn: UndrawnEntity[]
+}
+
 /**
- * Report entities per section whose rendering side produced no meshes
- * (spatial containers, products without Body representation, …). These are
- * still listed in panels; they just cannot be colored in 3D.
+ * Report entities per legend row, and which of them the scene draws: an entity
+ * is drawn when one of its sides has meshes and that side maps to a bucket.
  */
-export function countMeshless(
+export function reportCoverage(
   report: AtharReport,
-  oldHas: (stepId: number) => boolean,
-  newHas: (stepId: number) => boolean,
-): Record<Section, number> {
-  const counts: Record<Section, number> = { added: 0, deleted: 0, modified: 0, unchanged: 0 }
-  for (const summary of report.added) if (!newHas(summary.step_id)) counts.added += 1
-  for (const summary of report.deleted) if (!oldHas(summary.step_id)) counts.deleted += 1
-  for (const item of report.modified) {
-    if (!newHas(item.new.step_id) && !oldHas(item.old.step_id)) counts.modified += 1
+  hasMeshes: (side: Side, stepId: number) => boolean,
+  bucketOfFn: (side: Side, stepId: number) => Bucket | null,
+): ReportCoverage {
+  const zero = (): Record<ReportKey, number> => ({ added: 0, deleted: 0, modified: 0, transitive: 0, unchanged: 0 })
+  const coverage: ReportCoverage = { inReport: zero(), drawn: zero(), undrawn: [] }
+  const visit = (key: ReportKey, sides: Array<[Side, EntitySummary]>) => {
+    coverage.inReport[key] += 1
+    const drawn = sides.some(
+      ([side, summary]) => hasMeshes(side, summary.step_id) && bucketOfFn(side, summary.step_id) !== null,
+    )
+    if (drawn) {
+      coverage.drawn[key] += 1
+      return
+    }
+    const [side, summary] = sides[sides.length - 1]
+    coverage.undrawn.push({ key, side, stepId: summary.step_id, name: summary.name, klass: summary.class })
   }
-  for (const item of report.unchanged) if (!newHas(item.new.step_id)) counts.unchanged += 1
-  return counts
+  for (const summary of report.added) visit('added', [['new', summary]])
+  for (const summary of report.deleted) visit('deleted', [['old', summary]])
+  for (const item of report.modified) {
+    visit(item.change_scope === 'transitive' ? 'transitive' : 'modified', [
+      ['old', item.old],
+      ['new', item.new],
+    ])
+  }
+  for (const item of report.unchanged) {
+    visit('unchanged', [
+      ['old', item.old],
+      ['new', item.new],
+    ])
+  }
+  return coverage
 }

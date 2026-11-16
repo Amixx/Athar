@@ -6,18 +6,12 @@
  * (per-entity colors are uniform within a bucket), so a slider drag updates a
  * handful of materials instead of touching entities. Per-entity identity is
  * kept as index ranges into the merged buffers for picking and highlighting.
- *
- * Renderer note: the plan's primary was @ifc-lite/renderer, but its per-entity
- * color override path (`Scene.setColorOverrides`) is internal plumbing that
- * needs GPU device/pipeline handles, and its federation registry assumes one
- * model namespace while we overlay two files with colliding STEP ids. ifc-lite
- * still does all parsing/tessellation; meshes are fed to three.js exactly as
- * the spec's sanctioned fallback. This class is the only module that knows.
  */
 
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { MeshData } from '@ifc-lite/geometry'
+import type { Vec3 } from './frame'
 import type { ModelGeometry } from './ifc'
 import { BUCKET_SIDE, type Appearance, type Bucket } from './renderState'
 import type { Side } from './types'
@@ -45,6 +39,8 @@ interface BucketEntry {
   mesh: THREE.Mesh
   material: THREE.MeshLambertMaterial
   ranges: EntityRange[]
+  pickable: boolean
+  highlightGeometry: THREE.BufferGeometry
 }
 
 interface EntityLocation {
@@ -81,6 +77,13 @@ export class DiffScene {
   private changesBox = new THREE.Box3()
   private displacement: THREE.Group | null = null
   private highlight: THREE.Mesh | null = null
+  private readonly highlightMaterial = new THREE.MeshBasicMaterial({
+    color: HIGHLIGHT_COLOR,
+    transparent: true,
+    opacity: 0.35,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  })
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
@@ -140,12 +143,14 @@ export class DiffScene {
    * `bucketOf` decides each entity's bucket (or null = not rendered).
    * `displacementGroups` each draw one arrow: a single placement-only pair,
    * or a whole placement cohort collapsed to its averaged centroid move.
+   * `translations` are added to each side's mesh positions.
    */
   setModels(
     oldGeometry: ModelGeometry,
     newGeometry: ModelGeometry,
     bucketOf: (side: Side, stepId: number) => Bucket | null,
     displacementGroups: Array<{ pairs: Array<{ oldId: number; newId: number }> }>,
+    translations: Record<Side, Vec3>,
   ): SceneStats {
     this.clearModels()
 
@@ -164,7 +169,7 @@ export class DiffScene {
 
     const counts: Partial<Record<Bucket, number>> = {}
     for (const [bucket, entities] of grouped) {
-      const entry = this.buildBucket(bucket, entities)
+      const entry = this.buildBucket(bucket, entities, translations[BUCKET_SIDE[bucket]])
       this.buckets.set(bucket, entry)
       this.scene.add(entry.mesh)
       counts[bucket] = entities.length
@@ -185,6 +190,7 @@ export class DiffScene {
   private buildBucket(
     bucket: Bucket,
     entities: Array<{ stepId: number; meshes: MeshData[] }>,
+    translation: Vec3,
   ): BucketEntry {
     const side = BUCKET_SIDE[bucket]
     let vertexFloats = 0
@@ -207,13 +213,19 @@ export class DiffScene {
       const start = indexOffset
       const box = new THREE.Box3()
       for (const mesh of entity.meshes) {
-        positions.set(mesh.positions, vertexOffset * 3)
         normals.set(mesh.normals, vertexOffset * 3)
         for (let i = 0; i < mesh.indices.length; i++) {
           indices[indexOffset + i] = mesh.indices[i] + vertexOffset
         }
+        const base = vertexOffset * 3
         for (let i = 0; i < mesh.positions.length; i += 3) {
-          expandBox(box, mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2])
+          const x = mesh.positions[i] + translation.x
+          const y = mesh.positions[i + 1] + translation.y
+          const z = mesh.positions[i + 2] + translation.z
+          positions[base + i] = x
+          positions[base + i + 1] = y
+          positions[base + i + 2] = z
+          expandBox(box, x, y, z)
         }
         vertexOffset += mesh.positions.length / 3
         indexOffset += mesh.indices.length
@@ -233,7 +245,11 @@ export class DiffScene {
     const mesh = new THREE.Mesh(geometry, material)
     mesh.name = `bucket:${bucket}`
     mesh.userData.bucket = bucket
-    return { bucket, mesh, material, ranges }
+    const highlightGeometry = new THREE.BufferGeometry()
+    highlightGeometry.setAttribute('position', geometry.getAttribute('position'))
+    highlightGeometry.setAttribute('normal', geometry.getAttribute('normal'))
+    highlightGeometry.setIndex(geometry.getIndex()!)
+    return { bucket, mesh, material, ranges, pickable: true, highlightGeometry }
   }
 
   private buildDisplacementLines(
@@ -293,6 +309,7 @@ export class DiffScene {
     for (const [bucket, entry] of this.buckets) {
       const appearance = appearances[bucket]
       entry.mesh.visible = appearance.visible
+      entry.pickable = appearance.visible && !(bucket === 'unchanged' && appearance.opacity < 1)
       entry.material.color.set(appearance.color)
       entry.material.emissive.set(appearance.color)
       entry.material.emissiveIntensity = bucket === 'unchanged' || bucket === 'extra' ? 0.28 : 0.06
@@ -313,7 +330,7 @@ export class DiffScene {
       -((clientY - rect.top) / rect.height) * 2 + 1,
     )
     this.raycaster.setFromCamera(ndc, this.camera)
-    const targets = [...this.buckets.values()].filter((b) => b.mesh.visible).map((b) => b.mesh)
+    const targets = [...this.buckets.values()].filter((b) => b.pickable).map((b) => b.mesh)
     const hits = this.raycaster.intersectObjects(targets, false)
     for (const hit of hits) {
       if (hit.faceIndex === undefined || hit.faceIndex === null) continue
@@ -329,37 +346,34 @@ export class DiffScene {
 
   /** Overlay highlight for one entity (zero-copy: reuses merged buffers). */
   setHighlight(target: { side: Side; stepId: number } | null): void {
-    if (this.highlight) {
-      this.scene.remove(this.highlight)
-      ;(this.highlight.material as THREE.Material).dispose()
-      this.highlight.geometry.dispose()
-      this.highlight = null
+    if (!target) {
+      if (this.highlight) this.highlight.visible = false
+      this.invalidate()
+      return
     }
-    if (target) {
-      const location = this.entityLocations[target.side].get(target.stepId)
-      const entry = location && this.buckets.get(location.bucket)
-      if (location && entry) {
-        const source = entry.mesh.geometry
-        const geometry = new THREE.BufferGeometry()
-        geometry.setAttribute('position', source.getAttribute('position'))
-        geometry.setAttribute('normal', source.getAttribute('normal'))
-        const sourceIndex = source.getIndex()!.array as Uint32Array
-        geometry.setIndex(
-          new THREE.BufferAttribute(sourceIndex.subarray(location.start, location.start + location.count), 1),
-        )
-        const material = new THREE.MeshBasicMaterial({
-          color: HIGHLIGHT_COLOR,
-          transparent: true,
-          opacity: 0.35,
-          depthTest: false,
-          side: THREE.DoubleSide,
-        })
-        this.highlight = new THREE.Mesh(geometry, material)
-        this.highlight.renderOrder = 999
-        this.scene.add(this.highlight)
-      }
+    const location = this.entityLocations[target.side].get(target.stepId)
+    const entry = location && this.buckets.get(location.bucket)
+    if (!location || !entry) {
+      if (this.highlight) this.highlight.visible = false
+      this.invalidate()
+      return
+    }
+    const geometry = entry.highlightGeometry
+    geometry.setDrawRange(location.start, location.count)
+    if (!this.highlight) {
+      this.highlight = new THREE.Mesh(geometry, this.highlightMaterial)
+      this.highlight.renderOrder = 999
+      this.scene.add(this.highlight)
+    } else {
+      this.highlight.geometry = geometry
+      this.highlight.visible = true
     }
     this.invalidate()
+  }
+
+  highlightObjects(): { geometry: string; material: string } | null {
+    if (!this.highlight?.visible) return null
+    return { geometry: this.highlight.geometry.uuid, material: (this.highlight.material as THREE.Material).uuid }
   }
 
   entityBox(side: Side, stepId: number): THREE.Box3 | undefined {
@@ -397,6 +411,7 @@ export class DiffScene {
     for (const entry of this.buckets.values()) {
       this.scene.remove(entry.mesh)
       entry.mesh.geometry.dispose()
+      entry.highlightGeometry.dispose()
       entry.material.dispose()
     }
     this.buckets.clear()
@@ -427,6 +442,8 @@ export class DiffScene {
     this.observer.disconnect()
     this.clearModels()
     this.controls.dispose()
+    this.highlightMaterial.dispose()
+    this.renderer.clear()
     this.renderer.dispose()
   }
 }

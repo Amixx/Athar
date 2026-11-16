@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { publishDebug } from './lib/debug'
+  import { entityBounds, frameTranslations } from './lib/frame'
   import { tessellate, type ModelGeometry } from './lib/ifc'
   import {
     buildDiffIndex,
     classBreakdown,
-    parseReport,
     type DiffIndex,
     type EntityRecord,
   } from './lib/report'
@@ -13,38 +13,67 @@
     bucketFor,
     computeAppearances,
     countBucketEntities,
-    countMeshless,
+    REPORT_KEYS,
+    reportCoverage,
     DEFAULT_TOGGLES,
     groupDisplacements,
     isPlacementOnly,
     SNAP,
+    unreportedEntities,
+    type ReportCoverage,
+    type ReportKey,
     type Toggles,
   } from './lib/renderState'
-  import { DiffScene, type PickHit } from './lib/scene'
+  import { DiffScene } from './lib/scene'
   import {
+    addDroppedFiles,
+    assignRoles,
     chainFromFiles,
-    classifyDrop,
+    hashFile,
     loadChainFromSrc,
+    NO_DROPS,
+    readReportFile,
+    reportInputHashes,
     type DroppedFiles,
+    type HashedFile,
     type StepSource,
   } from './lib/sources'
-  import type { Side } from './lib/types'
+  import type { AtharReport, Side } from './lib/types'
 
-  type Phase = 'empty' | 'loading' | 'ready' | 'error'
+  type Phase = 'empty' | 'confirm' | 'loading' | 'ready' | 'error'
+
+  interface UnverifiedPair {
+    files: [HashedFile, HashedFile]
+    report: AtharReport
+    reason: string
+    oldIndex: 0 | 1 | null
+  }
 
   let phase = $state<Phase>('empty')
   let error = $state('')
   let warning = $state('')
+  let dropNotes = $state<string[]>([])
   let progress = $state({ stage: '', count: 0 })
-  let drops = $state<DroppedFiles>({})
+  let drops = $state<DroppedFiles>(NO_DROPS)
+  let unverified = $state<UnverifiedPair | null>(null)
   let names = $state({ old: 'old.ifc', new: 'new.ifc' })
   let rendererReady = $state(false)
   let sliderT = $state<number>(SNAP.both)
   let toggles = $state<Toggles>({ ...DEFAULT_TOGGLES })
   let showLines = $state(true)
   let dragging = $state(false)
-  let selection = $state<PickHit | null>(null)
-  let meshless = $state(0)
+  let selection = $state<{ side: Side; stepId: number } | null>(null)
+  let coverage = $state<ReportCoverage | null>(null)
+  let extraDrawn = $state(0)
+  let unreported = $state<{ old: Array<{ stepId: number; klass: string }>; new: number }>({ old: [], new: 0 })
+
+  const REPORT_KEY_LEGEND: Record<ReportKey, { label: string; dot: string }> = {
+    added: { label: 'Added', dot: 'add' },
+    deleted: { label: 'Deleted', dot: 'del' },
+    modified: { label: 'Direct', dot: 'mod' },
+    transitive: { label: 'Indirect', dot: 'transitive' },
+    unchanged: { label: 'Unchanged', dot: 'unch' },
+  }
 
   let index = $state<DiffIndex | null>(null)
   let scene: DiffScene | null = null
@@ -53,15 +82,11 @@
 
   let steps = $state<StepSource[]>([])
   let activeStep = $state(0)
-  // One RTC offset from the first file tessellated is reused for every step, so
-  // cached meshes stay in a single coordinate frame across step switches.
-  let sharedOffset: ModelGeometry['rtcOffset'] = null
   const meshCache = new Map<string, ModelGeometry>()
-  const reportCache = new Map<string, unknown>()
+  const reportCache = new Map<string, AtharReport>()
   let loadSeq = 0
 
-  let oldInput: HTMLInputElement
-  let newInput: HTMLInputElement
+  let ifcInput: HTMLInputElement
   let reportInput: HTMLInputElement
 
   const ASPECT_KEYS = ['geometry', 'data', 'topology', 'placement'] as const
@@ -78,7 +103,7 @@
     return map.get(selection.stepId) ?? null
   })
   const selectedPair = $derived(selectedRecord?.pair ?? null)
-  const complete = $derived(Boolean(drops.oldFile && drops.newFile && drops.reportFile))
+  const complete = $derived(drops.ifcs.length === 2 && Boolean(drops.reportFile))
   const hasChain = $derived(steps.length > 1)
   const currentLabel = $derived(steps[activeStep]?.label ?? '')
 
@@ -90,11 +115,7 @@
   })
 
   $effect(() => {
-    if (phase === 'empty' && complete) {
-      const chain = chainFromFiles(drops as Required<DroppedFiles>)
-      steps = chain.steps
-      void loadStep(chain.activeStep)
-    }
+    if (phase === 'empty' && complete) void verifyDrops(drops)
   })
 
   onMount(() => {
@@ -104,7 +125,7 @@
       phase = 'loading'
       progress = { stage: `Fetching from ${src}`, count: 0 }
       publishDebug({ phase: 'loading' })
-      loadChainFromSrc(src).then((chain) => {
+      loadChainFromSrc(src, location.href).then((chain) => {
         steps = chain.steps
         warning = chain.warning ?? ''
         return loadStep(chain.activeStep)
@@ -112,6 +133,62 @@
     }
     return () => scene?.dispose()
   })
+
+  async function verifyDrops(dropped: DroppedFiles): Promise<void> {
+    phase = 'loading'
+    progress = { stage: 'Checking the files against the report', count: 0 }
+    publishDebug({ phase: 'loading' })
+    try {
+      const [a, b] = await Promise.all(dropped.ifcs.map(hashFile))
+      const report = await readReportFile(dropped.reportFile!)
+      const roles = assignRoles([a, b], reportInputHashes(report))
+      if (roles.verified) {
+        startDropped(roles.old, roles.new, report)
+      } else {
+        unverified = { files: [a, b], report, reason: roles.reason, oldIndex: null }
+        phase = 'confirm'
+        publishDebug({ phase: 'confirm' })
+      }
+    } catch (cause) {
+      fail(cause)
+    }
+  }
+
+  function startDropped(oldFile: HashedFile, newFile: HashedFile, report: AtharReport): void {
+    unverified = null
+    const chain = chainFromFiles(oldFile, newFile, report)
+    steps = chain.steps
+    void loadStep(chain.activeStep)
+  }
+
+  function confirmUnverified(): void {
+    if (!unverified || unverified.oldIndex === null) return
+    const oldFile = unverified.files[unverified.oldIndex]
+    const newFile = unverified.files[1 - unverified.oldIndex]
+    startDropped(oldFile, newFile, unverified.report)
+  }
+
+  function startOver(): void {
+    loadSeq += 1
+    scene?.dispose()
+    scene = null
+    rendererReady = false
+    selection = null
+    warning = ''
+    phase = 'empty'
+    error = ''
+    meshCache.clear()
+    reportCache.clear()
+    steps = []
+    index = null
+    coverage = null
+    extraDrawn = 0
+    unreported = { old: [], new: 0 }
+    drops = NO_DROPS
+    dropNotes = []
+    unverified = null
+    publishDebug({ phase: 'empty', error: undefined })
+  }
 
   function fail(cause: unknown): void {
     error = cause instanceof Error ? cause.message : String(cause)
@@ -129,21 +206,18 @@
     progress = { stage: `Tessellating ${name}`, count: 0 }
     const bytes = await fetchBytes()
     const geometry = await tessellate(bytes, {
-      sharedRtcOffset: sharedOffset ?? undefined,
       onProgress: (count) => (progress = { stage: `Tessellating ${name}`, count }),
     })
-    if (!sharedOffset && geometry.rtcOffset) sharedOffset = geometry.rtcOffset
     meshCache.set(key, geometry)
     return geometry
   }
 
-  async function getReport(step: StepSource): Promise<unknown> {
-    const key = `${step.oldKey}=>${step.newKey}`
-    const cached = reportCache.get(key)
-    if (cached !== undefined) return cached
-    const json = await step.fetchReport()
-    reportCache.set(key, json)
-    return json
+  async function getReport(step: StepSource): Promise<AtharReport> {
+    const cached = reportCache.get(step.reportKey)
+    if (cached) return cached
+    const report = await step.fetchReport()
+    reportCache.set(step.reportKey, report)
+    return report
   }
 
   function stepTo(target: number): void {
@@ -170,9 +244,8 @@
       })
 
       progress = { stage: 'Computing diff', count: 0 }
-      const reportJson = await getReport(step)
+      const report = await getReport(step)
       if (token !== loadSeq) return
-      const report = parseReport(reportJson)
       const nextIndex = buildDiffIndex(report)
 
       const oldGeometry = await getGeometry(step.oldKey, step.fetchOldBytes, step.oldName)
@@ -182,6 +255,8 @@
 
       index = nextIndex
       const diff = nextIndex
+      const translations = frameTranslations(oldGeometry.origin, newGeometry.origin)
+      const geometries = { old: oldGeometry, new: newGeometry }
       const bucketOfFn = (side: Side, stepId: number) =>
         bucketFor(side, side === 'old' ? diff.old.get(stepId) : diff.new.get(stepId))
       const displacementGroups = groupDisplacements(
@@ -189,19 +264,24 @@
         report.stats.placement_cohorts ?? [],
       )
 
-      // Pure counts first, so headless environments without WebGL still get
-      // deterministic state for the smoke test.
+      // Computed before the scene exists so they are published even without WebGL.
       const bucketEntityCounts = countBucketEntities(
         oldGeometry.byEntity.keys(),
         newGeometry.byEntity.keys(),
         bucketOfFn,
       )
-      const meshlessBySection = countMeshless(
-        report,
-        (id) => oldGeometry.byEntity.has(id),
-        (id) => newGeometry.byEntity.has(id),
+      extraDrawn = bucketEntityCounts.extra ?? 0
+      const unreportedIds = unreportedEntities(oldGeometry.byEntity.keys(), newGeometry.byEntity.keys(), (side, stepId) =>
+        (side === 'old' ? diff.old : diff.new).has(stepId),
       )
-      meshless = Object.values(meshlessBySection).reduce((a, b) => a + b, 0)
+      unreported = {
+        old: unreportedIds.old.map((stepId) => ({
+          stepId,
+          klass: oldGeometry.byEntity.get(stepId)?.[0]?.ifcType ?? 'unknown class',
+        })),
+        new: unreportedIds.new.length,
+      }
+      coverage = reportCoverage(report, (side, stepId) => geometries[side].byEntity.has(stepId), bucketOfFn)
 
       if (!scene) {
         try {
@@ -214,7 +294,13 @@
       }
       let displacementLines = displacementGroups.length
       if (scene) {
-        const stats = scene.setModels(oldGeometry, newGeometry, bucketOfFn, displacementGroups)
+        const stats = scene.setModels(
+          oldGeometry,
+          newGeometry,
+          bucketOfFn,
+          displacementGroups,
+          translations,
+        )
         displacementLines = stats.displacementLines
         scene.applyAppearances(computeAppearances(sliderT, toggles), showLines)
       }
@@ -226,13 +312,22 @@
         rendererReady,
         warning,
         bucketEntityCounts,
-        meshlessBySection,
+        reportCoverage: coverage,
         reportStats: report.stats as Record<string, unknown>,
         displacementLines,
         selection: null,
         stepCount: steps.length,
         activeStep: target,
         stepLabel: step.label,
+        frameTranslations: translations,
+        entityBounds: (side: Side, stepId: number) => {
+          const meshes = geometries[side].byEntity.get(stepId)
+          return meshes ? entityBounds(meshes, translations[side]) : null
+        },
+        drawnBounds: (side: Side, stepId: number) => {
+          const box = scene?.entityBox(side, stepId)
+          return box ? { min: box.min.toArray(), max: box.max.toArray() } : null
+        },
       })
     } catch (cause) {
       if (token === loadSeq) fail(cause)
@@ -243,13 +338,18 @@
     event.preventDefault()
     dragging = false
     if (phase !== 'empty' || !event.dataTransfer) return
-    drops = classifyDrop([...event.dataTransfer.files], drops)
+    addFiles([...event.dataTransfer.files])
   }
 
-  function onSlotFiles(slot: 'oldFile' | 'newFile' | 'reportFile', input: HTMLInputElement): void {
-    const file = input.files?.[0]
-    if (file) drops = { ...drops, [slot]: file }
+  function onPickedFiles(input: HTMLInputElement): void {
+    addFiles([...(input.files ?? [])])
     input.value = ''
+  }
+
+  function addFiles(files: File[]): void {
+    const added = addDroppedFiles(files, drops)
+    drops = added.drops
+    dropNotes = added.notes
   }
 
   function onPointerDown(event: PointerEvent): void {
@@ -265,16 +365,10 @@
     select(scene.pick(event.clientX, event.clientY))
   }
 
-  function select(hit: PickHit | null): void {
-    selection = hit
-    scene?.setHighlight(hit ? { side: hit.side, stepId: hit.stepId } : null)
-    publishDebug({ selection: hit ? { side: hit.side, stepId: hit.stepId } : null })
-  }
-
-  function sectionOf(record: EntityRecord | null, hit: PickHit | null): string {
-    if (record) return record.section
-    if (hit?.bucket === 'extra') return 'unchanged'
-    return ''
+  function select(target: { side: Side; stepId: number } | null): void {
+    selection = target
+    scene?.setHighlight(target)
+    publishDebug({ selection: target, highlightObjects: scene?.highlightObjects() ?? null })
   }
 
   function fmtDelta(mm: [number, number, number] | null): string {
@@ -315,8 +409,15 @@
     <canvas bind:this={canvasEl}></canvas>
   </div>
 
-  {#if warning && phase !== 'error'}
-    <div class="panel banner">{warning}</div>
+  {#if (warning || dropNotes.length > 0) && phase !== 'error'}
+    <div class="panel banner">
+      {#if warning}<div>{warning}</div>{/if}
+      {#if dropNotes.length > 0}
+        <div data-testid="drop-notes">
+          {#each dropNotes as note, i (i)}<div>{note}</div>{/each}
+        </div>
+      {/if}
+    </div>
   {/if}
 
   {#if hasChain && (phase === 'ready' || phase === 'loading')}
@@ -418,8 +519,52 @@
           {/each}
         </div>
       {/if}
-      {#if meshless > 0}
-        <div class="footnote">{meshless} report entit{meshless === 1 ? 'y has' : 'ies have'} no 3D geometry (spatial containers etc.) — counted above, not drawn.</div>
+      <span class="microlabel">legend</span>
+      <div class="legendrows">
+        {#if coverage}
+          {#each REPORT_KEYS as key (key)}
+            <div class="legendrow" data-testid="legend-{key}">
+              <span><i class="dot {REPORT_KEY_LEGEND[key].dot}"></i>{REPORT_KEY_LEGEND[key].label}</span>
+              <span class="mono"
+                >{coverage.inReport[key]} in report{rendererReady ? `, ${coverage.drawn[key]} drawn` : ''}</span
+              >
+            </div>
+          {/each}
+        {/if}
+        <div class="legendrow" data-testid="legend-extra">
+          <span><i class="dot extra"></i>Extra</span>
+          <span class="mono"
+            >{unreported.old.length} old, {unreported.new} new{rendererReady ? `, ${extraDrawn} drawn` : ''}</span
+          >
+        </div>
+      </div>
+      {#if !rendererReady}
+        <div class="footnote" data-testid="legend-drawing">3D drawing unavailable: nothing is drawn.</div>
+      {/if}
+      <div class="footnote">Extra: geometry the report has no record of. The new file's is drawn; the old file's is listed below.</div>
+      {#if coverage && coverage.undrawn.length > 0}
+        <span class="microlabel">not drawn ({coverage.undrawn.length})</span>
+        <div class="footnote">In the report, but no 3D geometry is drawn for them (spatial containers, property-only objects).</div>
+        <div class="undrawn" data-testid="undrawn">
+          {#each coverage.undrawn as entity (entity.side + entity.stepId)}
+            <button class="classrow" onclick={() => select({ side: entity.side, stepId: entity.stepId })}>
+              <span class="cls"><i class="dot {REPORT_KEY_LEGEND[entity.key].dot}"></i>{entity.name ?? `#${entity.stepId}`}</span>
+              <span class="nums mono">{entity.klass}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+      {#if unreported.old.length > 0}
+        <span class="microlabel">old file, not in report ({unreported.old.length})</span>
+        <div class="footnote">Old-file geometry the report has no record of. Not drawn.</div>
+        <div class="undrawn" data-testid="unreported-old">
+          {#each unreported.old as entity (entity.stepId)}
+            <button class="classrow" onclick={() => select({ side: 'old', stepId: entity.stepId })}>
+              <span class="cls"><i class="dot extra"></i>#{entity.stepId}</span>
+              <span class="nums mono">{entity.klass}</span>
+            </button>
+          {/each}
+        </div>
       {/if}
       {#if cohorts.length > 0 || index.placementPairs.filter(isPlacementOnly).length > 0}
         <div class="footnote">
@@ -436,7 +581,7 @@
         <span class="microlabel">entity</span>
         <div class="title">{selectedRecord?.name ?? `#${selection.stepId}`}</div>
         <div>
-          <span class="badge {sectionOf(selectedRecord, selection)}">{sectionOf(selectedRecord, selection) || 'unlisted'}</span>
+          <span class="badge {selectedRecord?.section ?? 'extra'}">{selectedRecord?.section ?? 'extra'}</span>
         </div>
         <dl class="kv">
           <dt>Class</dt>
@@ -480,7 +625,11 @@
             </dl>
           {/if}
         {:else if !selectedRecord}
-          <p class="footnote">Not in the report — the engine does not signature this entity (no identity evidence). Shown gray.</p>
+          <p class="footnote">
+            Not in the report: the diff says nothing about this entity. {selection.side === 'new'
+              ? 'Drawn in the Extra colour.'
+              : 'Old-file geometry without a record is not drawn.'}
+          </p>
         {/if}
       </aside>
     {/if}
@@ -505,6 +654,9 @@
       <button class:off={!toggles.unchanged} onclick={() => (toggles.unchanged = !toggles.unchanged)}>
         <i class="dot unch"></i>Unchanged
       </button>
+      <button class:off={!toggles.extra} onclick={() => (toggles.extra = !toggles.extra)}>
+        <i class="dot extra"></i>Extra
+      </button>
       <div class="sep"></div>
       <button class:off={!toggles.ghostUnchanged} onclick={() => (toggles.ghostUnchanged = !toggles.ghostUnchanged)}>
         Ghost
@@ -515,6 +667,7 @@
     <div class="panel viewbtns">
       <button onclick={() => scene?.fitChanges()}>Fit changes</button>
       <button onclick={() => scene?.fitModel()}>Fit model</button>
+      <button onclick={startOver}>Start over</button>
     </div>
   {/if}
 
@@ -523,17 +676,20 @@
       <div class="panel hero" class:armed={dragging}>
         <h1><em>Athar</em> — semantic IFC diff viewer</h1>
         <p>
-          Drop two IFC revisions and the Athar report that compares them. Everything runs in your
-          browser — models never leave this machine.
+          Drop two IFC revisions and the Athar report that compares them. Old and new are taken
+          from the file hashes the report records. Everything runs in your browser — models never
+          leave this machine.
         </p>
         <div class="dropzones">
-          <button class="dropzone" class:filled={drops.oldFile} onclick={() => oldInput.click()}>
-            <span class="slot">Old .ifc</span>
-            <span class="hint">{drops.oldFile?.name ?? 'drop or browse'}</span>
-          </button>
-          <button class="dropzone" class:filled={drops.newFile} onclick={() => newInput.click()}>
-            <span class="slot">New .ifc</span>
-            <span class="hint">{drops.newFile?.name ?? 'drop or browse'}</span>
+          <button
+            class="dropzone"
+            class:filled={drops.ifcs.length === 2}
+            onclick={() => ifcInput.click()}
+          >
+            <span class="slot">Two .ifc files</span>
+            <span class="hint">
+              {drops.ifcs.length ? drops.ifcs.map((f) => f.name).join(', ') : 'drop or browse'}
+            </span>
           </button>
           <button
             class="dropzone"
@@ -565,15 +721,48 @@
         <h1>Could not load</h1>
         <p class="panel banner error" style="position: static; transform: none;">{error}</p>
         <div class="cta">
-          <button
-            class="primary"
-            onclick={() => {
-              phase = 'empty'
-              error = ''
-              drops = {}
-              publishDebug({ phase: 'empty', error: undefined })
-            }}>Start over</button
+          <button class="primary" onclick={startOver}>Start over</button>
+        </div>
+      </div>
+    </div>
+  {:else if phase === 'confirm' && unverified}
+    <div class="center-stage">
+      <div class="panel hero">
+        <h1>Which file is old?</h1>
+        <p class="panel banner warn" role="alert" data-testid="unverified-warning">
+          These files could not be verified against the report. {unverified.reason} Assign old and
+          new yourself; a wrong assignment shows every change reversed.
+        </p>
+        <div class="assign">
+          {#each unverified.files as hashed, i (i)}
+            <div class="assignrow">
+              <span class="mono" title={hashed.sha256}>{hashed.file.name}</span>
+              <label>
+                <input
+                  type="radio"
+                  name="role-{i}"
+                  checked={unverified.oldIndex === i}
+                  onchange={() => unverified && (unverified.oldIndex = i as 0 | 1)}
+                  aria-label="{hashed.file.name} is old"
+                />Old
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="role-{i}"
+                  checked={unverified.oldIndex === 1 - i}
+                  onchange={() => unverified && (unverified.oldIndex = (1 - i) as 0 | 1)}
+                  aria-label="{hashed.file.name} is new"
+                />New
+              </label>
+            </div>
+          {/each}
+        </div>
+        <div class="cta">
+          <button class="primary" disabled={unverified.oldIndex === null} onclick={confirmUnverified}
+            >Start diff</button
           >
+          <button onclick={startOver}>Start over</button>
         </div>
       </div>
     </div>
@@ -582,22 +771,16 @@
   <input
     type="file"
     accept=".ifc"
-    bind:this={oldInput}
-    data-testid="input-old"
-    onchange={() => onSlotFiles('oldFile', oldInput)}
-  />
-  <input
-    type="file"
-    accept=".ifc"
-    bind:this={newInput}
-    data-testid="input-new"
-    onchange={() => onSlotFiles('newFile', newInput)}
+    multiple
+    bind:this={ifcInput}
+    data-testid="input-ifc"
+    onchange={() => onPickedFiles(ifcInput)}
   />
   <input
     type="file"
     accept=".json,application/json"
     bind:this={reportInput}
     data-testid="input-report"
-    onchange={() => onSlotFiles('reportFile', reportInput)}
+    onchange={() => onPickedFiles(reportInput)}
   />
 </main>

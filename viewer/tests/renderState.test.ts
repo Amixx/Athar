@@ -2,6 +2,8 @@ import { describe, expect, it } from 'bun:test'
 
 import { buildDiffIndex, classBreakdown, parseReport, ReportFormatError } from '../src/lib/report'
 import {
+  ALL_BUCKETS,
+  BUCKET_COLORS,
   bucketFor,
   computeAppearances,
   DEFAULT_TOGGLES,
@@ -9,8 +11,10 @@ import {
   groupDisplacements,
   isPlacementOnly,
   placementDeltaNorm,
+  reportCoverage,
   SNAP,
   TRANSITIVE_OPACITY,
+  unreportedEntities,
 } from '../src/lib/renderState'
 import type { Aspects, AtharReport, EntitySummary, MatchedItem } from '../src/lib/types'
 
@@ -187,6 +191,7 @@ describe('computeAppearances', () => {
       deleted: false,
       modified: false,
       unchanged: false,
+      extra: false,
     })
     expect(app.deleted.visible).toBe(false)
     expect(app.modifiedOld.visible).toBe(false)
@@ -214,13 +219,28 @@ describe('computeAppearances', () => {
   it('renders unchanged solid when ghosting is off', () => {
     const app = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, ghostUnchanged: false })
     expect(app.unchanged.opacity).toBe(1)
-    expect(app.extra.opacity).toBe(1)
   })
 
   it('ghosts unchanged only when explicitly enabled', () => {
     const app = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, ghostUnchanged: true })
     expect(app.unchanged.opacity).toBe(GHOST_OPACITY)
-    expect(app.extra.opacity).toBe(GHOST_OPACITY)
+  })
+})
+
+describe('extra bucket', () => {
+  it('has a colour of its own', () => {
+    const others = ALL_BUCKETS.filter((bucket) => bucket !== 'extra').map((bucket) => BUCKET_COLORS[bucket])
+    expect(others).not.toContain(BUCKET_COLORS.extra)
+  })
+
+  it('toggles independently of unchanged and is never ghosted', () => {
+    const hidden = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, extra: false, ghostUnchanged: true })
+    expect(hidden.extra.visible).toBe(false)
+    expect(hidden.unchanged.visible).toBe(true)
+    const shown = computeAppearances(SNAP.both, { ...DEFAULT_TOGGLES, unchanged: false, ghostUnchanged: true })
+    expect(shown.extra.visible).toBe(true)
+    expect(shown.extra.opacity).toBe(1)
+    expect(shown.unchanged.visible).toBe(false)
   })
 })
 
@@ -284,5 +304,33 @@ describe('groupDisplacements', () => {
   it('is one single-pair group per placement-only move without cohorts', () => {
     const groups = groupDisplacements([movedPair, dataOnlyPair], [])
     expect(groups).toEqual([{ pairs: [{ oldId: 10, newId: 110 }] }])
+  })
+})
+
+describe('reportCoverage', () => {
+  it('counts each report entity once per legend row and lists the ones the scene does not draw', () => {
+    const index = buildDiffIndex(report)
+    const meshes = { old: new Set([1, 10, 14, 20]), new: new Set([100, 112]) }
+    const coverage = reportCoverage(
+      report,
+      (side, stepId) => meshes[side].has(stepId),
+      (side, stepId) => bucketFor(side, index[side].get(stepId)),
+    )
+    expect(coverage.inReport).toEqual({ added: 1, deleted: 1, modified: 4, transitive: 1, unchanged: 1 })
+    expect(coverage.drawn).toEqual({ added: 1, deleted: 1, modified: 2, transitive: 0, unchanged: 0 })
+    expect(coverage.undrawn.map(({ key, side, stepId }) => [key, side, stepId])).toEqual([
+      ['modified', 'new', 111],
+      ['modified', 'new', 113],
+      ['transitive', 'new', 114],
+      ['unchanged', 'new', 120],
+    ])
+  })
+})
+
+describe('unreportedEntities', () => {
+  it('lists the tessellated entities of each side that have no report record', () => {
+    const index = buildDiffIndex(report)
+    const unreported = unreportedEntities([900, 1, 10, 901], [100, 950, 112], (side, stepId) => index[side].has(stepId))
+    expect(unreported).toEqual({ old: [900, 901], new: [950] })
   })
 })

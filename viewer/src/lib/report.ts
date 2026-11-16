@@ -1,7 +1,7 @@
 /**
  * Report parsing/validation and the step_id-keyed diff index.
  *
- * Identity mapping is exact by design: ifc-lite mesh expressIds ARE STEP ids,
+ * Identity mapping is exact: ifc-lite mesh expressIds ARE STEP ids,
  * and the engine report carries step_id per entity (old-side ids for deleted
  * and modified-old, new-side ids for added and modified-new/unchanged).
  */
