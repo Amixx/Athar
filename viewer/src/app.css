@@ -336,6 +336,16 @@ button.active {
   white-space: nowrap;
 }
 
+.classrow.cohort {
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+
+.classrow.cohort .cls {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .classrow .nums .a { color: var(--c-add); }
 .classrow .nums .d { color: var(--c-del); }
 .classrow .nums .m { color: var(--c-mod); }

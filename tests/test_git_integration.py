@@ -125,9 +125,11 @@ def test_render_text_report_shows_a_reclassified_element(tmp_path):
 
 
 def test_render_text_report_names_the_ancestor_a_placement_moved_with(tmp_path):
-    text = render_text_report(diff(tmp_path, raise_building))
+    report = diff(tmp_path, raise_building)
+    text = render_text_report(report)
+    assert "6 moved with IfcBuilding B, Δ 0.50 m" in text
+    assert "6 moved with IfcBuilding B, Δ 0.50 m" in render_markdown_report(report)
 
-    assert '6 elements moved by (0, 0, 0.5) m' in text
     assert '~ IfcWall "W1"' not in text
 
     def move_and_edit(model):

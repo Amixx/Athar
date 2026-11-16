@@ -399,6 +399,79 @@ def test_children_of_a_moved_ancestor_move_with_it(tmp_path):
     assert cohort["root_cause"]["guid"] == guid("B")
 
 
+def test_rotated_parent_and_three_children_share_one_motion(tmp_path):
+    def children(model):
+        for i, name in enumerate(("W1", "W2", "W3")):
+            wall = model[name]
+            wall.ObjectPlacement = model.placement(model["B"], 2.0 + i * 3, 1.0 + i, 0.0)
+        for name in ("L1", "L2"):
+            model[name].ObjectPlacement.PlacementRelTo = None
+        model["B"].ObjectPlacement.RelativePlacement.Location.Coordinates = (3.0, -2.0, 0.0)
+
+    def move(model):
+        axes = model["B"].ObjectPlacement.RelativePlacement
+        axes.Location.Coordinates = (4.0, 0.0, 0.5)
+        axes.RefDirection = model.file.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
+
+    report = diff(tmp_path, move, setup=children)
+    [cohort] = report["stats"]["placement_cohorts"]
+    assert cohort["count"] == 4
+    assert cohort["root_cause"]["guid"] == guid("B")
+    assert cohort["rotation_deg"] == pytest.approx(90.0)
+    assert cohort["delta_mm"] == [1000.0, 2000.0, 500.0]
+    assert len({tuple(item["aspects"]["placement_delta_mm"]) for item in report["modified"]}) == 4
+    from athar.check import evaluate_report
+    [violation] = evaluate_report(report, {"max_placement_cohort_share": 0.5})["violations"]
+    assert violation["share"] == pytest.approx(4 / 6)
+    assert violation["root_cause"]["guid"] == guid("B")
+
+
+@pytest.mark.parametrize("angle,pivot", [(30.0, (2.0, -1.0)), (180.0, (0.0, 0.0))])
+def test_baked_rotation_without_a_parent_shares_one_motion(tmp_path, angle, pivot):
+    import math
+
+    c, s = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+
+    def independent(model):
+        for name, point in (("W1", (3.0, 2.0, 0.0)), ("W2", (7.0, -1.0, 0.0))):
+            model[name].ObjectPlacement = model.placement(None, *point)
+        model["W2"].ObjectPlacement.RelativePlacement.RefDirection = model.file.create_entity(
+            "IfcDirection", DirectionRatios=(0.0, 1.0, 0.0)
+        )
+
+    def rotate(model):
+        for name in ("W1", "W2"):
+            axes = model[name].ObjectPlacement.RelativePlacement
+            x, y, z = axes.Location.Coordinates
+            px, py = pivot
+            axes.Location.Coordinates = (c * (x - px) - s * (y - py) + px, s * (x - px) + c * (y - py) + py, z)
+            direction = (-s, c, 0.0) if name == "W2" else (c, s, 0.0)
+            axes.RefDirection = model.file.create_entity("IfcDirection", DirectionRatios=direction)
+
+    [cohort] = diff(tmp_path, rotate, setup=independent)["stats"]["placement_cohorts"]
+    assert cohort["count"] == 2
+    assert cohort["rotation_deg"] == pytest.approx(angle, abs=0.001)
+    assert cohort["delta_mm"] == ([-232.0, -1134.0, 0.0] if angle == 30 else [0.0, 0.0, 0.0])
+    assert "root_cause" not in cohort
+
+
+@pytest.mark.parametrize("rotation", [False, True])
+def test_distinct_motions_do_not_form_a_cohort(tmp_path, rotation):
+    def move(model):
+        for name in ("W1", "W2"):
+            axes = model[name].ObjectPlacement.RelativePlacement
+            x, y, z = axes.Location.Coordinates
+            axes.Location.Coordinates = (x + 1.0, y + 2.0, z)
+        if rotation:
+            model["W2"].ObjectPlacement.RelativePlacement.RefDirection = model.file.create_entity(
+                "IfcDirection", DirectionRatios=(0.0, 1.0, 0.0)
+            )
+        else:
+            model["W2"].ObjectPlacement.RelativePlacement.Location.Coordinates = (6.002, 2.0, 0.0)
+
+    assert diff(tmp_path, move)["stats"]["placement_cohorts"] == []
+
+
 def test_nearest_moved_ancestor_is_named(tmp_path):
     def raise_both(model):
         raise_building(model)

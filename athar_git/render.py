@@ -89,7 +89,20 @@ def render_text_report(
     )
     cohort_members = {member for cohort in cohorts for member in cohort.get("members", [])}
     for cohort in cohorts[:max_cohorts]:
-        lines.append(f"{_number(cohort['count'])} elements moved by {_vector_mm(cohort.get('delta_mm'))}")
+        root = cohort.get("root_cause")
+        angle = cohort.get("rotation_deg", 0)
+        if root or angle:
+            mover = (
+                f"with {_escape_name(clip(root['class']))} {_escape_name(clip(root.get('name') or root['step_id']))}"
+                if root else "together"
+            )
+            rotation = f", {_number(angle)}°" if angle else ""
+            lines.append(
+                f"Group move: {_number(cohort['count'])} moved {mover}, "
+                f"Δ {math.hypot(*cohort['delta_mm']) / 1000:,.2f} m{rotation}"
+            )
+        else:
+            lines.append(f"{_number(cohort['count'])} elements moved by {_vector_mm(cohort.get('delta_mm'))}")
     hidden_cohorts = cohorts[max_cohorts:]
     if hidden_cohorts:
         moved = sum(int(cohort["count"]) for cohort in hidden_cohorts)

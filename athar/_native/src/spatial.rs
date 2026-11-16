@@ -402,6 +402,23 @@ fn relative_position(label: &str, host: Option<Placed>, feature: Option<Placed>)
     hasher.finalize().into()
 }
 
+#[pyo3::pyfunction]
+pub fn placement_motion(old: Vec<i64>, new: Vec<i64>) -> pyo3::PyResult<Vec<f64>> {
+    if ![12, 16].contains(&old.len()) || ![12, 16].contains(&new.len()) {
+        return Err(pyo3::exceptions::PyValueError::new_err("placements must have 12 or 16 entries"));
+    }
+    let decode = |values: &[i64]| -> Matrix {
+        let mut matrix = identity();
+        for i in 0..3 {
+            for j in 0..4 {
+                matrix[i][j] = values[4 * i + j] as f64 / PLACEMENT_SCALE;
+            }
+        }
+        matrix
+    };
+    Ok(matmul(&decode(&new), &rigid_inverse(&decode(&old))).into_iter().flatten().collect())
+}
+
 /// Inverse of a rotation-plus-translation matrix.
 fn rigid_inverse(m: &Matrix) -> Matrix {
     let mut out = identity();

@@ -255,6 +255,18 @@ def test_render_text_caps_placement_cohort_lines_largest_first():
     assert body.index("3 elements moved by (0.008, 0, 0) m") < body.index("2 elements moved by")
     assert "... and 290 more placement cohorts (580 elements) not shown" in body
 
+    hostile = "```\n</details><script>"
+    for cohort in cohorts:
+        cohort['root_cause'] = {'class': 'IfcBuilding', 'name': hostile, 'step_id': 1}
+        cohort['rotation_deg'] = 90
+    body = render_markdown_report(report, max_items=10)
+    assert body.count('Group move:') == 10
+    assert ', 90°' in body
+    assert '290 more placement cohorts' in body
+    assert hostile not in body
+    assert '<script>' not in _outside_code(body)
+    assert render_text_report(report, max_cohorts=0).count('Group move:') == 0
+
 
 MIDDLE_DOTS = "\u00b7\u2219\u22c5"
 
