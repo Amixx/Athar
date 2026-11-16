@@ -796,7 +796,7 @@ type SigTuple = (
 
 struct NativeBundle {
     signatures: Vec<SigTuple>,
-    edge_stats: HashMap<String, i64>,
+    edge_stats: BTreeMap<String, i64>,
     dangling_refs: i64,
     cycle_breaks: i64,
     warnings: Vec<String>,
@@ -1139,7 +1139,7 @@ fn number_repeated_paths(mut facts: Vec<(String, String)>) -> Vec<(String, Strin
     out
 }
 
-type CoverageTuple = (HashMap<String, i64>, HashMap<String, (i64, String)>, HashMap<String, i64>);
+type CoverageTuple = (BTreeMap<String, i64>, BTreeMap<String, (i64, String)>, BTreeMap<String, i64>);
 
 /// Full native parse + signature build for one IFC file.
 ///
@@ -1153,7 +1153,7 @@ fn build_signature_bundle(
     path: String,
     schema_json: String,
     unit_factors: HashMap<String, f64>,
-) -> PyResult<(Vec<SigTuple>, HashMap<String, i64>, (i64, i64, Vec<String>), CoverageTuple)> {
+) -> PyResult<(Vec<SigTuple>, BTreeMap<String, i64>, (i64, i64, Vec<String>), CoverageTuple)> {
     let bundle = py
         .allow_threads(|| build_bundle(&path, &schema_json, &unit_factors))
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
@@ -1162,11 +1162,7 @@ fn build_signature_bundle(
         bundle.signatures,
         bundle.edge_stats,
         (bundle.dangling_refs, bundle.cycle_breaks, bundle.warnings),
-        (
-            coverage.unknown_relationships.into_iter().collect(),
-            coverage.unreached.into_iter().collect(),
-            coverage.ignored_by_design.into_iter().collect(),
-        ),
+        (coverage.unknown_relationships, coverage.unreached, coverage.ignored_by_design),
     ))
 }
 

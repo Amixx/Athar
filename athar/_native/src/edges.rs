@@ -80,8 +80,8 @@ impl Graph {
         &self.includes[self.child_range(entity)]
     }
 
-    pub fn stats(&self) -> HashMap<String, i64> {
-        let mut out: HashMap<String, i64> = HashMap::new();
+    pub fn stats(&self) -> BTreeMap<String, i64> {
+        let mut out: BTreeMap<String, i64> = BTreeMap::new();
         for edge in &self.includes {
             let key = match edge.domain {
                 Domain::Geometry => "include:geometry",
