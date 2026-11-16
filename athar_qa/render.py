@@ -5,12 +5,15 @@ from __future__ import annotations
 from typing import Any
 
 _ASPECT_ORDER = ("added", "deleted", "modified", "unchanged")
+_SHOWN_AFFECTED = 10
 
 
 def render_check_report(result: dict[str, Any], *, title: str = "Athar QA gate") -> str:
     """Render an :func:`athar.check.evaluate_report` verdict as text."""
+    ok = result.get("ok")
+    if not isinstance(ok, bool):
+        raise ValueError("Check verdict has no boolean 'ok'")
     violations = result.get("violations") or []
-    ok = result.get("ok", not violations)
 
     lines: list[str] = []
     if ok:
@@ -60,13 +63,12 @@ def _summary_line(summary: dict[str, Any]) -> str:
 
 def _violation_detail_lines(violation: dict[str, Any]) -> list[str]:
     code = violation.get("code")
-    if code == "schema_changed":
+    if code == "schema_mismatch":
         return [f"  schema: {violation.get('old')} -> {violation.get('new')}"]
 
-    lines: list[str] = []
-    for entry in violation.get("affected") or []:
-        lines.append("  - " + _affected_line(code, entry))
-    hidden = (violation.get("count") or 0) - len(violation.get("affected") or [])
+    shown = (violation.get("affected") or [])[:_SHOWN_AFFECTED]
+    lines = ["  - " + _affected_line(code, entry) for entry in shown]
+    hidden = (violation.get("count") or 0) - len(shown)
     if hidden > 0:
         lines.append(f"  ... and {hidden} more")
     return lines
@@ -75,12 +77,14 @@ def _violation_detail_lines(violation: dict[str, Any]) -> list[str]:
 def _affected_line(code: str | None, entry: dict[str, Any]) -> str:
     label = _entity_label(entry)
     if code == "property_value_changed":
-        changes = "; ".join(
-            f"{_property_label(change.get('pset'), entry.get('property'), change.get('inherited'))} "
-            f"{_value(change.get('old_value'))} -> {_value(change.get('new_value'))}"
-            for change in entry.get("changes") or []
-        )
+        changes = "; ".join(_change_text(entry.get("property"), change) for change in entry.get("changes") or [])
         return f"{label}: {changes}"
+    if code == "property_added":
+        added = ", ".join(
+            f"{_property_label(prop.get('pset'), entry.get('property'), prop.get('inherited'))} {_value(prop.get('new_value'))}"
+            for prop in entry.get("added") or []
+        )
+        return f"{label}: added {added}"
     if code == "property_removed":
         removed = ", ".join(
             _property_label(prop.get("pset"), prop.get("name"), prop.get("inherited"))
@@ -90,6 +94,18 @@ def _affected_line(code: str | None, entry: dict[str, Any]) -> str:
     if code == "placement_delta_limit":
         return f"{label}: placement delta {entry.get('placement_delta_mm')} mm (limit {entry.get('limit')})"
     return label
+
+
+def _change_text(name: object, change: dict[str, Any]) -> str:
+    prop = _property_label(change.get("pset"), name, change.get("inherited"))
+    kind = change.get("kind")
+    if kind == "removed":
+        return f"{prop} {_value(change.get('old_value'))} removed"
+    if kind == "added":
+        return f"{prop} {_value(change.get('new_value'))} added"
+    if kind == "count_changed":
+        return f"{prop} occurs {change.get('old_count')} -> {change.get('new_count')} times"
+    return f"{prop} {_value(change.get('old_value'))} -> {_value(change.get('new_value'))}"
 
 
 def _property_label(pset: object, name: object, inherited: object) -> str:

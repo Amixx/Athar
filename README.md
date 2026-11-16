@@ -158,7 +158,6 @@ Example policy:
 
 ```json
 {
-  "forbid_schema_change": true,
   "max_deleted": 0,
   "max_deleted_by_class": {
     "IfcWall": 0
@@ -179,11 +178,42 @@ Example policy:
 }
 ```
 
-The gate is report-driven and CI-platform-agnostic. Current policies can only
-inspect signals present in the report: schema equality, section counts,
-class-specific counts, modified change scopes, changed aspects, and placement
-translation deltas. Fine-grained checks such as “property `FireRating` was
-removed” require future report detail beyond the current data hash.
+Policies are validated before diffing. Unknown keys, malformed values, negative
+limits, unknown aspects/scopes, and misspelled IFC classes are errors. Classes
+are case-insensitive, normalized to report classes, and include subtypes;
+`IfcWallStandardCase` rules apply to `IfcWall`. For placement limits the nearest
+class override wins over a supertype or global limit.
+
+The gate requires an Athar report header, supported schema, four complete sections,
+and consistent counts. Missing detail needed by a rule is an error, not a pass.
+Schema mismatch is a failed gate with exit `2`, because Athar cannot semantically
+diff different schemas; `forbid_schema_change` is not a policy key.
+
+`forbid_property_value_change` maps property names to `"*"`, a class, or a list
+of classes. It checks matched entities across all psets and occurrence/type
+origins. Changed values, removals, and remove/add pairs with different values
+violate it; equal-value moves are allowed. Added values alone are checked only
+by `forbid_property_addition` (the same shape). Duplicate keys are collapsed to
+one value in the report; a reported `count_changed` fails closed. Changes to
+an unreported duplicate copy cannot be reconstructed from the report. Property
+rules require `property_deltas` on data-changed entities: the engine can omit
+it both when comparison is unavailable and when no property changed, so these
+ambiguous reports produce exit `1`. No engine changes are implied by this gate.
+
+`max_placement_cohort_share` is a fraction from 0 to 1. A cohort exceeds the
+budget when its member count divided by all matched products (modified plus
+unchanged) is strictly greater than the limit. Violations carry translation,
+size, share, and affected entities. Count-limit violations include up to 50
+entity references plus a `truncated` count; text output prints up to ten.
+
+The `georeferencing` pack forbids site placement/data changes, added/deleted
+sites, replaced site GUIDs on matched sites, and translation cohorts covering
+more than half the matched products. Its project-data ban applies only if a
+report contains `IfcProject`; it does not cover map conversions.
+
+Use `--policy PACK --explain` to print the normalized policy without diffing;
+`--list-packs` prints shipped pack descriptions. `--format text` renders a
+human-readable verdict; errors print a clear error line.
 
 ### Git IFC Diff Driver
 

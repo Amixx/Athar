@@ -1,9 +1,17 @@
 {
-  "description": "Georeferencing stability: site placement and project coordinates must not move.",
-  "forbid_schema_change": true,
+  "description": "Georeferencing stability: forbids site placement and data changes, recreated sites, and large coordinated shifts; project data changes are checked when reported.",
   "forbid_site_placement_change": true,
+  "forbid_aspect_changes": {
+    "data": ["IfcSite", "IfcProject"]
+  },
   "max_placement_delta_mm_by_class": {
-    "IfcSite": 0,
-    "IfcProject": 0
-  }
+    "IfcSite": 0
+  },
+  "max_added_by_class": {
+    "IfcSite": 0
+  },
+  "max_deleted_by_class": {
+    "IfcSite": 0
+  },
+  "max_placement_cohort_share": 0.5
 }

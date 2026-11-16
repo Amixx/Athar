@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from athar_qa import render_check_report, render_history
 
 
@@ -28,8 +30,11 @@ def test_render_check_report_fail_shows_property_change():
                         "name": "Wall",
                         "property": "FireRating",
                         "changes": [
-                            {"pset": "Pset_WallCommon", "inherited": False, "old_value": "90", "new_value": "60"},
-                            {"pset": "Pset_WallCommon", "inherited": True, "old_value": "90", "new_value": "30"},
+                            {"kind": "changed", "pset": "Pset_WallCommon", "inherited": False, "old_value": "90", "new_value": "60"},
+                            {"kind": "changed", "pset": "Pset_WallCommon", "inherited": True, "old_value": "90", "new_value": "30"},
+                            {"kind": "removed", "pset": "Old", "inherited": False, "old_value": "90"},
+                            {"kind": "added", "pset": "New", "inherited": True, "new_value": "30"},
+                            {"kind": "count_changed", "pset": "Dup", "inherited": False, "old_count": 2, "new_count": 1},
                         ],
                     }
                 ],
@@ -38,8 +43,35 @@ def test_render_check_report_fail_shows_property_change():
     }
     text = render_check_report(result)
     assert "FAIL (1 violation)" in text
-    assert "Pset_WallCommon.FireRating 90 -> 60; Pset_WallCommon.FireRating (type) 90 -> 30" in text
+    assert (
+        "Pset_WallCommon.FireRating 90 -> 60; Pset_WallCommon.FireRating (type) 90 -> 30; "
+        "Old.FireRating 90 removed; New.FireRating (type) 30 added; Dup.FireRating occurs 2 -> 1 times"
+    ) in text
     assert 'IfcWall "Wall" #21 WALL' in text
+
+
+def test_render_check_report_property_added():
+    result = {
+        "ok": False,
+        "violations": [
+            {
+                "code": "property_added",
+                "message": "Protected property FireRating added to 1 entity(s)",
+                "count": 1,
+                "affected": [
+                    {
+                        "class": "IfcWall",
+                        "step_id": 21,
+                        "guid": "WALL",
+                        "name": "Wall",
+                        "property": "FireRating",
+                        "added": [{"pset": "Pset_WallCommon", "inherited": False, "new_value": "REI60"}],
+                    }
+                ],
+            }
+        ],
+    }
+    assert 'IfcWall "Wall" #21 WALL: added Pset_WallCommon.FireRating REI60' in render_check_report(result)
 
 
 def test_render_check_report_schema_and_truncation():
@@ -47,7 +79,7 @@ def test_render_check_report_schema_and_truncation():
         "ok": False,
         "summary": {},
         "violations": [
-            {"code": "schema_changed", "message": "Schema changed", "old": "IFC2X3", "new": "IFC4"},
+            {"code": "schema_mismatch", "message": "Schema changed", "old": "IFC2X3", "new": "IFC4"},
             {
                 "code": "property_removed",
                 "message": "Properties removed from 3 entity(s)",
@@ -63,6 +95,33 @@ def test_render_check_report_schema_and_truncation():
     assert "schema: IFC2X3 -> IFC4" in text
     assert "removed P.A, P.B (type)" in text
     assert "... and 2 more" in text
+
+
+def test_render_check_report_lists_ten_affected_entities():
+    affected = [{"class": "IfcWall", "step_id": i, "guid": f"G{i}", "name": f"W{i}"} for i in range(50)]
+    result = {
+        "ok": False,
+        "violations": [
+            {
+                "code": "deleted_limit",
+                "message": "max_deleted exceeded: 60 > 0",
+                "count": 60,
+                "affected": affected,
+                "truncated": 10,
+            }
+        ],
+    }
+
+    text = render_check_report(result)
+
+    assert 'IfcWall "W9" #9 G9' in text
+    assert "W10" not in text
+    assert "... and 50 more" in text
+
+
+def test_render_check_report_without_ok_is_an_error():
+    with pytest.raises(ValueError, match="no boolean 'ok'"):
+        render_check_report({"violations": []})
 
 
 def test_render_history_timeline():

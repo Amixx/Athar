@@ -16,9 +16,10 @@ dicts), never the reverse: core engine modules under `athar/` must not import
   detail is rendered per `code`: `property_value_changed` shows
   `Pset.Name old -> new` for every matching pset (`(type)` marks a value
   inherited from the type), `property_removed` lists dropped `Pset.Name`s,
-  `schema_changed` shows `old -> new`, `placement_delta_limit` shows the delta
-  vs limit. `affected` is capped upstream (20); the renderer prints the
-  `count`-vs-shown remainder as `... and N more`.
+  `schema_mismatch` shows `old -> new`, `placement_delta_limit` shows the delta
+  vs limit, and `property_added` lists added values. `affected` is capped
+  upstream at 50; the renderer prints up to ten and the `count`-vs-shown
+  remainder as `... and N more`. Missing or non-boolean `ok` is an error.
 - `render_history(events, *, title=...)` — formats a `BaselineStore.history`
   list as a chronological timeline with a pass/fail tally. Event lines are keyed
   off `event` (`baseline_set` / `review` / `approval` / `rejection`).

@@ -129,7 +129,13 @@ def _emit_schema_incompatible(exc: SchemaMismatchError) -> None:
 
 
 def _run_check(argv: list[str]) -> int:
-    from athar.check import builtin_policy_packs, evaluate_report, load_report, resolve_policy
+    from athar.check import (
+        builtin_policy_packs,
+        evaluate_report,
+        load_report,
+        resolve_policy,
+        schema_mismatch_result,
+    )
 
     parser = argparse.ArgumentParser(prog="athar check")
     parser.add_argument("old", nargs="?", help="Path to old IFC file")
@@ -153,6 +159,11 @@ def _run_check(argv: list[str]) -> int:
         action="store_true",
         help="List the shipped policy packs and exit",
     )
+    parser.add_argument(
+        "--explain",
+        action="store_true",
+        help="Print the normalized policy and exit",
+    )
     args = parser.parse_args(argv)
 
     if args.list_packs:
@@ -160,6 +171,17 @@ def _run_check(argv: list[str]) -> int:
 
     if args.policy is None:
         parser.error("the following arguments are required: --policy")
+    if args.explain:
+        try:
+            policy = resolve_policy(args.policy)
+        except (OSError, ValueError) as exc:
+            if args.format == "text":
+                print(f"Error: {exc}")
+            else:
+                print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(policy, indent=2, sort_keys=True))
+        return 0
 
     using_report = args.report is not None
     using_files = args.old is not None or args.new is not None
@@ -172,17 +194,19 @@ def _run_check(argv: list[str]) -> int:
         policy = resolve_policy(args.policy)
         report = load_report(args.report) if using_report else diff_files(args.old, args.new)
         result = evaluate_report(report, policy)
-        if args.format == "text":
-            from athar_qa import render_check_report
-
-            print(render_check_report(result), end="")
-        else:
-            json.dump(result, sys.stdout, indent=2)
-            print()
-        return 0 if result["ok"] else 2
-    except Exception as exc:  # pragma: no cover - CLI error path
+    except SchemaMismatchError as exc:
+        result = schema_mismatch_result(exc.old_schema, exc.new_schema)
+    except (OSError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+    if args.format == "text":
+        from athar_qa import render_check_report
+
+        print(render_check_report(result), end="")
+    else:
+        json.dump(result, sys.stdout, indent=2)
+        print()
+    return 0 if result["ok"] else 2
 
 
 def _list_policy_packs(builtin_policy_packs) -> int:
