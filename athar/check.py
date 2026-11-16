@@ -148,7 +148,7 @@ def _class_name(name: Any, key: str) -> str:
             except RuntimeError:
                 continue
             if isinstance(declaration, ifcopenshell_wrapper.entity):
-                return canonical_class_name(declaration.name())
+                return canonical_class_name(schema, declaration.name())
     raise ValueError(f"{key}: {name!r} is not an IFC entity in {' or '.join(SUPPORTED_SCHEMAS)}")
 
 
@@ -368,7 +368,7 @@ def evaluate_report(report: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     - ``max_placement_delta_mm_by_class``: ``{"IfcSite": 0}``
     - ``max_placement_cohort_share``: 0 to 1 — fail when one placement cohort
       (entities moved by the same translation) is more than this share of the
-      matched entities (modified plus unchanged)
+      matched products (modified plus unchanged)
     - ``forbid_aspect_changes``: ``{"data": ["IfcWall"], "placement": "*"}``
     - ``forbid_property_removal``: ``"*"``, a class string, or a list of classes
       — fail when a matched entity drops a property/quantity value
@@ -516,7 +516,13 @@ def _check_placement_cohorts(report: dict[str, Any], policy: dict[str, Any], vio
     limit = policy.get("max_placement_cohort_share")
     if limit is None:
         return
-    matched = report["stats"]["modified"] + report["stats"]["unchanged"]
+    schema = _report_schema(report)
+    matched = sum(
+        1
+        for section in ("modified", "unchanged")
+        for item in report[section]
+        if "IfcProduct" in _lineage(schema, item["new"]["class"])
+    )
     by_step = {item["new"]["step_id"]: item for item in report["modified"]}
     for cohort in report["stats"]["placement_cohorts"]:
         share = cohort["count"] / matched
@@ -527,7 +533,7 @@ def _check_placement_cohorts(report: dict[str, Any], policy: dict[str, Any], vio
             {
                 "code": "placement_cohort_share",
                 "message": (
-                    f"{cohort['count']} of {matched} matched entities moved by the same translation "
+                    f"{cohort['count']} of {matched} matched products moved by the same translation "
                     f"({', '.join(f'{value:g}' for value in delta)}) mm: share {share:.3g} > {limit:g}"
                 ),
                 "policy": "max_placement_cohort_share",
