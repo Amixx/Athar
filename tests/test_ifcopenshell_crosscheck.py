@@ -10,6 +10,7 @@ from itertools import zip_longest
 from pathlib import Path
 
 import ifcopenshell
+import ifcopenshell.geom
 import ifcopenshell.util.placement
 import ifcopenshell.util.unit
 import numpy as np
@@ -285,3 +286,184 @@ def test_placement_coverage_model(tmp_path):
     assert [(model[step].Name, cls) for step, cls, _ in unresolved] == [
         ("GP1", "IfcGridPlacement"), ("GP2", "IfcGridPlacement")
     ]
+
+
+# Without convert-back-units the kernel returns a standalone placement in
+# metres for some files and in file units for others.
+_KERNEL = ifcopenshell.geom.settings()
+_KERNEL.set("convert-back-units", True)
+
+
+def _kernel_matrix(instance, scale=1.0):
+    matrix = np.array(ifcopenshell.geom.create_shape(_KERNEL, instance).matrix).reshape((4, 4), order="F")
+    matrix[:3, 3] *= scale
+    return matrix
+
+
+def _native_matrix(signature):
+    return np.array(signature.placement).reshape(4, 4) / 1_000_000
+
+
+def _kernel_placement_disagreements(path):
+    model = ifcopenshell.open(str(path))
+    scale = ifcopenshell.util.unit.calculate_unit_scale(model)
+    differences = []
+    for step, signature in build_signature_bundle(str(path)).signatures.items():
+        if signature.placement is None:
+            continue
+        actual = _native_matrix(signature)
+        expected = _kernel_matrix(model[step].ObjectPlacement, scale)
+        if not np.allclose(actual, expected, rtol=1e-9, atol=1e-6):
+            differences.append((step, actual.tolist(), expected.tolist()))
+    return differences
+
+
+@pytest.mark.parametrize("source", _FILES)
+def test_kernel_placement_agreement(source):
+    path = source if isinstance(source, Path) else Path(corpus_path(source))
+    differences = _kernel_placement_disagreements(path)
+    assert differences == [], f"{len(differences)} kernel placement disagreements in {path}:\n" + "\n".join(map(repr, differences))
+
+
+_ZERO_FRAME = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+_PARALLEL = "Undefined frame (RefDirection parallel to Axis): native has a zero rotation, the kernel keeps Z with zero X and Y"
+# (Axis, RefDirection, native (X, Z) where it differs from the kernel, reason).
+# A 2-tuple Axis is an IfcAxis2Placement2D with that RefDirection.
+_AXES = [
+    (None, None, None, ""),
+    ((0.0, 0.0, 5.0), None, None, ""),
+    ((0.0, 1.0, 0.0), None, None, ""),
+    (None, (2.0, 0.0, 0.0), None, ""),
+    (None, (1.0, 1.0, 1.0), None, ""),
+    ((0.0, 3.0, 4.0), (2.0, 0.0, 0.0), None, ""),
+    ((0.0, 0.0, 1.0), (1.0, 0.0, 1.0), None, ""),
+    ((0.0, 0.0, 1.0), (1e-10, 0.0, 1.0), None, ""),
+    ((0.0, 0.0, 1e-13), (1.0, 0.0, 0.0), None, ""),
+    ((0.0, 0.0, 1.0), (0.0, 1.0), None, ""),
+    ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), None, ""),
+    ((1.0, 0.0, 0.0), None, ((0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+     "IfcFirstProjAxis takes (0,1,0) for Z=(1,0,0); the kernel keeps OCC's default X (0,0,1)"),
+    ((1.0, 1.0, 1.0), None, ((2 / 6**0.5, -1 / 6**0.5, -1 / 6**0.5), (3**-0.5,) * 3),
+     "IfcFirstProjAxis projects (1,0,0) onto the plane of Z; the kernel keeps OCC's default X (-1,-1,2)/sqrt(6)"),
+    ((-1.0, 0.0, 0.0), None, ((0.0, 1.0, 0.0), (-1.0, 0.0, 0.0)),
+     "IfcFirstProjAxis is undefined (its default (1,0,0) is parallel to Z); native takes (0,1,0) as for +X, "
+     "the kernel returns zero X and Y axes"),
+    (None, (0.0, 0.0, 3.0), _ZERO_FRAME, _PARALLEL),
+    ((0.0, 0.0, 1.0), (0.0, 0.0, -1.0), _ZERO_FRAME, _PARALLEL),
+    ((0.0, 0.0, 1e-300), (1.0, 0.0, 0.0), ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+     "The kernel squares the ratios before normalising and underflows; IfcNormalise is defined for any nonzero direction"),
+    ((3.0, 4.0), None, None, ""),
+    ((1.0, 1.0, 1.0), None, None, ""),
+    ((0.0, 0.0), None, _ZERO_FRAME, "Zero RefDirection: native has a zero rotation, the kernel keeps Z with zero X and Y"),
+    ((0.0, 0.0, 2.0), None, _ZERO_FRAME, _PARALLEL),
+]
+
+
+def _axes_model(tmp_path):
+    model = ifcopenshell.file(schema="IFC4")
+    direction = lambda ratios: model.create_entity("IfcDirection", DirectionRatios=ratios) if ratios else None
+    for index, (axis, ref, _, _) in enumerate(_AXES):
+        if axis is not None and len(axis) == 2 or index >= len(_AXES) - 4:
+            relative = model.create_entity("IfcAxis2Placement2D",
+                                          Location=model.create_entity("IfcCartesianPoint", Coordinates=(1.0, 2.0)),
+                                          RefDirection=direction(axis))
+        else:
+            relative = model.create_entity("IfcAxis2Placement3D",
+                                          Location=model.create_entity("IfcCartesianPoint", Coordinates=(1.0, 2.0, 3.0)),
+                                          Axis=direction(axis), RefDirection=direction(ref))
+        placement = model.create_entity("IfcLocalPlacement", RelativePlacement=relative)
+        model.create_entity("IfcWall", GlobalId=ifcopenshell.guid.new(), Name=str(index), ObjectPlacement=placement)
+    path = tmp_path / "axes.ifc"
+    model.write(str(path))
+    return path
+
+
+def test_axes_authored(tmp_path):
+    path = _axes_model(tmp_path)
+    model = ifcopenshell.open(str(path))
+    for step, signature in build_signature_bundle(str(path)).signatures.items():
+        axis, ref, native_frame, reason = _AXES[int(model[step].Name)]
+        actual = _native_matrix(signature)
+        with np.errstate(all="ignore"):
+            kernel = _kernel_matrix(model[step].ObjectPlacement.RelativePlacement)
+        agrees = np.allclose(actual, kernel, rtol=1e-9, atol=1e-6)
+        assert agrees == (native_frame is None), (axis, ref, actual.tolist(), kernel.tolist(), reason)
+        if native_frame is not None:
+            assert reason
+            x, z = (np.array(v) for v in native_frame)
+            expected = np.column_stack([x, np.cross(z, x), z])
+            assert actual[:3, :3] == pytest.approx(expected, abs=1e-6), (axis, ref, reason)
+
+
+def _frame_hash_classes(tmp_path, variants, build):
+    model = ifcopenshell.file(schema="IFC4")
+    context = model.create_entity("IfcGeometricRepresentationContext", ContextType="Model", CoordinateSpaceDimension=3,
+                                  WorldCoordinateSystem=model.create_entity(
+                                      "IfcAxis2Placement3D", Location=model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0))))
+    profile = model.create_entity("IfcRectangleProfileDef", ProfileType="AREA", XDim=1.0, YDim=2.0)
+    instances = []
+    for index, variant in enumerate(variants):
+        item, frame = build(model, context, profile, variant)
+        representation = model.create_entity("IfcShapeRepresentation", ContextOfItems=context, RepresentationIdentifier="Body",
+                                             RepresentationType="SweptSolid", Items=[item])
+        shape = model.create_entity("IfcProductDefinitionShape", Representations=[representation])
+        model.create_entity("IfcBuildingElementProxy", GlobalId=ifcopenshell.guid.new(), Name=str(index), Representation=shape)
+        instances.append(frame)
+    path = tmp_path / "frames.ifc"
+    model.write(str(path))
+    signatures = build_signature_bundle(str(path)).signatures.values()
+    hashes = {int(signature.name): signature.vh_geometry for signature in signatures}
+    return model, [hashes[index] for index in range(len(variants))], instances
+
+
+def _class_disagreements(keys, matrices):
+    pairs = range(len(keys))
+    return {(i, j) for i in pairs for j in pairs
+            if i < j and (keys[i] == keys[j]) != np.allclose(matrices[i], matrices[j], atol=1e-9)}
+
+
+def test_placement_frame_hashes_follow_kernel_frames(tmp_path):
+    variants = [(None, None), ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)), ((0.0, 0.0, 7.0), (3.0, 0.0, 0.0)),
+                ((0.0, 0.0, 1.0), (1.0, 0.0, 0.5)), (None, (1.0, 0.0, -2.0)), ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),
+                (None, (0.0, 2.0, 0.0)), ((0.0, 1.0, 0.0), (1.0, 0.0, 0.0)), ((0.0, 0.0, 1e-13), (1.0, 0.0, 0.0))]
+
+    def build(model, context, profile, variant):
+        axis, ref = (model.create_entity("IfcDirection", DirectionRatios=r) if r else None for r in variant)
+        position = model.create_entity("IfcAxis2Placement3D", Location=model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0)),
+                                       Axis=axis, RefDirection=ref)
+        solid = model.create_entity("IfcExtrudedAreaSolid", SweptArea=profile, Position=position, Depth=1.0,
+                                    ExtrudedDirection=model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)))
+        return solid, position
+
+    _model, keys, positions = _frame_hash_classes(tmp_path, variants, build)
+    matrices = [_kernel_matrix(position) for position in positions]
+    assert _class_disagreements(keys, matrices) == set(), list(zip(variants, keys))
+    assert len(set(keys)) == 3
+
+
+def test_operator_frame_hashes_follow_ifcopenshell_frames(tmp_path):
+    variants = [(None, None, None, None), ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 1.0),
+                ((2.0, 0.0, 0.0), (0.0, 3.0, 0.0), (0.0, 0.0, 4.0), None), (None, (0.0, -1.0, 0.0), None, None),
+                (None, None, None, 2.0), ((0.0, 1.0, 0.0), None, None, None), ((0.0, 5.0, 0.0), (-1.0, 0.0, 0.0), None, None),
+                ((0.0, 1.0, 0.0), (1.0, 0.0, 0.0), None, None)]
+
+    def build(model, context, profile, variant):
+        *axes, scale = variant
+        axis1, axis2, axis3 = (model.create_entity("IfcDirection", DirectionRatios=r) if r else None for r in axes)
+        origin = model.create_entity("IfcAxis2Placement3D", Location=model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0)))
+        solid = model.create_entity("IfcExtrudedAreaSolid", SweptArea=profile, Depth=1.0,
+                                    ExtrudedDirection=model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)))
+        mapped = model.create_entity("IfcShapeRepresentation", ContextOfItems=context, RepresentationIdentifier="Body",
+                                     RepresentationType="SweptSolid", Items=[solid])
+        source = model.create_entity("IfcRepresentationMap", MappingOrigin=origin, MappedRepresentation=mapped)
+        operator = model.create_entity("IfcCartesianTransformationOperator3D", Axis1=axis1, Axis2=axis2, Axis3=axis3, Scale=scale,
+                                       LocalOrigin=model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0)))
+        return model.create_entity("IfcMappedItem", MappingSource=source, MappingTarget=operator), operator
+
+    _model, keys, operators = _frame_hash_classes(tmp_path, variants, build)
+    matrices = [ifcopenshell.util.placement.get_cartesiantransformationoperator3d(operator) for operator in operators]
+    # IfcSecondProjAxis leaves Y undefined when the default Axis2 (0,1,0) is
+    # parallel to Axis1, so native hashes variant 5 attribute-wise; IfcOpenShell
+    # takes Z x X, the frame of variant 6.
+    assert _class_disagreements(keys, matrices) == {(5, 6)}, list(zip(variants, keys))
+    assert len(set(keys)) == 6

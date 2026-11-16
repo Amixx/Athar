@@ -314,22 +314,34 @@ fn unit_direction(rec: &Record) -> Option<([f64; 3], usize)> {
     unit(ratios).map(|u| (u, items.len()))
 }
 
+/// `v` at unit length; `None` for a zero or non-finite vector. Dividing by the
+/// largest component first keeps tiny ratios from underflowing when squared.
 fn unit(v: [f64; 3]) -> Option<[f64; 3]> {
-    let norm = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    if !norm.is_finite() || norm <= 1e-12 {
+    if v.iter().any(|c| !c.is_finite()) {
         return None;
     }
-    Some([v[0] / norm, v[1] / norm, v[2] / norm])
+    let largest = v.iter().fold(0.0f64, |m, c| m.max(c.abs()));
+    if largest == 0.0 {
+        return None;
+    }
+    let w = [v[0] / largest, v[1] / largest, v[2] / largest];
+    let norm = dot(w, w).sqrt();
+    Some([w[0] / norm, w[1] / norm, w[2] / norm])
 }
 
 fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-/// `v` minus its component along the unit vector `axis`, at unit length.
+/// The unit vector `v` minus its component along the unit vector `axis`, at
+/// unit length; `None` when `v` is parallel to `axis` within `1e-12`.
 fn reject(v: [f64; 3], axis: [f64; 3]) -> Option<[f64; 3]> {
     let d = dot(v, axis);
-    unit([v[0] - d * axis[0], v[1] - d * axis[1], v[2] - d * axis[2]])
+    let r = [v[0] - d * axis[0], v[1] - d * axis[1], v[2] - d * axis[2]];
+    if dot(r, r).sqrt() <= 1e-12 {
+        return None;
+    }
+    unit(r)
 }
 
 /// EXPRESS `IfcBuildAxes`: the unit X and Z axes of an `IfcAxis2Placement3D`
@@ -384,7 +396,10 @@ fn placement_axes(
 ) -> Option<([f64; 3], [f64; 3])> {
     let axis = |name: &str| axis_attribute(rec, desc, directions, name);
     match rec.keyword.as_str() {
-        "IFCAXIS2PLACEMENT2D" => Some((axis("RefDirection")?.unwrap_or([1.0, 0.0, 0.0]), [0.0, 0.0, 1.0])),
+        "IFCAXIS2PLACEMENT2D" => {
+            let z = [0.0, 0.0, 1.0];
+            Some((reject(axis("RefDirection")?.unwrap_or([1.0, 0.0, 0.0]), z)?, z))
+        }
         "IFCAXIS2PLACEMENT3D" => build_axes(axis("Axis")?, axis("RefDirection")?),
         _ => None,
     }
@@ -1181,6 +1196,46 @@ mod tests {
         let none = units(&[]);
         assert_eq!(quantize_real(1.0, Measure::Default, true, &none), 100_000);
         assert_eq!(quantize_real(1.0, Measure::Default, false, &none), 1_000_000);
+    }
+
+    #[test]
+    fn any_nonzero_direction_has_a_unit_vector() {
+        assert_eq!(unit([0.0, 0.0, 1e-13]), Some([0.0, 0.0, 1.0]));
+        assert_eq!(unit([0.0, 0.0, -1e-300]), Some([0.0, 0.0, -1.0]));
+        assert_eq!(unit([0.0, 0.0, 0.0]), None);
+        assert_eq!(unit([f64::NAN, 0.0, 1.0]), None);
+    }
+
+    #[test]
+    fn a_2d_placement_frame_lies_in_its_plane() {
+        let desc = ClassDesc {
+            class: "IfcAxis2Placement2D".to_string(),
+            product: false,
+            spatial: false,
+            project: false,
+            relationship: false,
+            geometric: true,
+            guid: None,
+            name: None,
+            attrs: ["Location", "RefDirection"]
+                .iter()
+                .map(|name| AttrDesc {
+                    name: name.to_string(),
+                    direction: false,
+                    derived: false,
+                    text: false,
+                    shape: Shape::Select,
+                })
+                .collect(),
+        };
+        let rec = Record {
+            step_id: 1,
+            keyword: "IFCAXIS2PLACEMENT2D".to_string(),
+            attrs: vec![Token::Ref(2), Token::Ref(3)],
+        };
+        let axes = |ratios: [f64; 3]| placement_axes(&rec, &desc, &HashMap::from([(3, unit(ratios).unwrap())]));
+        assert_eq!(axes([1.0, 0.0, 1.0]), Some(([1.0, 0.0, 0.0], [0.0, 0.0, 1.0])));
+        assert_eq!(axes([0.0, 0.0, 2.0]), None);
     }
 
     #[test]

@@ -447,7 +447,7 @@ validated in a temporary directory before Twine uploads them to PyPI.
 ```bash
 make test                    # full default suite (~20 seconds)
 make test-large-acceptance   # opt-in large IFC acceptance checks
-# Parser/placement oracle checks; include local IfcOpenShell manifest files via ATHAR_IFCOS_CORPUS_DIR:
+# IfcOpenShell oracle checks (parser, placements, frames); include local IfcOpenShell manifest files via ATHAR_IFCOS_CORPUS_DIR:
 ATHAR_RUN_LARGE_ACCEPTANCE=1 python -m pytest tests/test_ifcopenshell_crosscheck.py -q
 ```
 
