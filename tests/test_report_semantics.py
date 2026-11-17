@@ -1079,3 +1079,38 @@ def test_element_moved_from_a_deleted_storey_to_a_present_one_changed_intrinsica
     assert targets(relation(wall, "IfcRelContainedInSpatialStructure")) == (["L2"], ["L1"])
     assert wall["aspects"]["placement"] == "unchanged"
     assert wall["change_scope"] == "intrinsic"
+
+
+def _ifc2x3_bounded_value(path, upper: float):
+    f = ifcopenshell.file(schema="IFC2X3")
+    metre = f.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE")
+    f.create_entity(
+        "IfcProject",
+        GlobalId=guid("project"),
+        Name="Project",
+        UnitsInContext=f.create_entity("IfcUnitAssignment", Units=[metre]),
+    )
+    wall = f.create_entity("IfcWall", GlobalId=guid("W1"), Name="W1")
+    bounded = f.create_entity(
+        "IfcPropertyBoundedValue",
+        Name="Clearance",
+        UpperBoundValue=f.create_entity("IfcLengthMeasure", upper),
+        LowerBoundValue=f.create_entity("IfcLengthMeasure", 1.0),
+        Unit=metre,
+    )
+    pset = f.create_entity("IfcPropertySet", GlobalId=guid("pset"), Name="Pset_X", HasProperties=[bounded])
+    f.create_entity(
+        "IfcRelDefinesByProperties", GlobalId=guid("rel"), RelatedObjects=[wall], RelatingPropertyDefinition=pset
+    )
+    f.write(str(path))
+    return path
+
+
+def test_ifc2x3_bounded_value_with_a_unit_diffs_and_compares_its_bounds(tmp_path):
+    old = _ifc2x3_bounded_value(tmp_path / "old.ifc", 2.0)
+    new = _ifc2x3_bounded_value(tmp_path / "new.ifc", 3.0)
+
+    report = diff_files(old, new)
+
+    assert names(report["modified"]) == {"W1"}
+    assert diff_files(old, old)["modified"] == []

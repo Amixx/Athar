@@ -117,7 +117,8 @@ def _own_units(entity) -> dict[str, object]:
         return {"EnumerationValues": reference.Unit if reference is not None else None}
     if cls in _QUANTITIES:
         return {_QUANTITIES[cls][0]: entity.Unit}
-    return {attr: entity.Unit for attr in _VALUE_ATTRIBUTES.get(cls, ())}
+    declared = set(entity.get_attribute_names())
+    return {attr: entity.Unit for attr in _VALUE_ATTRIBUTES.get(cls, ()) if attr in declared}
 
 
 def own_unit_factors(ifc) -> dict[int, dict[str, dict[str, float]]]:
