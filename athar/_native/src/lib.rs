@@ -544,7 +544,9 @@ impl<'a> Merkle<'a> {
             let empty = !in_cycle && ent.is_geometric && ent.data_parts.is_empty() && children.is_empty();
             (&ent.data_parts, empty)
         };
-        (entity_digest(domain, &ent.canonical_class, parts, &mut children), empty)
+        // A root's class is no part of its shape.
+        let class = if domain == b'G' && ent.is_root() { "" } else { &*ent.canonical_class };
+        (entity_digest(domain, class, parts, &mut children), empty)
     }
 
     /// What the target of `edge` contributes to the data digest of its
@@ -778,7 +780,14 @@ fn topology_hashes(entities: &[canon::Entity], graph: &edges::Graph) -> HashMap<
 ///
 /// One root signature, flattened for the FFI boundary:
 /// (step_id, guid, name, entity_type, canonical_class, vh_geometry, vh_data,
-///  vh_topology, (placement, placement_unresolved), centroid, aabb, data_facts).
+///  vh_topology, (placement, placement_unresolved, local_placement,
+///  placement_parent), centroid, aabb, (data_facts, relation_targets)).
+///
+/// `placement_parent` is the step id of the root whose object placement the
+/// local placement is relative to.
+///
+/// A relation target is `(index into the bundle's relation labels, step id of
+/// the named entity)`.
 type SigTuple = (
     i64,
     Option<String>,
@@ -788,11 +797,15 @@ type SigTuple = (
     String,
     String,
     String,
-    (Option<Vec<i64>>, Option<String>),
+    (Option<Vec<i64>>, Option<String>, Option<Vec<i64>>, Option<i64>),
     Option<Vec<f64>>,
     Option<Vec<f64>>,
-    Vec<(String, String)>,
+    (Vec<(String, String)>, Vec<(u32, i64)>),
 );
+
+/// `(GlobalId, canonical class, name, content digest, GlobalId carried by
+/// another entity of the file)` of an entity.
+type EntityLabel = (Option<String>, String, Option<String>, String, bool);
 
 struct NativeBundle {
     signatures: Vec<SigTuple>,
@@ -801,6 +814,10 @@ struct NativeBundle {
     cycle_breaks: i64,
     warnings: Vec<String>,
     coverage: Coverage,
+    /// `(relationship class, role attribute)` per relation label index.
+    relation_labels: Vec<(String, String)>,
+    /// Relation targets that have no signature, by step id.
+    related_entities: HashMap<i64, EntityLabel>,
 }
 
 fn build_bundle(
@@ -850,6 +867,33 @@ fn build_bundle(
     let cycle_breaks = merkle.cyclic_components;
     let shape_facts = shape_facts_of_data_reached_entities(&parsed.entities, &graph, &merkle);
     let repeated = merkle.repeated_set_members();
+    let mut related_guid_uses: HashMap<&str, u32> = HashMap::new();
+    for &(_, _, target) in &graph.relation_targets {
+        let named = &parsed.entities[target as usize];
+        if let (false, Some(guid)) = (named.is_root(), &named.guid) {
+            related_guid_uses.insert(guid, 0);
+        }
+    }
+    for entity in &parsed.entities {
+        if let Some(uses) = entity.guid.as_deref().and_then(|guid| related_guid_uses.get_mut(guid)) {
+            *uses += 1;
+        }
+    }
+    let mut related_entities: HashMap<i64, EntityLabel> = HashMap::new();
+    for &(_, _, target) in &graph.relation_targets {
+        let named = &parsed.entities[target as usize];
+        if !named.is_root() {
+            related_entities.entry(named.step_id).or_insert_with(|| {
+                (
+                    named.guid.clone(),
+                    named.canonical_class.to_string(),
+                    named.name.clone(),
+                    hex::encode(merkle.content(target)),
+                    named.guid.as_deref().map_or(false, |guid| related_guid_uses[guid] > 1),
+                )
+            });
+        }
+    }
     let dataless = merkle.dataless;
     for e in &mut parsed.entities {
         e.geom_parts = Vec::new();
@@ -874,6 +918,7 @@ fn build_bundle(
     let spatial_feats = spatial::build_spatial_features(&ctx)?;
     prof.mark("spatial");
 
+    let mut relations = graph.relation_targets.iter().peekable();
     let mut facts = FactCollector::new(&parsed.entities, &graph, &dataless, &repeated);
     let mut signatures: Vec<SigTuple> = Vec::new();
     for (i, e) in parsed.entities.iter().enumerate() {
@@ -919,9 +964,15 @@ fn build_bundle(
         });
         let placement = feat.placement.clone();
         let placement_unresolved = feat.placement_unresolved.clone();
+        let local_placement = feat.local_placement.clone();
+        let placement_parent = feat.placement_parent.map(|parent| parsed.entities[parent as usize].step_id);
         let centroid = feat.centroid.map(|c| c.to_vec());
         let aabb = feat.aabb.map(|a| a.to_vec());
         let data_facts = facts.collect(entity);
+        let mut relation_targets: Vec<(u32, i64)> = Vec::new();
+        while let Some(&(_, label, target)) = relations.next_if(|relation| relation.0 == entity) {
+            relation_targets.push((label, parsed.entities[target as usize].step_id));
+        }
         signatures.push((
             e.step_id,
             e.guid.clone(),
@@ -931,10 +982,10 @@ fn build_bundle(
             vh_geometry,
             vh_data,
             vh_topology,
-            (placement, placement_unresolved),
+            (placement, placement_unresolved, local_placement, placement_parent),
             centroid,
             aabb,
-            data_facts,
+            (data_facts, relation_targets),
         ));
     }
     signatures.sort_by_key(|s| s.0);
@@ -964,6 +1015,12 @@ fn build_bundle(
         cycle_breaks,
         warnings,
         coverage,
+        relation_labels: graph
+            .relation_labels
+            .iter()
+            .map(|(class, role)| (class.to_string(), role.to_string()))
+            .collect(),
+        related_entities,
     })
 }
 
@@ -1026,9 +1083,14 @@ fn shape_facts_of_data_reached_entities(
 }
 
 /// Readable facts of everything `vh_data` of a root covers, so a data change
-/// can name what differs. A path is the positions of the ordered lists passed
-/// over data edges on the way, then the class and attribute of the entity
-/// holding the value; repeated paths are numbered.
+/// can name what differs. A path is the owners and the positions of the
+/// ordered lists passed over data edges on the way, then the class and
+/// attribute of the entity holding the value; repeated paths are numbered.
+///
+/// An owner is an entity with a GlobalId below the root (a property set, a
+/// type object). `GlobalId` enters no hash, so an owner is labelled by class
+/// and `Name`; the GlobalId is added only to owners of one root whose labels
+/// would otherwise be equal.
 struct FactCollector<'a> {
     entities: &'a [canon::Entity],
     graph: &'a edges::Graph,
@@ -1038,7 +1100,14 @@ struct FactCollector<'a> {
     prefixes: Vec<String>,
     seen: HashSet<(u32, Scope, u32)>,
     on_path: HashSet<u32>,
+    /// Owner label without GlobalId -> the first owner carrying it.
+    owners: HashMap<String, u32>,
+    /// Owners sharing a label with another owner of the current root.
+    collided: HashSet<u32>,
 }
+
+/// Delimits an owner's entity index inside a path until its label is known.
+const OWNER_MARK: char = '\0';
 
 impl<'a> FactCollector<'a> {
     fn new(
@@ -1055,13 +1124,40 @@ impl<'a> FactCollector<'a> {
             prefixes: vec![String::new()],
             seen: HashSet::new(),
             on_path: HashSet::new(),
+            owners: HashMap::new(),
+            collided: HashSet::new(),
         }
+    }
+
+    fn owner_label(&self, owner: u32, with_guid: bool) -> String {
+        let ent = &self.entities[owner as usize];
+        match (&ent.name, &ent.guid, with_guid) {
+            (Some(name), Some(guid), true) => format!("[Name={name},GlobalId={guid}]"),
+            (None, Some(guid), true) => format!("[GlobalId={guid}]"),
+            (Some(name), _, _) => format!("[Name={name}]"),
+            (None, _, _) => String::new(),
+        }
+    }
+
+    /// `path` with every marked owner index replaced by `label(owner)`.
+    fn with_owner_labels(path: &str, label: impl Fn(u32) -> String) -> String {
+        let mut out = String::with_capacity(path.len());
+        for (i, part) in path.split(OWNER_MARK).enumerate() {
+            if i % 2 == 0 {
+                out.push_str(part);
+            } else {
+                out.push_str(&label(part.parse().expect("owner index")));
+            }
+        }
+        out
     }
 
     fn collect(&mut self, root: u32) -> Vec<(String, String)> {
         self.prefixes.truncate(1);
         self.seen.clear();
         self.on_path.clear();
+        self.owners.clear();
+        self.collided.clear();
         let mut facts: Vec<(String, String)> = Vec::new();
         // (entity, scope, prefix, leaving)
         let mut stack: Vec<(u32, Scope, u32, bool)> = vec![(root, Scope::Full, 0, false)];
@@ -1078,7 +1174,22 @@ impl<'a> FactCollector<'a> {
 
             let ent = &self.entities[current as usize];
             let label = match &ent.guid {
-                Some(g) => format!("{}{}[GlobalId={}]", self.prefixes[prefix as usize], ent.canonical_class, g),
+                Some(g) if current == root => {
+                    format!("{}{}[GlobalId={}]", self.prefixes[prefix as usize], ent.canonical_class, g)
+                }
+                Some(_) => {
+                    let label = format!(
+                        "{}{}{OWNER_MARK}{current}{OWNER_MARK}",
+                        self.prefixes[prefix as usize], ent.canonical_class
+                    );
+                    let plain = Self::with_owner_labels(&label, |owner| self.owner_label(owner, false));
+                    let first = *self.owners.entry(plain).or_insert(current);
+                    if first != current {
+                        self.collided.insert(first);
+                        self.collided.insert(current);
+                    }
+                    label
+                }
                 None => format!("{}{}", self.prefixes[prefix as usize], ent.canonical_class),
             };
             for (attr, value) in &ent.data_facts {
@@ -1089,6 +1200,8 @@ impl<'a> FactCollector<'a> {
                     facts.push((format!("{label}.{attr}"), value.clone()));
                 }
             }
+            // Content below an owner is listed under that owner.
+            let mut owned_prefix: Option<u32> = None;
             let graph = self.graph;
             for i in graph.child_range(current) {
                 if self.repeated[i] {
@@ -1103,15 +1216,30 @@ impl<'a> FactCollector<'a> {
                     }
                     _ => continue,
                 };
-                let positioned = child_scope == Scope::Full && edge.ord != canon::UNORDERED && !edge.cyclic;
-                let child_prefix = if !positioned {
+                let base = if current == root || ent.guid.is_none() || child_scope != Scope::Full {
                     prefix
                 } else {
-                    let text = format!("{}{}[{}]/", self.prefixes[prefix as usize], edge.label, edge.ord + 1);
+                    *owned_prefix.get_or_insert_with(|| {
+                        self.prefixes.push(format!("{label}/"));
+                        self.prefixes.len() as u32 - 1
+                    })
+                };
+                let positioned = child_scope == Scope::Full && edge.ord != canon::UNORDERED && !edge.cyclic;
+                let child_prefix = if !positioned {
+                    base
+                } else {
+                    let text = format!("{}{}[{}]/", self.prefixes[base as usize], edge.label, edge.ord + 1);
                     self.prefixes.push(text);
                     self.prefixes.len() as u32 - 1
                 };
                 stack.push((edge.target, child_scope, child_prefix, false));
+            }
+        }
+        for (path, _) in facts.iter_mut() {
+            if path.contains(OWNER_MARK) {
+                *path = Self::with_owner_labels(path, |owner| {
+                    self.owner_label(owner, self.collided.contains(&owner))
+                });
             }
         }
         number_repeated_paths(facts)
@@ -1146,14 +1274,20 @@ type CoverageTuple = (BTreeMap<String, i64>, BTreeMap<String, (i64, String)>, BT
 /// `schema_json` is the per-class descriptor map; `unit_factors` maps unit
 /// types to scale factors. Returns `(signatures, edge_stats, (dangling_refs,
 /// cycle_breaks, warnings), (unknown_relationships, unreached,
-/// ignored_by_design))`.
+/// ignored_by_design), (relation_labels, related_entities))`.
 #[pyfunction]
 fn build_signature_bundle(
     py: Python<'_>,
     path: String,
     schema_json: String,
     unit_factors: HashMap<String, f64>,
-) -> PyResult<(Vec<SigTuple>, BTreeMap<String, i64>, (i64, i64, Vec<String>), CoverageTuple)> {
+) -> PyResult<(
+    Vec<SigTuple>,
+    BTreeMap<String, i64>,
+    (i64, i64, Vec<String>),
+    CoverageTuple,
+    (Vec<(String, String)>, HashMap<i64, EntityLabel>),
+)> {
     let bundle = py
         .allow_threads(|| build_bundle(&path, &schema_json, &unit_factors))
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
@@ -1163,6 +1297,7 @@ fn build_signature_bundle(
         bundle.edge_stats,
         (bundle.dangling_refs, bundle.cycle_breaks, bundle.warnings),
         (coverage.unknown_relationships, coverage.unreached, coverage.ignored_by_design),
+        (bundle.relation_labels, bundle.related_entities),
     ))
 }
 

@@ -979,6 +979,37 @@ fn human_value(
     }
 }
 
+/// A real as people read it: the hashed quantity as a decimal number in the
+/// SI unit its measure is normalized to, followed by that unit. Two reals
+/// print alike exactly when they hash alike.
+fn human_real(value: f64, measure: Measure, attr_dir: bool, units: &HashMap<String, f64>) -> String {
+    let effective = if measure == Measure::Default && attr_dir { Measure::Direction } else { measure };
+    let quantized = quantize_real(value, measure, attr_dir, units);
+    let scale = effective.scale() as u64;
+    let digits = scale.ilog10() as usize;
+    let magnitude = quantized.unsigned_abs();
+    let mut out = String::new();
+    if quantized < 0 {
+        out.push('-');
+    }
+    out.push_str(&(magnitude / scale).to_string());
+    let fraction = format!("{:0digits$}", magnitude % scale);
+    let fraction = fraction.trim_end_matches('0');
+    if !fraction.is_empty() {
+        out.push('.');
+        out.push_str(fraction);
+    }
+    let unit = match effective {
+        Measure::Length => " m",
+        Measure::Area => " m2",
+        Measure::Volume => " m3",
+        Measure::Angle => " rad",
+        Measure::Direction | Measure::Default => "",
+    };
+    out.push_str(unit);
+    out
+}
+
 fn human_scalar(
     token: &Token,
     measure: Measure,
@@ -990,7 +1021,7 @@ fn human_scalar(
         Token::Null => "<null>".to_string(),
         Token::Derived => "<derived>".to_string(),
         Token::Int(i) => i.to_string(),
-        Token::Real(r) => quantize_real(*r, measure, attr_dir, units).to_string(),
+        Token::Real(r) => human_real(*r, measure, attr_dir, units),
         Token::Str(s) => nfc_strip(s),
         Token::Enum(e) => match e.to_uppercase().as_str() {
             "T" | "TRUE" => "true".to_string(),
@@ -1104,6 +1135,21 @@ mod tests {
         let list = Shape::Agg { sorted: false, elem: Box::new(Shape::Leaf { m: Measure::Default }) };
         let strings = Token::List(vec![Token::Str("t".repeat(200))]);
         assert!(fact_value(&strings, &list, false, &none).starts_with("202 bytes, sha256:"));
+    }
+
+    #[test]
+    fn reals_read_as_si_numbers_with_their_unit() {
+        let mm = units(&[("LENGTHUNIT", 0.001), ("AREAUNIT", 0.000001)]);
+        assert_eq!(human_real(3000.0, Measure::Length, false, &mm), "3 m");
+        assert_eq!(human_real(-12.5, Measure::Length, false, &mm), "-0.0125 m");
+        assert_eq!(human_real(2_500_000.0, Measure::Area, false, &mm), "2.5 m2");
+        assert_eq!(human_real(0.25, Measure::Default, false, &mm), "0.25");
+        assert_eq!(human_real(-0.5, Measure::Default, true, &mm), "-0.5");
+        assert_eq!(human_real(0.0, Measure::Angle, false, &mm), "0 rad");
+        assert_eq!(
+            human_real(3000.0000001, Measure::Length, false, &mm),
+            human_real(3000.0, Measure::Length, false, &mm)
+        );
     }
 
     #[test]

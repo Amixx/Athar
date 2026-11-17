@@ -116,3 +116,9 @@ export function buildDiffIndex(report: AtharReport): DiffIndex {
 
   return { report, old: oldMap, new: newMap, placementPairs }
 }
+
+/** Names of relation targets (GlobalId when unnamed, step id when neither), or an em dash for none. */
+export function formatRelationTargets(targets: EntitySummary[]): string {
+  if (targets.length === 0) return '—'
+  return targets.map((target) => target.name ?? target.guid ?? `#${target.step_id}`).join(', ')
+}

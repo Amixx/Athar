@@ -2,8 +2,11 @@
 
 File-independent schema glue the native parser needs from ifcopenshell:
 
-- ``open_ifc`` — open a file with ifcopenshell, turning its parse failures into
-  an ``IfcParseError`` that names the file and the cause.
+- ``require_readable_file`` — rejects a path that is not a readable regular
+  file.
+- ``open_ifc`` — the one place ifcopenshell opens a file: checks the path with
+  ``require_readable_file`` and turns parse failures into an ``IfcParseError``
+  that names the file and the cause.
 - ``_assert_supported_schema`` — guard the engine's supported schema families.
 - the measure-type helpers (``_measure_type_from_attr_type`` and the measure
   sets), consumed by ``native_schema`` to precompute per-attribute descriptors.
@@ -16,8 +19,11 @@ never materializes the file's entities.
 
 from __future__ import annotations
 
+import errno
 import math
+import os
 import re
+import stat
 from typing import Any
 
 from .constants import SUPPORTED_SCHEMAS
@@ -47,8 +53,26 @@ class IfcParseError(ValueError):
     """An IFC file ifcopenshell cannot parse."""
 
 
+def require_readable_file(path: str | os.PathLike[str]) -> None:
+    """Raise an ``OSError`` naming ``path`` unless it is a regular file this process can read.
+
+    ifcopenshell crashes the interpreter on a file it cannot open, and opening
+    a FIFO blocks, so the check runs before anything opens the path.
+    """
+    mode = os.stat(path).st_mode
+    if stat.S_ISDIR(mode):
+        raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), path)
+    if not stat.S_ISREG(mode):
+        raise OSError(errno.EINVAL, "Not a regular file", path)
+    with open(path, "rb"):
+        pass
+
+
 def open_ifc(path: str):
+    """Open ``path`` with ifcopenshell after ``require_readable_file``."""
     import ifcopenshell
+
+    require_readable_file(path)
 
     # ifcopenshell reports the cause only in its process-wide log, which
     # get_log() drains; drop earlier entries so only this parse's remain.
@@ -132,22 +156,35 @@ def _safe_type_name(attr_type) -> str | None:
 
 
 def _extract_unit_context(ifc) -> dict[str, Any]:
+    """Factors per unit type of the file's unit assignment.
+
+    ``unit_factors`` covers every unit; ``property_unit_factors`` only the unit
+    types whose unit is an ``IfcSIUnit`` or an ``IfcConversionBasedUnit``,
+    the ones a value can be converted from to SI.
+    """
     unit_factors: dict[str, float] = {}
+    property_unit_factors: dict[str, float] = {}
     assignments = ifc.by_type("IfcUnitAssignment")
-    if not assignments:
-        return {"unit_factors": unit_factors}
-    for unit in assignments[0].Units:
-        unit_type = getattr(unit, "UnitType", None)
-        if not isinstance(unit_type, str) or not unit_type:
-            continue
-        factor = _unit_factor(unit)
-        if not (isinstance(factor, (int, float)) and math.isfinite(float(factor)) and float(factor) > 0):
-            continue
-        unit_factors[unit_type] = float(factor)
-    return {"unit_factors": {k: unit_factors[k] for k in sorted(unit_factors)}}
+    if assignments:
+        for unit in assignments[0].Units:
+            unit_type = getattr(unit, "UnitType", None)
+            if not isinstance(unit_type, str) or not unit_type:
+                continue
+            factor = unit_factor(unit)
+            if not (isinstance(factor, (int, float)) and math.isfinite(float(factor)) and float(factor) > 0):
+                continue
+            unit_factors[unit_type] = float(factor)
+            if unit.is_a("IfcSIUnit") or unit.is_a("IfcConversionBasedUnit"):
+                property_unit_factors[unit_type] = float(factor)
+            else:
+                property_unit_factors.pop(unit_type, None)
+    return {
+        "unit_factors": {k: unit_factors[k] for k in sorted(unit_factors)},
+        "property_unit_factors": {k: property_unit_factors[k] for k in sorted(property_unit_factors)},
+    }
 
 
-def _unit_factor(unit) -> float:
+def unit_factor(unit) -> float:
     if unit is None or not hasattr(unit, "is_a"):
         return 1.0
     if unit.is_a("IfcSIUnit"):
@@ -156,15 +193,15 @@ def _unit_factor(unit) -> float:
         conversion = getattr(unit, "ConversionFactor", None)
         if conversion is None:
             return 1.0
-        base = _unit_factor(getattr(conversion, "UnitComponent", None))
+        base = unit_factor(getattr(conversion, "UnitComponent", None))
         value = _float_value_component(getattr(conversion, "ValueComponent", None))
         return base if value is None else value * base
     if unit.is_a("IfcDerivedUnit"):
         factor = 1.0
         for element in getattr(unit, "Elements", []) or []:
-            unit_factor = _unit_factor(getattr(element, "Unit", None))
+            element_factor = unit_factor(getattr(element, "Unit", None))
             exponent = int(getattr(element, "Exponent", 0) or 0)
-            factor *= unit_factor ** exponent
+            factor *= element_factor ** exponent
         return factor
     return 1.0
 

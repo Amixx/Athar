@@ -57,6 +57,8 @@ def render_text_report(
         f"Schema: {_escape_name(clip(schemas.get('old', '?')))} -> {_escape_name(clip(schemas.get('new', '?')))}",
         _summary_line(stats),
     ]
+    if stats.get("guid_changed", 0) > 0:
+        lines.append(f"Regenerated GlobalIds: {stats['guid_changed']}")
 
     scope = stats.get("modified_change_scope") or {}
     if any(scope.get(name, 0) for name in ("intrinsic", "mixed", "transitive")):
@@ -101,7 +103,8 @@ def render_text_report(
             items = [
                 item for item in items
                 if (item.get("new") or {}).get("step_id") not in cohort_members
-                or any(item.get("aspects", {}).get(name) == "changed" for name in ("data", "geometry", "topology"))
+                or any(item.get("aspects", {}).get(name) == "changed" for name in ("data", "geometry", "topology", "relations", "class"))
+                or (item.get("identity") or {}).get("guid_changed")
             ]
         if not items:
             continue
@@ -125,7 +128,8 @@ def render_text_report(
         if hidden > 0:
             lines.append(f"... and {hidden} more {section} not shown")
 
-    if stats.get("added", 0) == stats.get("deleted", 0) == stats.get("modified", 0) == 0 and not orphan_line:
+    no_entity_changes = stats.get("added", 0) == stats.get("deleted", 0) == stats.get("modified", 0) == 0
+    if no_entity_changes and not orphan_line and not stats.get("guid_changed", 0):
         lines.append("")
         lines.append("No semantic entity changes.")
 
@@ -180,9 +184,13 @@ def render_markdown_report(
     if orphan_line:
         lines.extend(["", orphan_line])
 
+    regenerated = int(stats.get("guid_changed", 0) or 0)
+    if regenerated > 0:
+        lines.extend(["", f"Regenerated GlobalIds: {regenerated}"])
+
     changed_total = sum(int(stats.get(name, 0) or 0) for name in ("added", "deleted", "modified"))
     if changed_total == 0:
-        if not orphan_line:
+        if not orphan_line and not regenerated:
             lines.extend(["", "No semantic entity changes."])
     else:
         lines.extend(["", "<details>", "<summary>Changed entities</summary>", ""])
@@ -247,7 +255,7 @@ def _render_item(section: str, marker: str, item: dict, *, suppress_placement: b
         new = item.get("new", {})
         aspects = item.get("aspects", {})
         changed = [
-            name for name in ("geometry", "data", "topology", "placement")
+            name for name in ("geometry", "data", "topology", "placement", "relations", "class")
             if aspects.get(name) == "changed" and not (name == "placement" and suppress_placement)
         ]
         detail = ", ".join(changed) if changed else "no aspect changes"
@@ -262,11 +270,31 @@ def _render_item(section: str, marker: str, item: dict, *, suppress_placement: b
             lines.append(f"  match: {reason} score {score}; old {_entity_ref(old)} -> new {_entity_ref(new)}")
         if placement:
             lines.append(f"  placement vector: {_vector_mm(aspects['placement_delta_mm'])}")
+        lines.extend(_relation_lines(item.get("relations")))
+        class_change = item.get("class")
+        if class_change:
+            lines.append(f"  class: {_escape_name(clip(class_change.get('old_class', '?')))} -> {_escape_name(clip(class_change.get('new_class', '?')))}")
+        if item.get("moved_with"):
+            lines.append(f"  moved with: {_entity_label(item['moved_with'])}")
+        identity = item.get("identity")
+        if identity and identity.get("guid_changed"):
+            lines.append(f"  GlobalId: {_escape_name(clip(identity.get('old_guid')))} -> {_escape_name(clip(identity.get('new_guid')))}")
         property_deltas = item.get("property_deltas")
         lines.extend(_property_delta_lines(property_deltas))
         lines.extend(_data_delta_lines(item.get("data_delta"), covered=property_deltas))
         return lines
     return [f"{marker} {_entity_label(item)}"]
+
+
+def _relation_lines(relations: object) -> list[str]:
+    if not isinstance(relations, list):
+        return []
+    lines: list[str] = []
+    for change in relations:
+        old = ", ".join(_entity_label(entity) for entity in change.get("old", [])) or "<none>"
+        new = ", ".join(_entity_label(entity) for entity in change.get("new", [])) or "<none>"
+        lines.append(f"  relation: {_escape_name(clip(change.get('relation', '?')))} {_escape_name(clip(change.get('role', '?')))}: {old} -> {new}")
+    return lines
 
 
 def _property_delta_lines(deltas: dict | None) -> list[str]:

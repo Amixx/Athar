@@ -4,10 +4,11 @@
 neighborhood change" (see athar/bottom/AGENTS.md). Two consequences are pinned
 here with constructed spatial models:
 
-- Re-containment between two same-class containers with identical placement is
-  invisible on the element itself and surfaces on both containers instead.
-  This is the documented blind spot of class-only seeds: the element's direct
-  neighborhood is `{IfcBuildingStorey}` before and after.
+- Re-containment between two same-class containers with identical placement
+  leaves the element's own topology hash equal (its direct neighborhood is
+  `{IfcBuildingStorey}` before and after) and surfaces on both containers.
+  The element itself reports the `relations` aspect, which compares the
+  container's matched identity.
 - Re-containment into a different-class container plus a data edit on the same
   element is the positive `mixed` case: intrinsic data change plus a genuine
   neighborhood-structure change on one entity.
@@ -123,7 +124,7 @@ def _by_guid(section: list[dict], guid: str) -> dict | None:
     return None
 
 
-def test_same_class_recontainment_surfaces_on_containers_not_element(tmp_path):
+def test_same_class_recontainment_surfaces_on_element_and_containers(tmp_path):
     old = str(tmp_path / "contained-a.ifc")
     new = str(tmp_path / "contained-b.ifc")
     _build(old, victim_container="storey_a", victim_name="victim")
@@ -134,9 +135,14 @@ def test_same_class_recontainment_surfaces_on_containers_not_element(tmp_path):
     assert report["stats"]["added"] == 0
     assert report["stats"]["deleted"] == 0
 
-    # Documented canon-v5 blind spot: the moved element's direct neighborhood
-    # is one IfcBuildingStorey before and after, so it reports unchanged.
-    assert _by_guid(report["unchanged"], _VICTIM) is not None
+    # The moved element's direct neighborhood is one IfcBuildingStorey before
+    # and after, so its topology hash is equal; the container's identity is
+    # compared through the match.
+    victim = _by_guid(report["modified"], _VICTIM)
+    assert victim["aspects"]["topology"] == "unchanged"
+    assert victim["aspects"]["relations"] == "changed"
+    [change] = victim["relations"]
+    assert (change["old"][0]["guid"], change["new"][0]["guid"]) == (_STOREY_A, _STOREY_B)
 
     for storey_guid in (_STOREY_A, _STOREY_B):
         item = _by_guid(report["modified"], storey_guid)

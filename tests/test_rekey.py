@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import subprocess
 import sys
@@ -72,6 +73,35 @@ def test_rekey_cli_and_input_protection(tmp_path):
     model(new, schema="IFC2X3")
     with pytest.raises(SchemaMismatchError):
         rekey_files(str(base), str(new), str(out))
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads any file")
+@pytest.mark.parametrize("broken", ["unreadable", "directory"])
+@pytest.mark.parametrize("side", [0, 1])
+def test_rekey_cli_reports_an_unreadable_input_as_an_error(tmp_path, broken, side):
+    good, bad, out = tmp_path / "good.ifc", tmp_path / "bad.ifc", tmp_path / "out.ifc"
+    model(good)
+    if broken == "unreadable":
+        model(bad)
+        bad.chmod(0)
+    else:
+        bad.mkdir()
+    inputs = [str(good), str(good)]
+    inputs[side] = str(bad)
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "athar", "rekey", *inputs, "-o", str(out)], capture_output=True, text=True
+        )
+    finally:
+        if broken == "unreadable":
+            bad.chmod(0o600)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    [line] = result.stderr.splitlines()
+    assert line.startswith("Error: ") and str(bad) in line
+    assert not out.exists()
 
 
 def test_rekey_cycles_and_replaced_root_do_not_break_references(tmp_path):

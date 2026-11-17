@@ -43,9 +43,16 @@ class SchemaMismatchError(ValueError):
         )
 
 
-def diff_files(old_path: str, new_path: str, *, generated_at: str | None = None) -> dict:
+def diff_files(
+    old_path: str | os.PathLike[str],
+    new_path: str | os.PathLike[str],
+    *,
+    generated_at: str | None = None,
+) -> dict:
     """Diff two IFC files with the current architecture."""
 
+    old_path = os.fsdecode(old_path)
+    new_path = os.fsdecode(new_path)
     old_bundle = _load_bundle(old_path)
     if old_path == new_path:
         new_bundle = old_bundle
@@ -67,6 +74,8 @@ def diff_bundles(
     matches, unmatched_old, unmatched_new, matcher_diagnostics = match_signatures(
         old_bundle.signatures,
         new_bundle.signatures,
+        old_bundle.related_entities,
+        new_bundle.related_entities,
     )
     report = build_delta_report(old_bundle, new_bundle, matches, unmatched_old, unmatched_new)
     report["stats"]["guid_collisions"] = {
@@ -80,8 +89,8 @@ def diff_bundles(
 
 
 def stream_diff_files(
-    old_path: str,
-    new_path: str,
+    old_path: str | os.PathLike[str],
+    new_path: str | os.PathLike[str],
     *,
     mode: str = "ndjson",
     chunk_size: int = 1000,
@@ -111,6 +120,8 @@ def _stream_ndjson(report: dict) -> Iterator[str]:
     for section in ("added", "deleted", "modified", "unchanged"):
         for item in report.get(section, []):
             yield json.dumps({"record_type": section, "item": item}, sort_keys=True)
+    for item in report["guid_changed"]:
+        yield json.dumps({"record_type": "guid_changed", "item": item}, sort_keys=True)
     for change, items in report.get("orphan_property_sets", {}).items():
         for item in items:
             yield json.dumps({"record_type": f"orphan_property_set_{change}", "item": item}, sort_keys=True)
@@ -132,6 +143,9 @@ def _stream_chunked_json(report: dict, *, chunk_size: int) -> Iterator[str]:
         for i in range(0, len(rows), chunk_size):
             chunk = rows[i : i + chunk_size]
             yield json.dumps({"chunk_type": section, "items": chunk}, sort_keys=True)
+    rows = report["guid_changed"]
+    for i in range(0, len(rows), chunk_size):
+        yield json.dumps({"chunk_type": "guid_changed", "items": rows[i : i + chunk_size]}, sort_keys=True)
     for change, rows in report.get("orphan_property_sets", {}).items():
         for i in range(0, len(rows), chunk_size):
             chunk = rows[i : i + chunk_size]

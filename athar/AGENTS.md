@@ -27,17 +27,22 @@ GitHub comments, and other presentation concerns.
   policy signals only. Exit `2` is policy violation; exit `1` is execution or
   configuration error. Policy normalization rejects unknown keys, malformed
   values and unknown IFC classes before diffing; class rules include subtypes.
-  Property-level gates (`forbid_property_removal`,
+  `forbid_aspect_changes` takes the aspects `geometry`, `data`, `topology`,
+  `placement`, `relations` and `class`. Property-level gates
+  (`forbid_property_removal`,
   `forbid_property_value_change`, `forbid_property_addition`) require the
   report's `property_deltas` on data-changed entities. Absence is ambiguous
   (comparison unavailable or no property changes) and raises an error.
-  Property deltas are keyed by (pset, property name, inherited); type-level
-  values are `inherited: true` entries beside the occurrence's own values.
+  Each `property_deltas` entry carries `pset`, `name` and `inherited` (the
+  origin of the effective value).
   `forbid_property_value_change` keys are property names and match that name
   in every pset and origin; each violating entity lists all matching
   `changes` (pset, inherited, old/new value). Removed values and remove/add
   pairs with different values violate the rule; equal-value moves do not.
-  `count_changed` entries for duplicate property keys fail closed.
+  `origin_changed` and `overridden_changed` entries leave the effective value
+  as it was and do not violate it. A `count_changed` entry violates it only
+  when a count is above 1 (a duplicated key); a count between 0 and 1 is an
+  override added or removed, which the `changed` entry already judges.
   `property_removed` lists removed properties with their pset and origin.
   `max_placement_cohort_share` fails when one report placement cohort exceeds
   the configured share of matched products. Schema mismatch is a policy
@@ -91,14 +96,24 @@ Current tiers, strongest first:
 
 1. `guid`: unique `GlobalId` on both sides plus same canonical class. Score
    `1.0` when the full vector is identical, otherwise `0.9`.
-2. `geometry_hash`: same-class full signature-vector equality, zipped in stable
-   STEP order for interchangeable entities. Score `0.8`.
+2. `geometry_hash`: same-class full signature-vector equality. Score `0.8`.
+   The vector does not cover relation targets, so when several entities on a
+   side share one vector, those naming the same targets pair first: a target
+   with a signature is identified by its match, a target without one by class
+   and content. Buckets are resolved in dependency order, each after the
+   buckets its members name; buckets naming each other in a cycle are
+   released lowest old STEP id first, with a target in an unresolved bucket
+   standing for that bucket. Entities that targets do not tell apart, and
+   those left without a counterpart, pair in STEP order.
+
+3. `guid_reclassified`: unique `GlobalId` on both sides, different canonical
+   class, both entities unmatched by the tiers above. Score `0.7`.
 
 The full vector is the three hashes plus the placement matrix or, for an
 unresolved chain, its placement digest.
 
 Each tier only examines still-unmatched pools and emits disjoint 1:1 pairs.
-Never match across canonical classes. Do not reintroduce topology-only,
+Never match across canonical classes without the same unique `GlobalId`. Do not reintroduce topology-only,
 spatial-nearest, candidate fan-out, or tuning-knob matching without fresh
 corpus evidence and tests.
 
@@ -106,15 +121,62 @@ corpus evidence and tests.
 
 - Sections are `added`, `deleted`, `modified`, and `unchanged`.
 - Matched items include `match{score,reason}` plus per-aspect
-  `geometry`, `data`, `topology`, and `placement` states.
+  `geometry`, `data`, `topology`, `placement`, `relations`, and `class`
+  states.
+- `relations` is the one aspect not derived from a per-file hash. The delta
+  compares, through the match mapping, the entities a matched pair names
+  through its relationships (`SignatureVector.relation_targets`). A target
+  with a signature is the same entity when it is matched to the new target;
+  a target without one (a type object) when the GlobalIds are equal or its
+  class and content are. A GlobalId that several entities of one file carry
+  identifies none of them, so two types sharing a GlobalId are told apart by
+  content and a re-typing between them is reported. A type object replaced
+  by a content-equal copy with another GlobalId is the same type and reports
+  nothing. A changed item carries `relations`: a list of
+  `{relation, role, old, new}` with the relationship class, the role
+  attribute holding the target, and the targets only the old or only the new
+  side names (`step_id`, `guid`, `name`, `class`). The topology hash is
+  class-only, so an element moved between two storeys keeps its topology and
+  reports `relations`; the storeys report `topology`, scope `transitive`.
+  A relations change is `transitive` when every target listed in `old` and
+  `new` is an entity with a signature that is unmatched (deleted or added):
+  the pair differs only because a neighbour disappeared or appeared, which
+  `added` and `deleted` already state. It is `intrinsic` as soon as one
+  listed target is a matched entity or has no signature (a type object). A
+  port or opening hosted by a deleted wall is `transitive`, and so is an element whose
+  deleted storey was replaced by an added one; a space taken out of a storey
+  that is still present, or an element moved from a deleted storey to one
+  that already existed, is `intrinsic`. The `relations` aspect is `changed`
+  and the entry is listed in every one of these cases. A relationship that
+  carries attributes of its own (`IfcRelSpaceBoundary`,
+  `IfcRelConnectsPathElements`) is also data of the entities it joins, so
+  losing it with the neighbour changes `data` as well and the scope is
+  `mixed`.
+- A pair matched by content (`geometry_hash`) whose two GlobalIds differ
+  carries `identity{guid_changed: true, old_guid, new_guid}`. It stays in
+  `unchanged` unless an aspect changed. The top-level `guid_changed` list
+  holds `{old, new}` entity summaries of every such pair,
+  `stats.guid_changed` their count, and streams emit `guid_changed` records
+  after the sections.
+- A pair whose world placement changed while its local placement did not
+  moved with an ancestor: `moved_with` is the summary of the nearest entity
+  up the placement chain (the root whose object placement the local placement
+  is relative to, then that root's parent, and so on) whose own local
+  placement changed or which hangs under a different parent. Its placement
+  change counts as `transitive`. An element whose own local placement or
+  placement parent changed carries no `moved_with` and is `intrinsic`.
+  A local placement that places no root is part of the frame of the root
+  below it.
 - Modified items include `placement_delta_mm`, `data_hash{old,new}`, and
   `change_scope` (`intrinsic`, `transitive`, `mixed`, `none`). `data` is unchanged if and only if `data_hash.old == data_hash.new`; each hash-backed aspect is changed exactly when its hash differs.
 - Editing a type representation map reports `geometry` and `data` on an occurrence that maps it, with the map's `(shape)` fact in `data_delta`; an occurrence that does not map it reports `data` only. Editing a swept profile shared with a material profile reports `geometry` and `data`; an untouched equal copy in the material profile leaves `data` unchanged.
 - A data change always carries a non-empty `data_delta` of
-  `{path, old, new}` entries. A path is the positions of the ordered lists
-  passed on the way from the entity (`MaterialLayers[2]/`), then the class
-  (with `[GlobalId=...]` when rooted) and attribute holding the value;
-  repeated paths are numbered in value order. A value longer than 96 bytes
+  `{path, old, new}` entries. A path is the owners (entities with a
+  GlobalId below the entity) and the positions of the ordered lists passed
+  on the way from the entity (`IfcPropertySet[Name=...]/`,
+  `MaterialLayers[2]/`), then the class and attribute holding the value; the
+  entity itself is `Class[GlobalId=...]`. Repeated paths are numbered in
+  value order. A value longer than 96 bytes
   is bounded: a text keeps its first 96 bytes followed by
   `… (N bytes, sha256:<digest>)`, any other value (a colour list, a table)
   is given as its byte length and a digest. Shape content that counts as
@@ -122,7 +184,7 @@ corpus evidence and tests.
   its canonical encoding, with one `(shape)` digest for the geometry below
   it. When every fact
   is equal and only the attachment differs (an unordered member moved between
-  two owners of one class), the single entry is `<entity>.(structure)` with
+  two owners of one class that have no GlobalId), the single entry is `<entity>.(structure)` with
   the two data hash prefixes.
 - A placement chain that passes through an `IfcGridPlacement`, or that ends
   in a `PlacementRelTo` cycle, is not evaluated. The entity summary then
@@ -144,9 +206,20 @@ corpus evidence and tests.
   1 um rounding artifact split a real 45-element move) while staying
   deterministic: fixed grid, no adaptive tolerance, no chained near-matches.
   Zero-delta-on-grid placement changes (pure rotation / chain restructuring)
-  and singletons never join a cohort.
-- Because `geometry_hash` requires equal full vectors, every modified item is
-  a GUID match by construction.
+  and singletons never join a cohort. A cohort carries `root_cause`, an
+  entity summary, when every member moved with one entity or is that entity
+  (a raised building and everything placed under it); members moved one by
+  one share none.
+- `geometry_hash` requires equal full vectors, so a modified item whose
+  `relations` are unchanged is a GUID match by construction.
+- A `guid_reclassified` pair is always `modified`: its `class` aspect is
+  `changed` and the item carries `class{old_class, new_class}`; a class
+  change is `intrinsic`. `vh_geometry` of a root does not cover its class, so
+  `geometry` is changed only when the shape is. `vh_data` and `vh_topology`
+  cover the class, so `data` and `topology` are always changed on such a
+  pair; `data_delta` starts with a `<entity>.(class)` entry and compares the
+  entity's own facts under the new class, so only attributes that really
+  differ are listed.
 - `IfcProject` is reported like any other entity. Units, representation
   contexts (`WorldCoordinateSystem`, `TrueNorth`) and georeferencing are its
   data, so a unit, north or map-conversion change modifies the project and no
@@ -170,6 +243,49 @@ corpus evidence and tests.
   one content are reported from the end of the file. `stats.orphan_property_sets`
   carries `{old, new, added, removed}` counts; streams emit
   `orphan_property_set_added` / `_removed` records.
-- `count_changed` in `property_deltas` lists (pset, name, inherited) keys
-  whose occurrence count differs, so an object gaining a second identical
-  property set is not a silent data change.
+- `property_deltas` compares properties per (pset name, property name). A key
+  can have several definitions: on the occurrence and on its type, or in two
+  sets of one name. All are kept (`PropertyEntry` carries `inherited` and the
+  set's `pset_guid`). The effective value is the occurrence's when it defines
+  the key, otherwise the type's; when definitions of the effective origin
+  disagree it is the sorted list of their distinct values.
+  - `changed`: the effective value or its unit differs. `added` / `removed`:
+    the key exists on one side only. Each carries `inherited`, the origin of the
+    effective value, and `old_definitions` / `new_definitions`
+    (`{origin, pset_guid, value}`) when a side has more than one definition.
+  - `origin_changed` (`old_origin`, `new_origin`: `occurrence` or `type`):
+    the effective value comes from the other origin, reported whether or not
+    the value differs. Removing an occurrence's override of a key its type
+    also defines leaves the key in place with the type's value: it is an
+    `origin_changed` entry and a `count_changed` entry for the occurrence,
+    plus a `changed` entry when the two values differ, never `removed`.
+  - `overridden_changed`: the type's value differs while the occurrence
+    overrides it on both sides.
+  - `count_changed`: the number of definitions of one origin
+    (`inherited`) differs, so an object gaining a second identical property
+    set is not a silent data change.
+- Numbers shown for people are real numbers in SI units, never the quantized
+  integers that are hashed. A real in `data_delta` is the hashed quantity
+  printed as a decimal with the unit its measure is normalized to
+  (`IFCLENGTHMEASURE: 3.25 m`, `m2`, `m3`, `rad`; a real without a measure
+  has no unit), so two values print alike exactly when they hash alike.
+  `property_deltas` values of length, area, volume, plane angle, time and
+  mass measures and of the matching quantities are converted from the file's
+  unit (or the unit the property or quantity names itself) and the entry
+  carries `unit` (`m`, `m2`, `m3`, `rad`, `s`, `kg`); other values are as
+  written, without `unit`. A value is also as written, without `unit`, when
+  the file's unit of the measure's type, or the unit the property names, is
+  not an `IfcSIUnit` or an `IfcConversionBasedUnit` (an
+  `IfcContextDependentUnit` has no factor), or the file declares none. A `changed` entry whose two
+  sides have different units carries `old_unit` beside `unit` (either may be
+  `null`), and a value whose unit changed is `changed` even when the number
+  is equal. Only single values, enumerated values and quantities are
+  extracted; bounded, list and table values appear in `data_delta` only. `placement_delta_mm` is in millimetres whatever
+  the file's length unit.
+- `data_delta` paths list content below an owner under that owner
+  (`IfcWallType[Name=...]/IfcPropertySet[Name=...]/IfcPropertySingleValue.NominalValue`),
+  so a property fact names the set and, for a type-level value, the type it
+  comes from. An owner is labelled by class and `Name`, not by GlobalId,
+  which no hash covers: a set or type whose GlobalId was regenerated keeps
+  its paths. Owners of one entity whose labels would be equal (two sets of
+  one name) carry `[Name=...,GlobalId=...]`.

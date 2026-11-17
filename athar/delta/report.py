@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 
 from athar.bottom.types import Coverage, OrphanPropertySet, PropertyEntry, SignatureBundle, SignatureVector
@@ -23,7 +24,10 @@ def build_delta_report(
 
     modified: list[dict] = []
     unchanged: list[dict] = []
+    guid_changed: list[dict] = []
     dropped_matches = 0
+    new_step_of = {pair.old_step: pair.new_step for pair in matches}
+    matched_new = set(new_step_of.values())
 
     for pair in matches:
         old_sig = old_signatures.get(pair.old_step)
@@ -32,6 +36,14 @@ def build_delta_report(
             dropped_matches += 1
             continue
         aspects = _aspect_diff(old_sig, new_sig)
+        relations, relations_inherited = _relation_changes(
+            old_bundle, new_bundle, old_sig, new_sig, new_step_of, matched_new
+        )
+        aspects["relations"] = "changed" if relations else "unchanged"
+        aspects["class"] = _changed(old_sig.canonical_class, new_sig.canonical_class)
+        mover = None
+        if aspects["placement"] == "changed":
+            mover = _placement_mover(old_signatures, new_signatures, old_sig, new_sig, new_step_of)
         item = {
             "old": _entity_summary(old_sig),
             "new": _entity_summary(new_sig),
@@ -41,8 +53,19 @@ def build_delta_report(
                 "old": old_sig.vh_data,
                 "new": new_sig.vh_data,
             },
-            "change_scope": _change_scope(aspects),
+            "change_scope": _change_scope(
+                aspects, inherited_placement=mover is not None, inherited_relations=relations_inherited
+            ),
         }
+        if mover is not None:
+            item["moved_with"] = _entity_summary(mover)
+        if pair.reason == "geometry_hash" and old_sig.guid != new_sig.guid:
+            item["identity"] = {"guid_changed": True, "old_guid": old_sig.guid, "new_guid": new_sig.guid}
+            guid_changed.append({"old": item["old"], "new": item["new"]})
+        if relations:
+            item["relations"] = relations
+        if aspects["class"] == "changed":
+            item["class"] = {"old_class": old_sig.canonical_class, "new_class": new_sig.canonical_class}
         if aspects["data"] == "changed":
             item["data_delta"] = _data_delta(old_sig, new_sig)
             if old_props is not None and new_props is not None:
@@ -62,6 +85,7 @@ def build_delta_report(
 
     modified.sort(key=lambda item: (item["new"]["class"], item["new"]["step_id"]))
     unchanged.sort(key=lambda item: (item["new"]["class"], item["new"]["step_id"]))
+    guid_changed.sort(key=lambda item: (item["new"]["class"], item["new"]["step_id"]))
     added.sort(key=lambda item: (item["class"], item["step_id"]))
     deleted.sort(key=lambda item: (item["class"], item["step_id"]))
     orphans_added, orphans_removed = _orphan_property_set_diff(
@@ -86,6 +110,7 @@ def build_delta_report(
             "modified_change_scope": _scope_stats(modified),
             "placement_cohorts": _placement_cohorts(modified),
             "dropped_matches": dropped_matches,
+            "guid_changed": len(guid_changed),
             "orphan_property_sets": {
                 "old": len(old_bundle.orphan_property_sets),
                 "new": len(new_bundle.orphan_property_sets),
@@ -98,6 +123,7 @@ def build_delta_report(
         "deleted": deleted,
         "modified": modified,
         "unchanged": unchanged,
+        "guid_changed": guid_changed,
         "orphan_property_sets": {"added": orphans_added, "removed": orphans_removed},
     }
 
@@ -179,6 +205,97 @@ def _entity_summary(sig: SignatureVector) -> dict:
     return summary
 
 
+def _relation_changes(
+    old_bundle: SignatureBundle,
+    new_bundle: SignatureBundle,
+    old_sig: SignatureVector,
+    new_sig: SignatureVector,
+    new_step_of: dict[int, int],
+    matched_new: set[int],
+) -> tuple[list[dict], bool]:
+    """Relations of a matched pair whose targets are not the same entities.
+
+    A target with a signature is the same entity when it is matched to the
+    new target. A target without one (a type object) is the same when the
+    GlobalIds are equal or, like interchangeable entities in the matcher,
+    when class and content are equal; a GlobalId several entities of its
+    file carry identifies none of them. Each entry lists the targets only
+    the old side names and the targets only the new side names.
+
+    The flag is true when every listed target is an added or deleted entity:
+    the pair then differs only because a neighbour appeared or disappeared.
+    """
+    if not old_sig.relation_targets and not new_sig.relation_targets:
+        return [], False
+
+    def by_relation(bundle: SignatureBundle, sig: SignatureVector, matched: dict[int, int] | None) -> dict:
+        """Per (relation, role): target identity -> (summary, content, unmatched)."""
+        out: dict[tuple[str, str], dict[tuple, tuple]] = defaultdict(dict)
+        for target in sig.relation_targets:
+            root = bundle.signatures.get(target.step_id)
+            if root is not None:
+                if matched is None:
+                    identity = ("signature", target.step_id)
+                    unmatched = target.step_id not in matched_new
+                else:
+                    step = matched.get(target.step_id)
+                    identity = ("signature", step) if step is not None else ("unmatched", target.step_id)
+                    unmatched = step is None
+                out[(target.relation, target.role)][identity] = (_entity_summary(root), None, unmatched)
+            else:
+                related = bundle.related_entities[target.step_id]
+                summary = {
+                    "step_id": target.step_id,
+                    "guid": related.guid,
+                    "name": related.name,
+                    "class": related.canonical_class,
+                }
+                content = (related.canonical_class, related.content)
+                if related.guid is None or related.guid_shared:
+                    identity = ("related", matched is None, target.step_id)
+                else:
+                    identity = ("guid", related.guid)
+                out[(target.relation, target.role)][identity] = (summary, content, False)
+        return out
+
+    def order(target: tuple) -> tuple:
+        summary = target[0]
+        return (summary["class"], summary["guid"] or "", summary["step_id"])
+
+    old_targets = by_relation(old_bundle, old_sig, new_step_of)
+    new_targets = by_relation(new_bundle, new_sig, None)
+    changes: list[dict] = []
+    inherited = True
+    for key in sorted(old_targets.keys() | new_targets.keys()):
+        old = old_targets.get(key, {})
+        new = new_targets.get(key, {})
+        only_old = sorted((target for identity, target in old.items() if identity not in new), key=order)
+        only_new = sorted((target for identity, target in new.items() if identity not in old), key=order)
+        equal_content = Counter(content for _, content, _ in only_old if content is not None) & Counter(
+            content for _, content, _ in only_new if content is not None
+        )
+        for side in (only_old, only_new):
+            left = Counter(equal_content)
+            kept = []
+            for target in side:
+                if left[target[1]] > 0:
+                    left[target[1]] -= 1
+                else:
+                    kept.append(target)
+            side[:] = kept
+        if only_old or only_new:
+            inherited = inherited and all(unmatched for _, _, unmatched in (*only_old, *only_new))
+            changes.append(
+                {
+                    "relation": key[0],
+                    "role": key[1],
+                    "old": [summary for summary, _, _ in only_old],
+                    "new": [summary for summary, _, _ in only_new],
+                }
+            )
+    return changes, bool(changes) and inherited
+
+
 def _aspect_diff(old_sig: SignatureVector, new_sig: SignatureVector) -> dict:
     placement_delta = _placement_delta_mm(old_sig.placement, new_sig.placement)
     return {
@@ -201,6 +318,15 @@ def _data_delta(old_sig: SignatureVector, new_sig: SignatureVector) -> list[dict
     old_facts = dict(old_sig.data_facts)
     new_facts = dict(new_sig.data_facts)
     out: list[dict] = []
+    if old_sig.canonical_class != new_sig.canonical_class:
+        # The facts of the entity itself are compared under the new class.
+        old_label = f"{old_sig.canonical_class}[GlobalId={old_sig.guid}]."
+        new_label = f"{new_sig.canonical_class}[GlobalId={new_sig.guid}]."
+        old_facts = {
+            (new_label + path[len(old_label) :] if path.startswith(old_label) else path): value
+            for path, value in old_facts.items()
+        }
+        out.append({"path": f"{new_label}(class)", "old": old_sig.canonical_class, "new": new_sig.canonical_class})
     for path in sorted(set(old_facts) | set(new_facts)):
         old_value = old_facts.get(path)
         new_value = new_facts.get(path)
@@ -209,7 +335,8 @@ def _data_delta(old_sig: SignatureVector, new_sig: SignatureVector) -> list[dict
         out.append({"path": path, "old": old_value, "new": new_value})
     if not out:
         # The same values under the same paths, attached differently (an
-        # unordered member moved between two owners of one class).
+        # unordered member moved between two owners of one class that have
+        # no GlobalId).
         label = new_sig.canonical_class if new_sig.guid is None else f"{new_sig.canonical_class}[GlobalId={new_sig.guid}]"
         out.append({"path": f"{label}.(structure)", "old": old_sig.vh_data[:12], "new": new_sig.vh_data[:12]})
     return out
@@ -235,12 +362,48 @@ def _diagnostic_summary(bundle: SignatureBundle) -> dict:
     }
 
 
-def _change_scope(aspects: dict) -> str:
-    intrinsic_changed = any(
-        aspects.get(name) == "changed"
-        for name in ("geometry", "data", "placement")
+def _placement_mover(
+    old_signatures: dict[int, SignatureVector],
+    new_signatures: dict[int, SignatureVector],
+    old_sig: SignatureVector,
+    new_sig: SignatureVector,
+    new_step_of: dict[int, int],
+) -> SignatureVector | None:
+    """The new-side ancestor a pair whose world placement changed moved with.
+
+    Walks the placement parents of both sides together and stops at the
+    first pair whose own local placement differs or whose parents are not
+    matched to each other. ``None`` when that pair is the given one, or when
+    the chain ends without such a pair.
+    """
+    start = new_sig.step_id
+    visited = {start}
+    while old_sig.local_placement == new_sig.local_placement:
+        old_parent, new_parent = old_sig.placement_parent, new_sig.placement_parent
+        if old_parent is None and new_parent is None:
+            return None
+        if old_parent is None or new_parent is None or new_step_of.get(old_parent) != new_parent:
+            break
+        if new_parent in visited:
+            return None
+        visited.add(new_parent)
+        old_sig, new_sig = old_signatures[old_parent], new_signatures[new_parent]
+    return None if new_sig.step_id == start else new_sig
+
+
+def _change_scope(aspects: dict, *, inherited_placement: bool, inherited_relations: bool) -> str:
+    """Whether the pair itself changed, its surroundings did, or both.
+
+    ``inherited_placement``: the placement changed only through an ancestor.
+    ``inherited_relations``: the relations differ only in added or deleted
+    targets.
+    """
+    intrinsic_changed = (
+        any(aspects.get(name) == "changed" for name in ("geometry", "data", "class"))
+        or (aspects.get("placement") == "changed" and not inherited_placement)
+        or (aspects.get("relations") == "changed" and not inherited_relations)
     )
-    transitive_changed = aspects.get("topology") == "changed"
+    transitive_changed = aspects.get("topology") == "changed" or inherited_placement or inherited_relations
     if intrinsic_changed and transitive_changed:
         return "mixed"
     if intrinsic_changed:
@@ -264,6 +427,7 @@ def _placement_cohorts(modified: list[dict]) -> list[dict]:
     never join a cohort.
     """
     groups: dict[tuple[float, float, float], list[int]] = {}
+    causes: dict[tuple[float, float, float], list[dict]] = {}
     for item in modified:
         aspects = item["aspects"]
         if aspects.get("placement") != "changed":
@@ -275,11 +439,15 @@ def _placement_cohorts(modified: list[dict]) -> list[dict]:
         if key == (0.0, 0.0, 0.0):
             continue
         groups.setdefault(key, []).append(item["new"]["step_id"])
-    cohorts = [
-        {"delta_mm": list(delta), "count": len(members), "members": sorted(members)}
-        for delta, members in groups.items()
-        if len(members) >= 2
-    ]
+        causes.setdefault(key, []).append(item.get("moved_with", item["new"]))
+    cohorts = []
+    for delta, members in groups.items():
+        if len(members) < 2:
+            continue
+        cohort = {"delta_mm": list(delta), "count": len(members), "members": sorted(members)}
+        if len({cause["step_id"] for cause in causes[delta]}) == 1:
+            cohort["root_cause"] = causes[delta][0]
+        cohorts.append(cohort)
     cohorts.sort(key=lambda cohort: (-cohort["count"], cohort["delta_mm"]))
     return cohorts
 
@@ -297,44 +465,106 @@ def _property_deltas(
     old_entries: list[PropertyEntry],
     new_entries: list[PropertyEntry],
 ) -> dict | None:
-    """Compare old and new property lists per (pset, name, inherited-from-type)."""
-    old_map = {(e.pset, e.name, e.inherited): e.value for e in old_entries}
-    new_map = {(e.pset, e.name, e.inherited): e.value for e in new_entries}
-    old_counts = Counter((e.pset, e.name, e.inherited) for e in old_entries)
-    new_counts = Counter((e.pset, e.name, e.inherited) for e in new_entries)
+    """Compare old and new properties per (pset name, property name).
 
-    def entry(key: tuple[str, str, bool], **values) -> dict:
-        pset, name, inherited = key
-        return {"pset": pset, "name": name, "inherited": inherited, **values}
+    A key may have several definitions: on the occurrence and on its type,
+    or in two sets of one name. The effective value is the occurrence's when
+    it defines the key, the type's otherwise; definitions of the effective
+    origin that disagree make it the sorted list of their distinct values.
+    """
 
-    changed = [
-        entry(key, old_value=old_map[key], new_value=value)
-        for key, value in new_map.items()
-        if key in old_map and old_map[key] != value
-    ]
-    added = [entry(key, new_value=value) for key, value in new_map.items() if key not in old_map]
-    removed = [entry(key, old_value=value) for key, value in old_map.items() if key not in new_map]
+    def by_key(entries: list[PropertyEntry]) -> dict[tuple[str, str], list[PropertyEntry]]:
+        out: dict[tuple[str, str], list[PropertyEntry]] = defaultdict(list)
+        for entry in entries:
+            out[(entry.pset, entry.name)].append(entry)
+        return out
 
-    count_changed = [
-        entry(key, old_count=old_counts[key], new_count=new_counts[key])
-        for key in old_map.keys() & new_map.keys()
-        if old_counts[key] != new_counts[key]
-    ]
+    def encoded(value) -> str:
+        return json.dumps(value, sort_keys=True, default=str)
 
-    if not (changed or added or removed or count_changed):
+    def value_of(definitions: list[PropertyEntry]):
+        distinct = {encoded(entry.value): entry.value for entry in definitions}
+        if len(distinct) == 1:
+            return next(iter(distinct.values()))
+        return [distinct[key] for key in sorted(distinct)]
+
+    def effective(definitions: list[PropertyEntry]) -> tuple[object, bool, str | None]:
+        own = [entry for entry in definitions if not entry.inherited]
+        deciding = own or definitions
+        return value_of(deciding), not own, deciding[0].unit
+
+    def origin(inherited: bool) -> str:
+        return "type" if inherited else "occurrence"
+
+    def listed(definitions: list[PropertyEntry]) -> list[dict]:
+        rows = [
+            {"origin": origin(entry.inherited), "pset_guid": entry.pset_guid, "value": entry.value}
+            for entry in definitions
+        ]
+        return sorted(rows, key=lambda row: (row["origin"], row["pset_guid"] or "", encoded(row["value"])))
+
+    def entry(key: tuple[str, str], inherited: bool, unit: str | None = None, **values) -> dict:
+        out = {"pset": key[0], "name": key[1], "inherited": inherited, **values}
+        if unit is not None:
+            out["unit"] = unit
+        return out
+
+    old_keys = by_key(old_entries)
+    new_keys = by_key(new_entries)
+    result: dict[str, list[dict]] = defaultdict(list)
+    for key in old_keys.keys() | new_keys.keys():
+        old_definitions = old_keys.get(key)
+        new_definitions = new_keys.get(key)
+        if old_definitions is None:
+            value, inherited, unit = effective(new_definitions)
+            added = entry(key, inherited, unit, new_value=value)
+            if len(new_definitions) > 1:
+                added["new_definitions"] = listed(new_definitions)
+            result["added"].append(added)
+            continue
+        if new_definitions is None:
+            value, inherited, unit = effective(old_definitions)
+            removed = entry(key, inherited, unit, old_value=value)
+            if len(old_definitions) > 1:
+                removed["old_definitions"] = listed(old_definitions)
+            result["removed"].append(removed)
+            continue
+
+        old_value, old_inherited, old_unit = effective(old_definitions)
+        new_value, new_inherited, unit = effective(new_definitions)
+        if old_value != new_value or old_unit != unit:
+            changed = entry(key, new_inherited, unit, old_value=old_value, new_value=new_value)
+            if old_unit != unit:
+                changed["old_unit"], changed["unit"] = old_unit, unit
+            if len(old_definitions) > 1 or len(new_definitions) > 1:
+                changed["old_definitions"] = listed(old_definitions)
+                changed["new_definitions"] = listed(new_definitions)
+            result["changed"].append(changed)
+        if old_inherited != new_inherited:
+            result["origin_changed"].append(
+                entry(key, new_inherited, old_origin=origin(old_inherited), new_origin=origin(new_inherited))
+            )
+        elif not new_inherited:
+            old_type = [e for e in old_definitions if e.inherited]
+            new_type = [e for e in new_definitions if e.inherited]
+            if old_type and new_type and value_of(old_type) != value_of(new_type):
+                result["overridden_changed"].append(
+                    entry(key, True, new_type[0].unit, old_value=value_of(old_type), new_value=value_of(new_type))
+                )
+        for inherited in (False, True):
+            old_count = sum(1 for e in old_definitions if e.inherited == inherited)
+            new_count = sum(1 for e in new_definitions if e.inherited == inherited)
+            if old_count != new_count:
+                result["count_changed"].append(entry(key, inherited, old_count=old_count, new_count=new_count))
+
+    if not result:
         return None
 
     def order(item: dict) -> tuple[str, str, bool]:
         return (item["name"], item["pset"], item["inherited"])
 
-    result: dict[str, list[dict]] = {}
-    if changed:
-        result["changed"] = sorted(changed, key=order)
-    if added:
-        result["added"] = sorted(added, key=order)
-    if removed:
-        result["removed"] = sorted(removed, key=order)
-    if count_changed:
-        result["count_changed"] = sorted(count_changed, key=order)
-
-    return result
+    return {
+        kind: sorted(result[kind], key=order)
+        for kind in ("changed", "added", "removed", "origin_changed", "overridden_changed", "count_changed")
+        if kind in result
+    }

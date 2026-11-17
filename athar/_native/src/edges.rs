@@ -68,6 +68,13 @@ pub struct Graph {
     /// Relationships with a projection none of whose links has both ends
     /// (empty or dangling role attributes): they project nothing.
     pub unprojected_relationships: HashSet<u32>,
+    /// `(entity, index into relation_labels, target)`: what each signature
+    /// root names through a relationship link that produces a context or
+    /// spatial edge, where the target's role attribute holds one reference.
+    /// The target is a root or carries a `GlobalId`. Sorted, without repeats.
+    pub relation_targets: Vec<(u32, u32, u32)>,
+    /// `(relationship class, role attribute holding the target)`.
+    pub relation_labels: Vec<(Rc<str>, &'static str)>,
 }
 
 impl Graph {
@@ -435,6 +442,9 @@ pub fn build_edges(entities: &[Entity], index: &HashMap<i64, u32>) -> Graph {
     let mut unknown_relationships: BTreeMap<String, i64> = BTreeMap::new();
     let mut ignored_relationships: BTreeMap<String, i64> = BTreeMap::new();
     let mut unprojected_relationships: HashSet<u32> = HashSet::new();
+    let mut relation_targets: Vec<(u32, u32, u32)> = Vec::new();
+    let mut relation_labels: Vec<(Rc<str>, &'static str)> = Vec::new();
+    let mut relation_label_index: HashMap<(Rc<str>, &'static str), u32> = HashMap::new();
 
     for (i, ent) in entities.iter().enumerate() {
         let source = i as u32;
@@ -475,6 +485,29 @@ pub fn build_edges(entities: &[Entity], index: &HashMap<i64, u32>) -> Graph {
                         && !is_denied(&ent.keyword, &r.attr_name)
                         && index.contains_key(&r.target)
                 });
+            let single = |attr: &str| {
+                ent.refs
+                    .iter()
+                    .filter(|r| &*r.attr_name == attr)
+                    .all(|r| r.ord == UNORDERED && !r.in_set)
+            };
+            let mut name_target = |entity: u32, role: &'static str, target: u32| {
+                let named = &entities[target as usize];
+                if entity == target
+                    || !entities[entity as usize].is_root()
+                    || !(named.is_root() || named.guid.is_some())
+                {
+                    return;
+                }
+                let next = relation_labels.len() as u32;
+                let label = *relation_label_index
+                    .entry((Rc::clone(&ent.canonical_class), role))
+                    .or_insert_with(|| {
+                        relation_labels.push((Rc::clone(&ent.canonical_class), role));
+                        next
+                    });
+                relation_targets.push((entity, label, target));
+            };
             let mut carriers: Vec<u32> = Vec::new();
             let mut projected = false;
             for l in links {
@@ -488,6 +521,14 @@ pub fn build_edges(entities: &[Entity], index: &HashMap<i64, u32>) -> Graph {
                 for &s in &sources {
                     for &t in &targets {
                         let whole = &entities[t as usize];
+                        if !matches!(l.kind, Data | Decomposition) || whole.is_root() {
+                            if single(l.target_attr) {
+                                name_target(s, l.target_attr, t);
+                            }
+                            if single(l.source_attr) {
+                                name_target(t, l.source_attr, s);
+                            }
+                        }
                         let data = Include {
                             source: s,
                             target: t,
@@ -615,6 +656,9 @@ pub fn build_edges(entities: &[Entity], index: &HashMap<i64, u32>) -> Graph {
         offsets[i + 1] += offsets[i];
     }
 
+    relation_targets.sort_unstable();
+    relation_targets.dedup();
+
     Graph {
         includes,
         offsets,
@@ -623,6 +667,8 @@ pub fn build_edges(entities: &[Entity], index: &HashMap<i64, u32>) -> Graph {
         unknown_relationships,
         ignored_relationships,
         unprojected_relationships,
+        relation_targets,
+        relation_labels,
     }
 }
 

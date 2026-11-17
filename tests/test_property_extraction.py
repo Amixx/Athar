@@ -22,10 +22,10 @@ def test_same_property_name_in_two_psets_and_the_type_are_separate_entries():
     custom = run("pset.add_pset", f, product=wall, name="Custom_Fire")
     run("pset.edit_pset", f, pset=custom, properties={"FireRating": "REI60"})
 
-    entries = sorted(extract_properties(f)[wall.id()], key=lambda e: (e.pset, e.name, e.inherited))
+    entries = sorted(extract_properties(f, {})[wall.id()], key=lambda e: (e.pset, e.name, e.inherited))
     assert entries == [
-        PropertyEntry(pset="Custom_Fire", name="FireRating", value="REI60", inherited=False),
-        PropertyEntry(pset="Pset_WallCommon", name="FireRating", value="EI30", inherited=False),
-        PropertyEntry(pset="Pset_WallCommon", name="IsExternal", value=False, inherited=False),
-        PropertyEntry(pset="Pset_WallCommon", name="IsExternal", value=True, inherited=True),
+        PropertyEntry("Custom_Fire", "FireRating", "REI60", inherited=False, pset_guid=custom.GlobalId),
+        PropertyEntry("Pset_WallCommon", "FireRating", "EI30", inherited=False, pset_guid=occurrence_pset.GlobalId),
+        PropertyEntry("Pset_WallCommon", "IsExternal", False, inherited=False, pset_guid=occurrence_pset.GlobalId),
+        PropertyEntry("Pset_WallCommon", "IsExternal", True, inherited=True, pset_guid=type_pset.GlobalId),
     ]

@@ -470,9 +470,9 @@ def test_edit_is_reported_on_the_entity_it_belongs_to(tmp_path, edit, expected):
     ("edit", "owner", "path", "old", "new"),
     [
         (_true_north, "P", "IfcDirection.DirectionRatios", "[r0,r100000]", "[r17092,r98529]"),
-        (_style_colour, "W2", "IfcColourRgb.Red", "500000", "900000"),
+        (_style_colour, "W2", "IfcColourRgb.Red", "0.5", "0.9"),
         (_representation_identifier, "W3", "IfcShapeRepresentation.RepresentationIdentifier[1]", "Axis", "Annotation"),
-        (_layer_order, "W1", "MaterialLayers[1]/IfcMaterialLayer.LayerThickness", "150000", "50000"),
+        (_layer_order, "W1", "MaterialLayers[1]/IfcMaterialLayer.LayerThickness", "0.15 m", "0.05 m"),
         (_layer_order, "W1", "MaterialLayers[2]/IfcMaterial.Name", "Insulation", "Concrete"),
     ],
     ids=lambda value: getattr(value, "__name__", None),
@@ -486,7 +486,9 @@ def test_data_change_names_what_differs(tmp_path, edit, owner, path, old, new):
 def test_type_map_change_is_named_by_a_shape_fact(tmp_path):
     report = _report(tmp_path, _type_map_not_used_by_occurrence)
     [item] = report["modified"]
-    assert [delta["path"] for delta in item["data_delta"]] == ["RepresentationMaps[1]/IfcRepresentationMap.(shape)"]
+    assert [delta["path"] for delta in item["data_delta"]] == [
+        "IfcWallType[Name=WT]/RepresentationMaps[1]/IfcRepresentationMap.(shape)"
+    ]
 
 
 def _report_after(tmp_path, setup, edit) -> dict:
@@ -527,7 +529,7 @@ def test_type_map_content_changes_data_and_only_mapped_geometry(tmp_path, positi
     assert _modified(report) == {"C1": {"geometry", "data"} if position == 0 else {"data"}}
     [item] = report["modified"]
     assert [delta["path"] for delta in item["data_delta"]] == [
-        f"RepresentationMaps[{position + 1}]/IfcRepresentationMap.(shape)"
+        f"IfcCoveringType[Name=CT]/RepresentationMaps[{position + 1}]/IfcRepresentationMap.(shape)"
     ]
     for item in report["modified"]:
         assert (item["aspects"]["data"] == "unchanged") == (item["data_hash"]["old"] == item["data_hash"]["new"])
@@ -589,8 +591,8 @@ def test_mapped_type_maps_swapping_places_beside_scale_edit_changes_geometry_and
     assert _modified(report) == {"C1": {"geometry", "data"}}
     [item] = report["modified"]
     assert [delta["path"] for delta in item["data_delta"]] == [
-        "RepresentationMaps[1]/IfcRepresentationMap.(shape)",
-        "RepresentationMaps[2]/IfcRepresentationMap.(shape)",
+        "IfcCoveringType[Name=CT]/RepresentationMaps[1]/IfcRepresentationMap.(shape)",
+        "IfcCoveringType[Name=CT]/RepresentationMaps[2]/IfcRepresentationMap.(shape)",
     ]
     for item in report["modified"]:
         assert (item["aspects"]["data"] == "unchanged") == (item["data_hash"]["old"] == item["data_hash"]["new"])
@@ -680,21 +682,29 @@ def test_shape_content_below_a_data_edge_is_named_by_a_shape_digest(tmp_path):
     assert delta["old"] != delta["new"]
 
 
-def test_member_moved_between_owners_of_one_class_is_a_structure_change(tmp_path):
+def _member_moved_between_owners(tmp_path, owner):
+    """Report for a `Status` property moved from one owner built by `owner` to a second."""
+
     def edit(f):
         c = f.create_entity
         wall = _one(f, "IfcWall", Name="W1")
-        first = _one(f, "IfcPropertySet")
-        second = c("IfcPropertySet", _guid("pset2"), None, "Pset_WallCommon", None, [c("IfcPropertySingleValue", "Reference", None, c("IfcLabel", "A"), None)])
-        c("IfcRelDefinesByProperties", _guid("relpset2"), None, None, None, [wall], second)
-        first.HasProperties = list(first.HasProperties) + [c("IfcPropertySingleValue", "Status", None, c("IfcLabel", "New"), None)]
+        members = [
+            [
+                c("IfcPropertySingleValue", "Extra", None, c("IfcLabel", "X"), None),
+                c("IfcPropertySingleValue", "Reference", None, c("IfcLabel", "A"), None),
+            ],
+            [
+                c("IfcPropertySingleValue", "Reference", None, c("IfcLabel", "A"), None),
+                c("IfcPropertySingleValue", "Status", None, c("IfcLabel", "New"), None),
+            ],
+        ]
+        return owner(f, wall, members)
 
     def move(f):
-        edit(f)
-        first, second = sorted(f.by_type("IfcPropertySet"), key=lambda pset: pset.GlobalId)
+        first, second = edit(f)
         status = _one(f, "IfcPropertySingleValue", Name="Status")
-        first.HasProperties = [p for p in first.HasProperties if p != status]
-        second.HasProperties = list(second.HasProperties) + [status]
+        second.HasProperties = [p for p in second.HasProperties if p != status]
+        first.HasProperties = list(first.HasProperties) + [status]
 
     base = tmp_path / "base.ifc"
     moved = tmp_path / "moved.ifc"
@@ -705,6 +715,34 @@ def test_member_moved_between_owners_of_one_class_is_a_structure_change(tmp_path
     report = diff_files(str(base), str(moved))
     [item] = report["modified"]
     assert item["new"]["name"] == "W1" and item["aspects"]["data"] == "changed"
+    return item
+
+
+def test_member_moved_between_property_sets_is_named_under_each_set(tmp_path):
+    def owner(f, wall, members):
+        c = f.create_entity
+        sets = [c("IfcPropertySet", _guid(f"moved{i}"), None, "Pset_Moved", None, props) for i, props in enumerate(members)]
+        for i, pset in enumerate(sets):
+            c("IfcRelDefinesByProperties", _guid(f"relmoved{i}"), None, None, None, [wall], pset)
+        return sets
+
+    item = _member_moved_between_owners(tmp_path, owner)
+    first, second = (f"IfcPropertySet[Name=Pset_Moved,GlobalId={_guid(f'moved{i}')}]/IfcPropertySingleValue" for i in range(2))
+    deltas = {(delta["path"], delta["old"], delta["new"]) for delta in item["data_delta"]}
+    assert (f"{first}.Name[3]", None, "Status") in deltas
+    assert (f"{second}.Name[2]", "Status", None) in deltas
+    assert all(path.startswith((first, second)) for path, _, _ in deltas)
+
+
+def test_member_moved_between_owners_without_identity_is_a_structure_change(tmp_path):
+    def owner(f, wall, members):
+        c = f.create_entity
+        groups = [c("IfcComplexProperty", "Group", None, "usage", props) for props in members]
+        pset = c("IfcPropertySet", _guid("grouped"), None, "Pset_Grouped", None, groups)
+        c("IfcRelDefinesByProperties", _guid("relgrouped"), None, None, None, [wall], pset)
+        return groups
+
+    item = _member_moved_between_owners(tmp_path, owner)
     [delta] = item["data_delta"]
     assert delta["path"] == f"IfcWall[GlobalId={_guid('W1')}].(structure)"
     assert delta["old"] != delta["new"]
@@ -818,7 +856,7 @@ def test_a_bundle_cannot_be_built_without_its_coverage_account():
         SignatureBundle(
             filepath="model.ifc",
             schema="IFC4",
-            canon_version="athar-canon-v11",
+            canon_version="athar-canon-v14",
             signatures={},
             diagnostics=ParseDiagnostics(),
             edge_stats={},

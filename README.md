@@ -22,7 +22,8 @@ candidate explosion and no ambiguous fan-out by construction.
 | Tier | Evidence | Score |
 |------|----------|-------|
 | `guid` | GlobalId unique on both sides + same class | 1.0 (identical vector) / 0.9 |
-| `geometry_hash` | same class + full signature-vector equality (interchangeable entities, zipped 1:1) | 0.8 |
+| `geometry_hash` | same class + full signature-vector equality; entities sharing a vector pair by equal relation targets, then in STEP order | 0.8 |
+| `guid_reclassified` | GlobalId unique on both sides + different class, both unmatched above (reported `modified` with a `class` aspect) | 0.7 |
 
 Anything weaker is reported as added+deleted rather than guessed: a corpus
 survey over revision, discipline, and unrelated model pairs
@@ -35,11 +36,17 @@ vector tier. Matching is deterministic and entirely algorithmic, with no
 tuning knobs.
 
 The delta report classifies every entity as `added`, `deleted`, `modified`, or
-`unchanged`, with per-aspect detail (`geometry/data/topology/placement`,
+`unchanged`, with per-aspect detail (`geometry/data/topology/placement/relations`,
 `placement_delta_mm`), `change_scope` (`intrinsic` = the entity itself changed,
 `transitive` = only its neighborhood changed, `mixed`), and matcher
 diagnostics (per-tier match counts, duplicate-GUID counts). Every data change
-lists what differs in `data_delta`. The `data` aspect is unchanged if and only if
+lists what differs in `data_delta`. The `relations` aspect compares what an
+entity names through its relationships (container, whole, type, host, the
+other end of a 1:1 relationship) by matched identity, and a change lists the
+relationship with its old and new targets: an element moved to another storey
+is `modified` itself, the storeys only `transitive`. Relations that differ
+only in added or deleted targets (a port whose host was deleted) count as
+`transitive` too. The `data` aspect is unchanged if and only if
 `data_hash.old == data_hash.new`. Geometry and data hashes depend on content,
 not instance sharing: a shape reached through data contributes its full content.
 Editing a type map reports both `geometry` and `data` on an occurrence that maps
@@ -47,6 +54,13 @@ it, including the map's `(shape)` fact in `data_delta`; an occurrence that does
 not map it reports `data` only. Editing a swept profile shared with a material
 profile reports both aspects; an untouched equal copy in the material profile
 leaves `data` unchanged. Merging or splitting equal copies changes neither hash.
+An entity whose `GlobalId` was regenerated and that is matched by content
+stays `unchanged` but carries `identity.guid_changed` with both ids; the
+report lists these pairs under `guid_changed` and counts them in
+`stats.guid_changed`.
+An element whose world placement changed only because an ancestor in its
+placement chain moved is `transitive` and names that ancestor in `moved_with`;
+`stats.placement_cohorts` names the shared `root_cause` of a group move.
 An element placed through an
 `IfcGridPlacement` is marked `placement_unresolved`: grid geometry is not
 evaluated, so it has no coordinates and its placement aspect compares the grid
@@ -211,11 +225,14 @@ diff different schemas; `forbid_schema_change` is not a policy key.
 
 `forbid_property_value_change` maps property names to `"*"`, a class, or a list
 of classes. It checks matched entities across all psets and occurrence/type
-origins. Changed values, removals, and remove/add pairs with different values
-violate it; equal-value moves are allowed. Added values alone are checked only
-by `forbid_property_addition` (the same shape). Duplicate keys are collapsed to
-one value in the report; a reported `count_changed` fails closed. Changes to
-an unreported duplicate copy cannot be reconstructed from the report. Property
+origins, on the effective value of each key (the occurrence's when it defines
+the key, the type's otherwise). Changed effective values, removals, and
+remove/add pairs with different values violate it; equal-value moves are
+allowed, and so are a value moving between occurrence and type unchanged and a
+type value changing under an occurrence override. A duplicated key's effective
+value is the sorted list of its distinct values, and a duplicated key that
+gains or loses a copy fails closed. Added values alone are checked only by
+`forbid_property_addition` (the same shape). Property
 rules require `property_deltas` on data-changed entities: the engine can omit
 it both when comparison is unavailable and when no property changed, so these
 ambiguous reports produce exit `1`. No engine changes are implied by this gate.
@@ -230,6 +247,10 @@ The `georeferencing` pack forbids site placement/data changes, added/deleted
 sites, replaced site GUIDs on matched sites, and translation cohorts covering
 more than half the matched products. Its project-data ban applies only if a
 report contains `IfcProject`; it does not cover map conversions.
+
+`forbid_aspect_changes` takes the aspects `geometry`, `data`, `topology`,
+`placement`, `relations` (re-contained, re-typed, re-hosted) and `class`
+(reclassified).
 
 Use `--policy PACK --explain` to print the normalized policy without diffing;
 `--list-packs` prints shipped pack descriptions. `--format text` renders a

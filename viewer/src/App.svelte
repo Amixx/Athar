@@ -6,6 +6,7 @@
   import {
     buildDiffIndex,
     classBreakdown,
+    formatRelationTargets,
     type DiffIndex,
     type EntityRecord,
   } from './lib/report'
@@ -89,7 +90,7 @@
   let ifcInput: HTMLInputElement
   let reportInput: HTMLInputElement
 
-  const ASPECT_KEYS = ['geometry', 'data', 'topology', 'placement'] as const
+  const ASPECT_KEYS = ['geometry', 'data', 'topology', 'placement', 'relations', 'class'] as const
 
   const appearances = $derived(computeAppearances(sliderT, toggles))
   const classes = $derived(index ? classBreakdown(index.report) : [])
@@ -603,6 +604,10 @@
             <dd>{selectedPair.match.reason}, score {selectedPair.match.score}</dd>
             <dt>Scope</dt>
             <dd>{selectedPair.change_scope}</dd>
+            {#if selectedPair.identity?.guid_changed}
+              <dt>GlobalId</dt>
+              <dd class="mono">{selectedPair.identity.old_guid} → {selectedPair.identity.new_guid}</dd>
+            {/if}
           {/if}
         </dl>
         {#if selectedPair}
@@ -625,6 +630,26 @@
             <dl class="kv">
               <dt>Data hash</dt>
               <dd class="mono">{shortHash(selectedPair.data_hash.old)} → {shortHash(selectedPair.data_hash.new)}</dd>
+            </dl>
+          {/if}
+          {#if selectedPair.relations?.length}
+            <dl class="kv">
+              {#each selectedPair.relations as change}
+                <dt>{change.relation}</dt>
+                <dd>{change.role}: {formatRelationTargets(change.old)} → {formatRelationTargets(change.new)}</dd>
+              {/each}
+            </dl>
+          {/if}
+          {#if selectedPair.class}
+            <dl class="kv">
+              <dt>Class</dt>
+              <dd>{selectedPair.class.old_class} → {selectedPair.class.new_class}</dd>
+            </dl>
+          {/if}
+          {#if selectedPair.moved_with}
+            <dl class="kv">
+              <dt>Moved with</dt>
+              <dd>{formatRelationTargets([selectedPair.moved_with])}</dd>
             </dl>
           {/if}
         {:else if !selectedRecord}
