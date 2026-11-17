@@ -399,6 +399,79 @@ def test_children_of_a_moved_ancestor_move_with_it(tmp_path):
     assert cohort["root_cause"]["guid"] == guid("B")
 
 
+def test_rotated_parent_and_three_children_share_one_motion(tmp_path):
+    def children(model):
+        for i, name in enumerate(("W1", "W2", "W3")):
+            wall = model[name]
+            wall.ObjectPlacement = model.placement(model["B"], 2.0 + i * 3, 1.0 + i, 0.0)
+        for name in ("L1", "L2"):
+            model[name].ObjectPlacement.PlacementRelTo = None
+        model["B"].ObjectPlacement.RelativePlacement.Location.Coordinates = (3.0, -2.0, 0.0)
+
+    def move(model):
+        axes = model["B"].ObjectPlacement.RelativePlacement
+        axes.Location.Coordinates = (4.0, 0.0, 0.5)
+        axes.RefDirection = model.file.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
+
+    report = diff(tmp_path, move, setup=children)
+    [cohort] = report["stats"]["placement_cohorts"]
+    assert cohort["count"] == 4
+    assert cohort["root_cause"]["guid"] == guid("B")
+    assert cohort["rotation_deg"] == pytest.approx(90.0)
+    assert cohort["delta_mm"] == [1000.0, 2000.0, 500.0]
+    assert len({tuple(item["aspects"]["placement_delta_mm"]) for item in report["modified"]}) == 4
+    from athar.check import evaluate_report
+    [violation] = evaluate_report(report, {"max_placement_cohort_share": 0.5})["violations"]
+    assert violation["share"] == pytest.approx(4 / 6)
+    assert violation["root_cause"]["guid"] == guid("B")
+
+
+@pytest.mark.parametrize("angle,pivot", [(30.0, (2.0, -1.0)), (180.0, (0.0, 0.0))])
+def test_baked_rotation_without_a_parent_shares_one_motion(tmp_path, angle, pivot):
+    import math
+
+    c, s = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+
+    def independent(model):
+        for name, point in (("W1", (3.0, 2.0, 0.0)), ("W2", (7.0, -1.0, 0.0))):
+            model[name].ObjectPlacement = model.placement(None, *point)
+        model["W2"].ObjectPlacement.RelativePlacement.RefDirection = model.file.create_entity(
+            "IfcDirection", DirectionRatios=(0.0, 1.0, 0.0)
+        )
+
+    def rotate(model):
+        for name in ("W1", "W2"):
+            axes = model[name].ObjectPlacement.RelativePlacement
+            x, y, z = axes.Location.Coordinates
+            px, py = pivot
+            axes.Location.Coordinates = (c * (x - px) - s * (y - py) + px, s * (x - px) + c * (y - py) + py, z)
+            direction = (-s, c, 0.0) if name == "W2" else (c, s, 0.0)
+            axes.RefDirection = model.file.create_entity("IfcDirection", DirectionRatios=direction)
+
+    [cohort] = diff(tmp_path, rotate, setup=independent)["stats"]["placement_cohorts"]
+    assert cohort["count"] == 2
+    assert cohort["rotation_deg"] == pytest.approx(angle, abs=0.001)
+    assert cohort["delta_mm"] == ([-232.0, -1134.0, 0.0] if angle == 30 else [0.0, 0.0, 0.0])
+    assert "root_cause" not in cohort
+
+
+@pytest.mark.parametrize("rotation", [False, True])
+def test_distinct_motions_do_not_form_a_cohort(tmp_path, rotation):
+    def move(model):
+        for name in ("W1", "W2"):
+            axes = model[name].ObjectPlacement.RelativePlacement
+            x, y, z = axes.Location.Coordinates
+            axes.Location.Coordinates = (x + 1.0, y + 2.0, z)
+        if rotation:
+            model["W2"].ObjectPlacement.RelativePlacement.RefDirection = model.file.create_entity(
+                "IfcDirection", DirectionRatios=(0.0, 1.0, 0.0)
+            )
+        else:
+            model["W2"].ObjectPlacement.RelativePlacement.Location.Coordinates = (6.002, 2.0, 0.0)
+
+    assert diff(tmp_path, move)["stats"]["placement_cohorts"] == []
+
+
 def test_nearest_moved_ancestor_is_named(tmp_path):
     def raise_both(model):
         raise_building(model)
@@ -1006,3 +1079,57 @@ def test_element_moved_from_a_deleted_storey_to_a_present_one_changed_intrinsica
     assert targets(relation(wall, "IfcRelContainedInSpatialStructure")) == (["L2"], ["L1"])
     assert wall["aspects"]["placement"] == "unchanged"
     assert wall["change_scope"] == "intrinsic"
+
+
+def test_micro_difference_in_an_si_value_is_a_property_change(tmp_path):
+    def edit(model):
+        model["measure"].NominalValue = model.file.create_entity("IfcLengthMeasure", 1000000.000002)
+
+    setup = lambda model: single_value(model, model.file.create_entity("IfcLengthMeasure", 1000000.000001))
+    item = modified(diff(tmp_path, edit, setup=setup), "W1")
+
+    assert item["property_deltas"]["changed"] == [
+        {
+            "pset": "Pset_X",
+            "name": "Measure",
+            "inherited": False,
+            "old_value": 1000000.000001,
+            "new_value": 1000000.000002,
+            "unit": "m",
+        }
+    ]
+
+
+def _ifc2x3_bounded_value(path, upper: float):
+    f = ifcopenshell.file(schema="IFC2X3")
+    metre = f.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE")
+    f.create_entity(
+        "IfcProject",
+        GlobalId=guid("project"),
+        Name="Project",
+        UnitsInContext=f.create_entity("IfcUnitAssignment", Units=[metre]),
+    )
+    wall = f.create_entity("IfcWall", GlobalId=guid("W1"), Name="W1")
+    bounded = f.create_entity(
+        "IfcPropertyBoundedValue",
+        Name="Clearance",
+        UpperBoundValue=f.create_entity("IfcLengthMeasure", upper),
+        LowerBoundValue=f.create_entity("IfcLengthMeasure", 1.0),
+        Unit=metre,
+    )
+    pset = f.create_entity("IfcPropertySet", GlobalId=guid("pset"), Name="Pset_X", HasProperties=[bounded])
+    f.create_entity(
+        "IfcRelDefinesByProperties", GlobalId=guid("rel"), RelatedObjects=[wall], RelatingPropertyDefinition=pset
+    )
+    f.write(str(path))
+    return path
+
+
+def test_ifc2x3_bounded_value_with_a_unit_diffs_and_compares_its_bounds(tmp_path):
+    old = _ifc2x3_bounded_value(tmp_path / "old.ifc", 2.0)
+    new = _ifc2x3_bounded_value(tmp_path / "new.ifc", 3.0)
+
+    report = diff_files(old, new)
+
+    assert names(report["modified"]) == {"W1"}
+    assert diff_files(old, old)["modified"] == []

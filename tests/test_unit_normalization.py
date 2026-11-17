@@ -180,3 +180,223 @@ def test_property_unit_conversion_through_diff(tmp_path, kind, expected, label):
     assert delta["old_value"] == expected[0]
     assert delta["new_value"] == expected[1]
     assert delta.get("unit") == label
+
+
+def _derived(model, unit_type, *elements):
+    return model.create_entity("IfcDerivedUnit", UnitType=unit_type, Elements=[
+        model.create_entity("IfcDerivedUnitElement", Unit=unit, Exponent=exponent) for unit, exponent in elements
+    ])
+
+
+def _with_measures(path, units, values, quantities=()):
+    _build(str(path), 1.0, None)
+    model = ifcopenshell.open(str(path))
+    assignment = model.by_type("IfcUnitAssignment")[0]
+    assignment.Units = list(assignment.Units) + [build(model) for build in units]
+    proxy = model.by_type("IfcBuildingElementProxy")[0]
+    definitions = [model.create_entity("IfcPropertySet", GlobalId="0measuresmeasuresmeas1", Name="Pset_Measures", HasProperties=[
+        model.create_entity("IfcPropertySingleValue", Name=name, NominalValue=model.create_entity(measure, value),
+                            Unit=unit(model) if unit else None)
+        for name, measure, value, unit in values
+    ])]
+    if quantities:
+        definitions.append(model.create_entity("IfcElementQuantity", GlobalId="0quantitiesquantitiesq1", Name="Qto_Measures", Quantities=[
+            model.create_entity(cls, Name=name, **{attr: value}) for cls, name, attr, value in quantities
+        ]))
+    for index, definition in enumerate(definitions):
+        model.create_entity("IfcRelDefinesByProperties", GlobalId=f"0measurerelmeasurerel{index:02d}",
+                            RelatedObjects=[proxy], RelatingPropertyDefinition=definition)
+    model.write(str(path))
+
+
+def _thermal_units(prefix):
+    def build(model):
+        watt = model.create_entity("IfcSIUnit", UnitType="POWERUNIT", Name="WATT")
+        metre = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Prefix=prefix, Name="METRE")
+        kelvin = model.create_entity("IfcSIUnit", UnitType="THERMODYNAMICTEMPERATUREUNIT", Name="KELVIN")
+        return _derived(model, "THERMALTRANSMITTANCEUNIT", (watt, 1), (metre, -2), (kelvin, -1))
+    return build
+
+
+def _mass_unit(tonnes):
+    def build(model):
+        kilogram = model.create_entity("IfcSIUnit", UnitType="MASSUNIT", Prefix="KILO", Name="GRAM")
+        if not tonnes:
+            return kilogram
+        dimensions = model.create_entity("IfcDimensionalExponents", 0, 1, 0, 0, 0, 0, 0)
+        conversion = model.create_entity("IfcMeasureWithUnit", model.create_entity("IfcMassMeasure", 1000.0), kilogram)
+        return model.create_entity("IfcConversionBasedUnit", dimensions, "MASSUNIT", "tonne", conversion)
+    return build
+
+
+def test_measures_of_any_unit_type_normalize_across_unit_declarations(tmp_path):
+    si, scaled = tmp_path / "si.ifc", tmp_path / "scaled.ifc"
+    _with_measures(si, [_thermal_units(None), _mass_unit(False)],
+                   [("ThermalTransmittance", "IfcThermalTransmittanceMeasure", 0.25, None)],
+                   [("IfcQuantityWeight", "GrossWeight", "WeightValue", 1200.0)])
+    _with_measures(scaled, [_thermal_units("MILLI"), _mass_unit(True)],
+                   [("ThermalTransmittance", "IfcThermalTransmittanceMeasure", 0.25e-6, None)],
+                   [("IfcQuantityWeight", "GrossWeight", "WeightValue", 1.2)])
+
+    report = diff_files(str(si), str(scaled))
+    assert_report_invariants(report)
+    assert [item["new"]["class"] for item in report["modified"]] == ["IfcProject"]
+    (item,) = report["unchanged"]
+    assert item["old"]["guid"] == _GUID
+
+
+def test_a_property_unit_takes_the_place_of_the_file_unit(tmp_path):
+    from athar.bottom.signatures import build_signature_bundle
+
+    def nominal(path, value, unit):
+        _build(str(path), 1000.0, "MILLI")
+        model = ifcopenshell.open(str(path))
+        prop = model.by_type("IfcPropertySingleValue")[0]
+        prop.NominalValue.wrappedValue = value
+        prop.Unit = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE") if unit else None
+        model.write(str(path))
+        (signature,) = [s for s in build_signature_bundle(str(path)).signatures.values() if s.guid == _GUID]
+        return [value for path, value in signature.data_facts if value.startswith("IFCLENGTHMEASURE")]
+
+    assert nominal(tmp_path / "own.ifc", 3.0, unit=True) == nominal(tmp_path / "file.ifc", 3000.0, unit=False) == ["IFCLENGTHMEASURE: 3 m"]
+
+
+def _year_unit(model):
+    second = model.create_entity("IfcSIUnit", UnitType="TIMEUNIT", Name="SECOND")
+    dimensions = model.create_entity("IfcDimensionalExponents", 0, 0, 1, 0, 0, 0, 0)
+    conversion = model.create_entity("IfcMeasureWithUnit", model.create_entity("IfcTimeMeasure", 31556926.0), second)
+    return model.create_entity("IfcConversionBasedUnit", dimensions, "TIMEUNIT", "year", conversion)
+
+
+def test_a_measure_with_unit_takes_its_value_in_its_own_unit(tmp_path):
+    from athar.bottom.signatures import build_signature_bundle
+
+    path = tmp_path / "conversions.ifc"
+    _with_measures(path, [_mass_unit(True), _year_unit], [])
+    facts = {value for signature in build_signature_bundle(str(path)).signatures.values() for _, value in signature.data_facts}
+    assert {"IFCMASSMEASURE: 1000 kg", "IFCTIMEMEASURE: 31556926 s"} <= facts
+
+
+def _product_facts(path):
+    from athar.bottom.signatures import build_signature_bundle
+
+    (signature,) = [s for s in build_signature_bundle(str(path)).signatures.values() if s.guid == _GUID]
+    return signature.data_facts
+
+
+def _millimetre_model_with(path, build_properties):
+    _build(str(path), 1000.0, "MILLI")
+    model = ifcopenshell.open(str(path))
+    pset = model.by_type("IfcPropertySet")[0]
+    pset.HasProperties = list(pset.HasProperties) + build_properties(model)
+    model.write(str(path))
+    return _product_facts(path)
+
+
+def _metre(model):
+    return model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE")
+
+
+def test_an_enumeration_unit_applies_to_the_selected_and_enumeration_values(tmp_path):
+    def properties(model):
+        lengths = [model.create_entity("IfcLengthMeasure", value) for value in (3.0, 6.0)]
+        enumeration = model.create_entity("IfcPropertyEnumeration", Name="Widths", EnumerationValues=lengths, Unit=_metre(model))
+        return [model.create_entity("IfcPropertyEnumeratedValue", Name="Width", EnumerationReference=enumeration,
+                                    EnumerationValues=[model.create_entity("IfcLengthMeasure", 3.0)])]
+
+    facts = _millimetre_model_with(tmp_path / "enumerated.ifc", properties)
+    assert sorted((path.rsplit("/", 1)[-1], value) for path, value in facts if path.endswith("EnumerationValues")) == [
+        ("IfcPropertyEnumeratedValue.EnumerationValues", "[IFCLENGTHMEASURE: 3 m]"),
+        ("IfcPropertyEnumeration.EnumerationValues", "[IFCLENGTHMEASURE: 3 m, IFCLENGTHMEASURE: 6 m]"),
+    ]
+
+
+def test_table_columns_take_their_own_units(tmp_path):
+    def properties(model):
+        millimetre = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Prefix="MILLI", Name="METRE")
+        return [model.create_entity(
+            "IfcPropertyTableValue", Name="Table",
+            DefiningValues=[model.create_entity("IfcLengthMeasure", 3.0)], DefiningUnit=_metre(model),
+            DefinedValues=[model.create_entity("IfcLengthMeasure", 3000.0)], DefinedUnit=millimetre,
+        )]
+
+    facts = _millimetre_model_with(tmp_path / "table.ifc", properties)
+    assert sorted((path.rsplit("/", 1)[-1], value) for path, value in facts if path.endswith("Values")) == [
+        ("IfcPropertyTableValue.DefinedValues", "[IFCLENGTHMEASURE: 3 m]"),
+        ("IfcPropertyTableValue.DefiningValues", "[IFCLENGTHMEASURE: 3 m]"),
+    ]
+
+
+def _per_minute(model):
+    second = model.create_entity("IfcSIUnit", UnitType="TIMEUNIT", Name="SECOND")
+    dimensions = model.create_entity("IfcDimensionalExponents", 0, 0, 1, 0, 0, 0, 0)
+    conversion = model.create_entity("IfcMeasureWithUnit", model.create_entity("IfcTimeMeasure", 60.0), second)
+    minute = model.create_entity("IfcConversionBasedUnit", dimensions, "TIMEUNIT", "minute", conversion)
+    return _derived(model, "INTEGERCOUNTRATEUNIT", (minute, -1))
+
+
+def test_integer_measures_with_a_unit_type_normalize_and_counts_stay_integers(tmp_path):
+    def properties(model):
+        return [
+            model.create_entity("IfcPropertySingleValue", Name="Rate", Unit=_per_minute(model),
+                                NominalValue=model.create_entity("IfcIntegerCountRateMeasure", 60)),
+            model.create_entity("IfcPropertySingleValue", Name="Count",
+                                NominalValue=model.create_entity("IfcCountMeasure", 60)),
+            model.create_entity("IfcPropertySingleValue", Name="Integer",
+                                NominalValue=model.create_entity("IfcInteger", 60)),
+        ]
+
+    facts = _millimetre_model_with(tmp_path / "integers.ifc", properties)
+    assert sorted(value for path, value in facts if ".NominalValue" in path) == [
+        "IFCCOUNTMEASURE: 60",
+        "IFCINTEGER: 60",
+        "IFCINTEGERCOUNTRATEMEASURE: 1",
+        "IFCLENGTHMEASURE: 3 m",
+    ]
+
+
+def test_property_deltas_compare_si_values_and_show_the_written_ones(tmp_path):
+    from athar.check import evaluate_report
+
+    old, new = tmp_path / "old.ifc", tmp_path / "new.ifc"
+    _with_measures(old, [_thermal_units(None)], [("ThermalTransmittance", "IfcThermalTransmittanceMeasure", 0.25, None)])
+    _with_measures(new, [_thermal_units(None)],
+                   [("ThermalTransmittance", "IfcThermalTransmittanceMeasure", 0.25e-6, _thermal_units("MILLI"))])
+    model = ifcopenshell.open(str(new))
+    length = next(prop for prop in model.by_type("IfcPropertySingleValue") if prop.Name == "NominalLength")
+    length.NominalValue.wrappedValue = 4000.0
+    length.Unit = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Prefix="MILLI", Name="METRE")
+    model.write(str(new))
+
+    report = diff_files(str(old), str(new))
+    assert_report_invariants(report)
+    result = evaluate_report(report, {"forbid_property_value_change": {"ThermalTransmittance": "*"}})
+    assert result["ok"], result["violations"]
+    (item,) = [item for item in report["modified"] if item["new"]["guid"] == _GUID]
+    assert item["property_deltas"] == {"changed": [{
+        "pset": "Pset_Test", "name": "NominalLength", "inherited": False, "unit": "m",
+        "old_value": 3.0, "new_value": 4.0, "new_written": 4000.0,
+    }]}
+
+
+def test_enumerated_property_entries_carry_si_values_and_the_written_ones(tmp_path):
+    from athar.bottom.signatures import build_signature_bundle
+
+    path = tmp_path / "enumerated.ifc"
+
+    def properties(model):
+        enumeration = model.create_entity("IfcPropertyEnumeration", Name="Widths", Unit=_metre(model),
+                                          EnumerationValues=[model.create_entity("IfcLengthMeasure", 3.0)])
+        return [
+            model.create_entity("IfcPropertyEnumeratedValue", Name="Width", EnumerationReference=enumeration,
+                                EnumerationValues=[model.create_entity("IfcLengthMeasure", 3.0)]),
+            model.create_entity("IfcPropertyEnumeratedValue", Name="Depth",
+                                EnumerationValues=[model.create_entity("IfcLengthMeasure", 3000.0)]),
+        ]
+
+    _millimetre_model_with(path, properties)
+    bundle = build_signature_bundle(str(path))
+    (step,) = [step for step, signature in bundle.signatures.items() if signature.guid == _GUID]
+    entries = {entry.name: (entry.value, entry.unit, entry.written) for entry in bundle.property_index[step]}
+    assert entries["Width"] == ([3.0], "m", None)
+    assert entries["Depth"] == ([3.0], "m", [3000.0])

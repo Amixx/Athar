@@ -2,5 +2,5 @@
 
 from __future__ import annotations
 
-CANON_VERSION = "athar-canon-v15"
+CANON_VERSION = "athar-canon-v17"
 SUPPORTED_SCHEMAS = ("IFC4", "IFC2X3")

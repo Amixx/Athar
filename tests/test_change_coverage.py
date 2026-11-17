@@ -761,8 +761,6 @@ def test_grid_placed_element_is_marked_unresolved_and_carries_no_coordinates(tmp
     signatures = {sig.name: sig for sig in build_signature_bundle(str(tmp_path / "base.ifc")).signatures.values()}
     for name in ("GP1", "GP2"):
         assert signatures[name].placement is None
-        assert signatures[name].centroid is None and signatures[name].aabb is None
-    assert signatures["B1"].centroid is not None and signatures["B1"].aabb is not None
 
 
 def test_opening_position_under_an_unresolved_placement_is_host_geometry(tmp_path):

@@ -163,6 +163,26 @@ test('voiding features outline changes and hide unchanged or unreported meshes',
   expect(await page.evaluate(() => (window as any).__athar_viewer.entityDrawing('new', 37))).toBeNull()
 })
 
+for (const [root, angle] of [[true, 1.2], [false, 1.2], [false, 0]] as const) {
+  test(`group move label: root=${root}, rotation=${angle}`, async ({ page }) => {
+    await page.route('**/report.json', async (route) => {
+      const report = JSON.parse(await readFile(join(FIXTURES, 'report.json'), 'utf8'))
+      report.stats.placement_cohorts = [{
+        delta_mm: [719.1, -163.3, 0], rotation_deg: angle, count: 2, members: [17, 21],
+        ...(root ? { root_cause: { step_id: 1, class: 'IfcSite', name: 'Default', guid: null, entity_type: 'IFCSITE' } } : {}),
+      }]
+      await route.fulfill({ json: report })
+    })
+    await page.goto(`/?src=${srcOrigin}`)
+    await waitReady(page)
+    const cohort = page.locator('.cohort')
+    await expect(cohort).toContainText(root ? '2 moved with site Default' : '2 moved together')
+    await expect(cohort).toContainText('Δ 0.74 m')
+    if (angle) await expect(cohort).toContainText('1.2°')
+    else await expect(cohort).not.toContainText('°')
+  })
+}
+
 test('loads a pair via ?src= hand-off and buckets entities', async ({ page }) => {
   await page.goto(`/?src=${srcOrigin}`)
   const state = await waitReady(page)

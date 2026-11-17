@@ -49,12 +49,11 @@ export interface MatchedItem {
   identity?: { guid_changed: boolean; old_guid: string; new_guid: string }
 }
 
-/**
- * 2+ placement-changed pairs sharing one exact translation delta: a coherent
- * group move (derived pattern — the file need not contain a moved container).
- */
+/** 2+ placement-changed pairs sharing one quantized rigid motion. */
 export interface PlacementCohort {
   delta_mm: [number, number, number]
+  rotation_deg: number
+  root_cause?: EntitySummary
   count: number
   /** New-side step ids of the cohort members. */
   members: number[]

@@ -41,7 +41,7 @@ def test_measure_detection_is_deterministic_and_finds_outermost_measure(schema_n
 
 @pytest.mark.parametrize("schema_name", SCHEMAS)
 def test_descriptor_flags_spatial_and_product_classes(schema_name: str) -> None:
-    descriptors = _build_descriptors(schema_name)
+    descriptors = _build_descriptors(schema_name)["classes"]
 
     storey = descriptors["IFCBUILDINGSTOREY"]
     assert storey["spatial"] is True
@@ -57,7 +57,7 @@ def test_descriptor_flags_spatial_and_product_classes(schema_name: str) -> None:
 
 @pytest.mark.parametrize("schema_name", SCHEMAS)
 def test_descriptor_records_guid_and_name_indices(schema_name: str) -> None:
-    wall = _build_descriptors(schema_name)["IFCWALL"]
+    wall = _build_descriptors(schema_name)["classes"]["IFCWALL"]
     # GlobalId is the first attribute on every rooted IFC entity; Name follows
     # OwnerHistory. The descriptor exposes their positions for the native parser.
     assert wall["guid"] == 0
@@ -71,4 +71,14 @@ def test_schema_descriptors_json_is_cached_and_valid_json() -> None:
     second = schema_descriptors_json("IFC4")
     assert first is second  # lru_cache returns the same object
     parsed = json.loads(first)
-    assert "IFCWALL" in parsed
+    assert "IFCWALL" in parsed["classes"]
+
+
+def test_every_measure_with_a_unit_type_names_it() -> None:
+    measures = _build_descriptors("IFC4")["measures"]
+    assert measures["IFCPOSITIVELENGTHMEASURE"] == "LENGTHUNIT"
+    assert measures["IFCTHERMALTRANSMITTANCEMEASURE"] == "THERMALTRANSMITTANCEUNIT"
+    assert measures["IFCMASSDENSITYMEASURE"] == "MASSDENSITYUNIT"
+    assert not {"IFCCOUNTMEASURE", "IFCRATIOMEASURE", "IFCNUMERICMEASURE"} & set(measures)
+    weight = _build_descriptors("IFC4")["classes"]["IFCQUANTITYWEIGHT"]
+    assert next(a for a in weight["attrs"] if a["name"] == "WeightValue")["shape"] == {"k": "leaf", "m": "MASSUNIT"}

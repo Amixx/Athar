@@ -269,7 +269,7 @@ def _validate_report(report: Any, policy: dict[str, Any]) -> None:
             if delta is not None and not _is_vector(delta):
                 raise ValueError(f"Report '{where}.aspects.placement_delta_mm' must be null or three finite numbers")
             if section == "modified":
-                _validate_rule_detail(item, where, policy)
+                _validate_rule_detail(item, where, report, policy)
     if "max_placement_cohort_share" in policy:
         _validate_cohorts(report)
 
@@ -279,21 +279,31 @@ def _validate_cohorts(report: dict[str, Any]) -> None:
     if not isinstance(cohorts, list):
         raise ValueError("Policy rule max_placement_cohort_share needs 'stats.placement_cohorts', which the report lacks")
     modified_steps = {item["new"]["step_id"] for item in report["modified"]}
+    seen: set[int] = set()
     for index, cohort in enumerate(cohorts):
         if (
             not isinstance(cohort, dict)
             or not _is_vector(cohort.get("delta_mm"))
+            or type(cohort.get("rotation_deg")) not in (int, float)
+            or not math.isfinite(cohort["rotation_deg"])
+            or not 0 <= cohort["rotation_deg"] <= 180
             or not isinstance(cohort.get("members"), list)
             or any(type(step) is not int for step in cohort["members"])
             or type(cohort.get("count")) is not int
             or cohort["count"] < 2
+            or cohort["count"] != len(cohort["members"])
             or cohort["count"] != len(set(cohort["members"]))
+            or bool(seen.intersection(cohort["members"]))
             or not set(cohort["members"]) <= modified_steps
         ):
             raise ValueError(
                 f"Policy rule max_placement_cohort_share cannot read 'stats.placement_cohorts[{index}]': "
-                "it needs delta_mm, and count equal to its members, each a modified entity's new step_id"
+                "it needs delta_mm, rotation_deg in [0, 180], and count equal to its members, "
+                "each a distinct modified entity's new step_id across cohorts"
             )
+        seen.update(cohort["members"])
+        if "root_cause" in cohort:
+            _validate_entity(cohort["root_cause"], f"stats.placement_cohorts[{index}].root_cause")
 
 
 def _validate_entity(entity: Any, where: str) -> None:
@@ -303,11 +313,18 @@ def _validate_entity(entity: Any, where: str) -> None:
         raise ValueError(f"Report '{where}.class' must be a string")
 
 
-def _validate_rule_detail(item: dict[str, Any], where: str, policy: dict[str, Any]) -> None:
+def _validate_rule_detail(item: dict[str, Any], where: str, report: dict[str, Any], policy: dict[str, Any]) -> None:
     if "max_modified_change_scope" in policy and item.get("change_scope") not in CHANGE_SCOPES:
         raise ValueError(f"Policy rule max_modified_change_scope needs '{where}.change_scope', which the report lacks")
-    property_rules = [key for key in _PROPERTY_RULES if key in policy]
-    if not property_rules or item["aspects"]["data"] != "changed":
+    if item["aspects"]["data"] != "changed":
+        return
+    property_rules = [
+        rule
+        for rule in _PROPERTY_RULES
+        if rule in policy
+        and any(_class_matches(classes, report, item) for classes in _property_rule_scopes(rule, policy[rule]))
+    ]
+    if not property_rules:
         return
     rule = property_rules[0]
     if not isinstance(item.get("data_delta"), list):
@@ -337,6 +354,12 @@ def _validate_rule_detail(item: dict[str, Any], where: str, policy: dict[str, An
 
 
 _PROPERTY_RULES = ("forbid_property_removal", "forbid_property_value_change", "forbid_property_addition")
+
+
+def _property_rule_scopes(rule: str, spec: Any) -> list[Any]:
+    return [spec] if rule == "forbid_property_removal" else list(spec.values())
+
+
 _PROPERTY_DELTA_VALUES = {
     "changed": ("old_value", "new_value"),
     "added": ("new_value",),
@@ -530,23 +553,34 @@ def _check_placement_cohorts(report: dict[str, Any], policy: dict[str, Any], vio
     )
     by_step = {item["new"]["step_id"]: item for item in report["modified"]}
     for cohort in report["stats"]["placement_cohorts"]:
-        share = cohort["count"] / matched
+        products = [
+            by_step[step] for step in cohort["members"]
+            if "IfcProduct" in _lineage(schema, by_step[step]["new"]["class"])
+        ]
+        if not products or not matched:
+            continue
+        share = len(products) / matched
         if share <= limit:
             continue
         delta = [float(value) for value in cohort["delta_mm"]]
+        root = cohort.get("root_cause")
+        mover = f" with {root['class']} {root.get('name') or root['step_id']}" if root else " together"
         violations.append(
             {
                 "code": "placement_cohort_share",
                 "message": (
-                    f"{cohort['count']} of {matched} matched products moved by the same translation "
-                    f"({', '.join(f'{value:g}' for value in delta)}) mm: share {share:.3g} > {limit:g}"
+                    f"{len(products)} of {matched} matched products moved{mover}, "
+                    f"Δ ({', '.join(f'{value:g}' for value in delta)}) mm, "
+                    f"{cohort['rotation_deg']:g}°: share {share:.3g} > {limit:g}"
                 ),
                 "policy": "max_placement_cohort_share",
                 "delta_mm": delta,
                 "matched": matched,
                 "share": share,
                 "limit": limit,
-                **_affected([_modified_entity_ref(by_step[step]) for step in cohort["members"]]),
+                "rotation_deg": cohort["rotation_deg"],
+                **({"root_cause": root} if root else {}),
+                **_affected([_modified_entity_ref(item) for item in products]),
             }
         )
 

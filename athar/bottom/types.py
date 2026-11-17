@@ -14,18 +14,20 @@ class PropertyEntry:
     """One extracted property or quantity value.
 
     ``inherited`` is true for a definition on the type object. ``pset_guid``
-    is the GlobalId of the defining property or quantity set. A length, area,
-    volume, plane angle, time or mass value is converted from the file's unit
-    to the SI unit named by ``unit``; other values are as written and
-    ``unit`` is ``None``.
+    is the GlobalId of the defining property or quantity set. A value of a
+    measure with a unit type is converted from the file's unit, or the unit
+    the property names, to the SI unit labelled by ``unit``; other values are
+    as written and ``unit`` is ``None``. ``written`` is the value as the file
+    writes it where that differs from ``value``.
     """
 
     pset: str
     name: str
-    value: str | int | float | bool | list[str]
+    value: str | int | float | bool | list
     inherited: bool
     pset_guid: str | None = None
     unit: str | None = None
+    written: str | int | float | bool | list | None = None
 
 
 @dataclass(frozen=True)
@@ -102,8 +104,7 @@ class SignatureVector:
 
     ``placement`` is the quantized world matrix. A chain through a placement
     the engine does not evaluate (``IfcGridPlacement``) has no matrix;
-    ``placement_unresolved`` then holds a digest of the chain's content and
-    ``centroid`` and ``aabb`` are ``None``.
+    ``placement_unresolved`` then holds a digest of the chain's content.
 
     ``local_placement`` is the quantized frame relative to the object
     placement of ``placement_parent``, the root (by step id) owning the
@@ -119,8 +120,6 @@ class SignatureVector:
     vh_data: HashHex
     vh_topology: HashHex
     placement: tuple[int, ...] | None
-    centroid: tuple[float, float, float] | None
-    aabb: tuple[float, float, float, float, float, float] | None
     canon_version: str
     name: str | None = None
     data_facts: tuple[tuple[str, str], ...] = ()

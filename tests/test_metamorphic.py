@@ -103,8 +103,6 @@ def _signature_fingerprint(bundle) -> list[tuple]:
             sig.vh_data,
             sig.vh_topology,
             sig.placement,
-            sig.centroid,
-            sig.aabb,
         )
         for sig in bundle.signatures.values()
         if sig.guid

@@ -286,7 +286,7 @@ describe('groupDisplacements', () => {
     141,
     aspects({ placement: 'changed', geometry: 'changed', placement_delta_mm: [500, 0, 0] }),
   )
-  const cohorts = [{ delta_mm: [500, 0, 0] as [number, number, number], count: 2, members: [140, 141] }]
+  const cohorts = [{ delta_mm: [500, 0, 0] as [number, number, number], rotation_deg: 0, count: 2, members: [140, 141] }]
 
   it('collapses cohort members into one group and keeps loners as singles', () => {
     const groups = groupDisplacements([cohortA1, cohortA2, movedPair, reshapedPair], cohorts)

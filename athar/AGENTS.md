@@ -31,8 +31,10 @@ GitHub comments, and other presentation concerns.
   `placement`, `relations` and `class`. Property-level gates
   (`forbid_property_removal`,
   `forbid_property_value_change`, `forbid_property_addition`) require the
-  report's `property_deltas` on data-changed entities. Absence is ambiguous
-  (comparison unavailable or no property changes) and raises an error.
+  report's `property_deltas` on every data-changed entity inside the class
+  scope of at least one of those rules. A missing `property_deltas` there
+  means the comparison was unavailable and raises an error; entities outside
+  every property rule's scope are not checked for it.
   Each `property_deltas` entry carries `pset`, `name` and `inherited` (the
   origin of the effective value).
   `forbid_property_value_change` keys are property names and match that name
@@ -196,20 +198,8 @@ corpus evidence and tests.
 - Stats include section counts, signature counts, parse diagnostics, edge
   stats, modified change-scope counts, placement cohorts, dropped matches,
   GUID collisions, and matcher diagnostics.
-- `stats.placement_cohorts` groups placement-changed pairs by
-  `placement_delta_mm` quantized to a fixed 0.1 mm grid: cohorts of 2+ members
-  (`{delta_mm, count, members}`, `delta_mm` = the grid key, members = new-side
-  step ids, largest cohort first) mark coherent group moves. It is a derived
-  pattern, deliberately not a structural claim — exporters (Revit, 2026-07
-  round-trip corpus) bake group moves into per-element placements, so no moved
-  container exists in the file. The grid absorbs sub-0.1 mm exporter noise (a
-  1 um rounding artifact split a real 45-element move) while staying
-  deterministic: fixed grid, no adaptive tolerance, no chained near-matches.
-  Zero-delta-on-grid placement changes (pure rotation / chain restructuring)
-  and singletons never join a cohort. A cohort carries `root_cause`, an
-  entity summary, when every member moved with one entity or is that entity
-  (a raised building and everything placed under it); members moved one by
-  one share none.
+- `stats.placement_cohorts` groups placement-changed matched pairs by the world rigid motion `new × inverse(old)`, reusing native matrix helpers. World matrices are row-major, quantized at 10⁻⁶ (metres for translation). Motion keys use fixed 10⁻⁵ rotation-entry and 1 mm translation grids: input orientation rounding is amplified by distance from the origin, and even a 30° baked rotation can straddle a 0.1 mm boundary. These grids keep the Ammer Forum site's 205 members and the Revit round-trip façade's 45 members together. Grouping is deterministic, with no adaptive tolerance or chained near-matches; distinct motions in one grid cell are indistinguishable, and motions across cell boundaries stay separate.
+- Each cohort is `{delta_mm, rotation_deg, count, members, root_cause?}`; `members` are sorted new-side STEP ids, with largest cohorts first. Cohorts require 2+ members, exclude unresolved placements and identity motions on the grid, and have disjoint membership. Pure rotations qualify. `rotation_deg` is the motion angle in [0, 180]. `root_cause` is an entity summary when every member moved with that entity or is that entity. `delta_mm` is the mover's displacement rounded to 0.1 mm when that mover has a placement delta in the report; otherwise it is the motion's translation component on the 1 mm grid (the common displacement for translations, displacement at the world origin for rotations). Baked per-element moves need no shared parent.
 - `geometry_hash` requires equal full vectors, so a modified item whose
   `relations` are unchanged is a GUID match by construction.
 - A `guid_reclassified` pair is always `modified`: its `class` aspect is
@@ -243,7 +233,13 @@ corpus evidence and tests.
   one content are reported from the end of the file. `stats.orphan_property_sets`
   carries `{old, new, added, removed}` counts; streams emit
   `orphan_property_set_added` / `_removed` records.
-- `property_deltas` compares properties per (pset name, property name). A key
+- `property_deltas` is on every data-changed matched entity whenever property
+  extraction ran for both files; `{}` means the data changed through
+  attributes other than properties (an address, a map conversion) and the
+  properties are equal. Only kinds with entries appear. The field is absent
+  only when a side has no property index, which means the comparison is
+  unavailable, never "no change".
+  It compares properties per (pset name, property name). A key
   can have several definitions: on the occurrence and on its type, or in two
   sets of one name. All are kept (`PropertyEntry` carries `inherited` and the
   set's `pset_guid`). The effective value is the occurrence's when it defines
@@ -267,13 +263,20 @@ corpus evidence and tests.
 - Numbers shown for people are real numbers in SI units, never the quantized
   integers that are hashed. A real in `data_delta` is the hashed quantity
   printed as a decimal with the unit its measure is normalized to
-  (`IFCLENGTHMEASURE: 3.25 m`, `m2`, `m3`, `rad`; a real without a measure
-  has no unit), so two values print alike exactly when they hash alike.
-  `property_deltas` values of length, area, volume, plane angle, time and
-  mass measures and of the matching quantities are converted from the file's
-  unit (or the unit the property or quantity names itself) and the entry
-  carries `unit` (`m`, `m2`, `m3`, `rad`, `s`, `kg`); other values are as
-  written, without `unit`. A value is also as written, without `unit`, when
+  (`IFCLENGTHMEASURE: 3.25 m`, `m2`, `m3`, `rad`, `kg`, `s`; other measures
+  print the SI value without a unit, a real without a measure has no unit), so two values print alike exactly when they hash alike.
+  `property_deltas` values of every measure with a unit type, and of the
+  quantities, are converted to SI from the file's unit (or the unit the
+  property, quantity or referenced enumeration names itself) and the entry
+  carries `unit`: `m`, `m2`, `m3`, `rad`, `s` or `kg`, otherwise the unit
+  type standing for its SI unit (`THERMALTRANSMITTANCEUNIT`). Values without
+  a unit type are as written, without `unit`. `old_value` / `new_value` are
+  the converted values: they decide `changed`, `added`/`removed` pairing and
+  every policy rule, so an equivalent value written in another unit is no
+  change. `old_written` / `new_written` give the effective value as the file
+  writes it, present only where it differs from `old_value` / `new_value`;
+  `old_definitions` / `new_definitions` rows carry `written` the same way.
+  A value is also as written, without `unit`, when
   the file's unit of the measure's type, or the unit the property names, is
   not convertible by IfcOpenShell's unit helpers (an
   `IfcContextDependentUnit`, a conversion chain or derived unit containing one,

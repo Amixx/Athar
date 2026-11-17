@@ -774,6 +774,17 @@ def test_cohort_share_requires_a_fraction(limit):
         evaluate_report(_report(), {"max_placement_cohort_share": limit})
 
 
+@pytest.mark.parametrize("angle", [None, True, -1, 181, float("nan"), float("inf"), "1.2"])
+def test_cohort_rule_rejects_invalid_rotation(angle):
+    report = _report()
+    steps = [item["new"]["step_id"] for item in report["modified"]]
+    report["stats"]["placement_cohorts"] = [
+        {"delta_mm": [0, 0, 0], "rotation_deg": angle, "count": len(steps), "members": steps}
+    ]
+    with pytest.raises(ValueError, match="rotation_deg"):
+        evaluate_report(report, {"max_placement_cohort_share": 0.5})
+
+
 def test_cohort_rule_requires_detail():
     report = _report()
     del report["stats"]["placement_cohorts"]
@@ -816,3 +827,78 @@ def test_policy_forbidding_class_fails_on_a_reclassified_element(tmp_path):
     assert violation["aspect"] == "class"
     assert [ref["class"] for ref in violation["affected"]] == ["IfcBuildingElementProxy"]
     assert evaluate_report(report, {"forbid_aspect_changes": {"relations": "*"}})["ok"] is True
+
+
+def _building_with_address(model):
+    f = model.file
+    model.named["address"] = f.create_entity("IfcPostalAddress", AddressLines=["Old Street 1"], Town="Munich")
+    model["B"].BuildingAddress = model["address"]
+    model.named["fire pset"] = model.pset("Pset_BuildingCommon", {"FireProtection": model.text("F90")}, tag="building")
+    model.define(model["B"], model["fire pset"])
+
+
+def _change_address(model):
+    model["address"].AddressLines = ["New Street 2"]
+
+
+def _remove_building_property(model):
+    model["fire pset"].HasProperties = []
+
+
+def test_data_change_through_a_non_property_attribute_passes_safety_critical(tmp_path):
+    report = diff(tmp_path, _change_address, setup=_building_with_address)
+
+    [item] = [item for item in report["modified"] if item["new"]["name"] == "B"]
+    assert item["aspects"]["data"] == "changed"
+    assert item["property_deltas"] == {}
+    result = evaluate_report(report, resolve_policy("safety-critical"))
+    assert result["ok"] is True and result["violations"] == []
+
+
+def test_property_removal_beside_a_non_property_data_change_still_violates(tmp_path):
+    def edit(model):
+        _change_address(model)
+        _remove_building_property(model)
+
+    report = diff(tmp_path, edit, setup=_building_with_address)
+
+    result = evaluate_report(report, resolve_policy("safety-critical"))
+    [violation] = result["violations"]
+    assert violation["code"] == "property_removed"
+    assert [ref["class"] for ref in violation["affected"]] == ["IfcBuilding"]
+
+
+@pytest.mark.parametrize("rule", ["forbid_property_removal", "forbid_property_value_change", "forbid_property_addition"])
+def test_report_without_property_deltas_fails_closed_on_a_data_changed_entity(tmp_path, rule):
+    report = diff(tmp_path, _change_address, setup=_building_with_address)
+    [item] = [item for item in report["modified"] if item["new"]["name"] == "B"]
+    del item["property_deltas"]
+    spec = "*" if rule == "forbid_property_removal" else {"FireRating": "*"}
+
+    with pytest.raises(ValueError, match=rf"{rule}.*property comparison is unavailable"):
+        evaluate_report(report, {rule: spec})
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"forbid_property_removal": ["IfcDoor"]},
+        {"forbid_property_value_change": {"FireRating": ["IfcDoor"]}},
+        {"forbid_property_addition": {"FireRating": ["IfcDoor"]}},
+        {"forbid_property_removal": ["IfcDoor"], "forbid_property_value_change": {"FireRating": ["IfcSlab"]}},
+    ],
+)
+def test_property_rule_does_not_need_deltas_on_entities_outside_its_classes(policy):
+    report = _report_with_property_deltas()
+    del report["modified"][0]["property_deltas"]
+
+    assert evaluate_report(report, policy)["ok"] is True
+
+
+def test_property_rule_needs_deltas_on_entities_a_sibling_rule_covers():
+    report = _report_with_property_deltas()
+    del report["modified"][0]["property_deltas"]
+    policy = {"forbid_property_removal": ["IfcDoor"], "forbid_property_value_change": {"FireRating": ["IfcWall"]}}
+
+    with pytest.raises(ValueError, match="forbid_property_value_change.*modified\\[0\\].property_deltas"):
+        evaluate_report(report, policy)

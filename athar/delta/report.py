@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter, defaultdict
 
+from athar.bottom._native import native
 from athar.bottom.types import Coverage, OrphanPropertySet, PropertyEntry, SignatureBundle, SignatureVector
 from athar.matcher.types import MatchedPair
 
@@ -69,12 +71,10 @@ def build_delta_report(
         if aspects["data"] == "changed":
             item["data_delta"] = _data_delta(old_sig, new_sig)
             if old_props is not None and new_props is not None:
-                deltas = _property_deltas(
+                item["property_deltas"] = _property_deltas(
                     old_props.get(pair.old_step, []),
                     new_props.get(pair.new_step, []),
                 )
-                if deltas:
-                    item["property_deltas"] = deltas
         if any(value == "changed" for key, value in aspects.items() if key != "placement_delta_mm"):
             modified.append(item)
         else:
@@ -108,7 +108,7 @@ def build_delta_report(
             "old_edge_stats": old_bundle.edge_stats,
             "new_edge_stats": new_bundle.edge_stats,
             "modified_change_scope": _scope_stats(modified),
-            "placement_cohorts": _placement_cohorts(modified),
+            "placement_cohorts": _placement_cohorts(modified, old_signatures, new_signatures),
             "dropped_matches": dropped_matches,
             "guid_changed": len(guid_changed),
             "orphan_property_sets": {
@@ -413,42 +413,53 @@ def _change_scope(aspects: dict, *, inherited_placement: bool, inherited_relatio
     return "none"
 
 
-def _placement_cohorts(modified: list[dict]) -> list[dict]:
-    """Group placement-changed pairs by exact quantized translation delta.
-
-    A cohort of 2+ members sharing one delta vector is a coherent group move —
-    a derived pattern, not a structural claim (exporters like Revit bake group
-    moves into per-element placements, so no container may exist in the file).
-    The key is the delta quantized to a fixed 0.1 mm grid: sub-grid exporter
-    noise (2026-07 Revit corpus: one group move split by a 1 um rounding
-    artifact) must not fracture a cohort, while the grid stays deterministic —
-    no adaptive tolerance, no chained near-matches. Pairs with no delta or a
-    zero net translation on the grid (pure rotation / chain restructuring)
-    never join a cohort.
-    """
-    groups: dict[tuple[float, float, float], list[int]] = {}
-    causes: dict[tuple[float, float, float], list[dict]] = {}
+def _placement_cohorts(
+    modified: list[dict],
+    old_signatures: dict[int, SignatureVector],
+    new_signatures: dict[int, SignatureVector],
+) -> list[dict]:
+    groups: dict[tuple[int, ...], list[dict]] = defaultdict(list)
+    identity = (100_000, 0, 0, 0, 100_000, 0, 0, 0, 100_000)
     for item in modified:
-        aspects = item["aspects"]
-        if aspects.get("placement") != "changed":
+        if item["aspects"]["placement"] != "changed":
             continue
-        delta = aspects.get("placement_delta_mm")
-        if delta is None:
+        old = old_signatures[item["old"]["step_id"]]
+        new = new_signatures[item["new"]["step_id"]]
+        if old.placement is None or new.placement is None or old.placement_unresolved or new.placement_unresolved:
             continue
-        key = (round(delta[0], 1) + 0.0, round(delta[1], 1) + 0.0, round(delta[2], 1) + 0.0)
-        if key == (0.0, 0.0, 0.0):
+        motion = native().placement_motion(old.placement, new.placement)
+        rotation = tuple(round(motion[4 * i + j] * 100_000) for i in range(3) for j in range(3))
+        translation = tuple(round(motion[i] * 1_000) for i in (3, 7, 11))
+        if rotation == identity and translation == (0, 0, 0):
             continue
-        groups.setdefault(key, []).append(item["new"]["step_id"])
-        causes.setdefault(key, []).append(item.get("moved_with", item["new"]))
+        groups[rotation + translation].append(item)
     cohorts = []
-    for delta, members in groups.items():
-        if len(members) < 2:
+    for key, items in groups.items():
+        if len(items) < 2:
             continue
-        cohort = {"delta_mm": list(delta), "count": len(members), "members": sorted(members)}
-        if len({cause["step_id"] for cause in causes[delta]}) == 1:
-            cohort["root_cause"] = causes[delta][0]
+        items.sort(key=lambda item: item["new"]["step_id"])
+        causes = [item.get("moved_with", item["new"]) for item in items]
+        root = causes[0] if len({cause["step_id"] for cause in causes}) == 1 else None
+        rotation = [value / 100_000 for value in key[:9]]
+        angle = math.degrees(
+            math.atan2(
+                math.hypot(rotation[7] - rotation[5], rotation[2] - rotation[6], rotation[3] - rotation[1]) / 2,
+                (rotation[0] + rotation[4] + rotation[8] - 1) / 2,
+            )
+        )
+        delta = [float(value) for value in key[9:]]
+        if root is not None:
+            mover = next((item for item in modified if item["new"]["step_id"] == root["step_id"]), None)
+            if mover is not None and mover["aspects"]["placement_delta_mm"] is not None:
+                delta = [round(value, 1) + 0.0 for value in mover["aspects"]["placement_delta_mm"]]
+        cohort = {
+            "delta_mm": delta, "rotation_deg": round(angle, 4),
+            "count": len(items), "members": [item["new"]["step_id"] for item in items],
+        }
+        if root is not None:
+            cohort["root_cause"] = root
         cohorts.append(cohort)
-    cohorts.sort(key=lambda cohort: (-cohort["count"], cohort["delta_mm"]))
+    cohorts.sort(key=lambda cohort: (-cohort["count"], cohort["delta_mm"], cohort["rotation_deg"], cohort["members"]))
     return cohorts
 
 
@@ -464,13 +475,17 @@ def _scope_stats(modified: list[dict]) -> dict[str, int]:
 def _property_deltas(
     old_entries: list[PropertyEntry],
     new_entries: list[PropertyEntry],
-) -> dict | None:
+) -> dict:
     """Compare old and new properties per (pset name, property name).
+
+    Only the kinds with entries appear; ``{}`` means the properties are equal.
 
     A key may have several definitions: on the occurrence and on its type,
     or in two sets of one name. The effective value is the occurrence's when
     it defines the key, the type's otherwise; definitions of the effective
     origin that disagree make it the sorted list of their distinct values.
+    Values compare in SI; ``old_written`` / ``new_written`` carry the values
+    as the files write them where those differ.
     """
 
     def by_key(entries: list[PropertyEntry]) -> dict[tuple[str, str], list[PropertyEntry]]:
@@ -482,16 +497,30 @@ def _property_deltas(
     def encoded(value) -> str:
         return json.dumps(value, sort_keys=True, default=str)
 
+    def distinct(values: list) -> object:
+        unique = {encoded(value): value for value in values}
+        if len(unique) == 1:
+            return next(iter(unique.values()))
+        return [unique[key] for key in sorted(unique)]
+
     def value_of(definitions: list[PropertyEntry]):
-        distinct = {encoded(entry.value): entry.value for entry in definitions}
-        if len(distinct) == 1:
-            return next(iter(distinct.values()))
-        return [distinct[key] for key in sorted(distinct)]
+        return distinct([entry.value for entry in definitions])
+
+    def written_of(definitions: list[PropertyEntry]):
+        return distinct([entry.value if entry.written is None else entry.written for entry in definitions])
+
+    def deciding(definitions: list[PropertyEntry]) -> list[PropertyEntry]:
+        return [entry for entry in definitions if not entry.inherited] or definitions
 
     def effective(definitions: list[PropertyEntry]) -> tuple[object, bool, str | None]:
-        own = [entry for entry in definitions if not entry.inherited]
-        deciding = own or definitions
-        return value_of(deciding), not own, deciding[0].unit
+        decided = deciding(definitions)
+        return value_of(decided), decided[0].inherited, decided[0].unit
+
+    def with_written(out: dict, side: str, definitions: list[PropertyEntry]) -> dict:
+        written = written_of(definitions)
+        if encoded(written) != encoded(out[f"{side}_value"]):
+            out[f"{side}_written"] = written
+        return out
 
     def origin(inherited: bool) -> str:
         return "type" if inherited else "occurrence"
@@ -499,6 +528,7 @@ def _property_deltas(
     def listed(definitions: list[PropertyEntry]) -> list[dict]:
         rows = [
             {"origin": origin(entry.inherited), "pset_guid": entry.pset_guid, "value": entry.value}
+            | ({} if entry.written is None else {"written": entry.written})
             for entry in definitions
         ]
         return sorted(rows, key=lambda row: (row["origin"], row["pset_guid"] or "", encoded(row["value"])))
@@ -517,14 +547,14 @@ def _property_deltas(
         new_definitions = new_keys.get(key)
         if old_definitions is None:
             value, inherited, unit = effective(new_definitions)
-            added = entry(key, inherited, unit, new_value=value)
+            added = with_written(entry(key, inherited, unit, new_value=value), "new", deciding(new_definitions))
             if len(new_definitions) > 1:
                 added["new_definitions"] = listed(new_definitions)
             result["added"].append(added)
             continue
         if new_definitions is None:
             value, inherited, unit = effective(old_definitions)
-            removed = entry(key, inherited, unit, old_value=value)
+            removed = with_written(entry(key, inherited, unit, old_value=value), "old", deciding(old_definitions))
             if len(old_definitions) > 1:
                 removed["old_definitions"] = listed(old_definitions)
             result["removed"].append(removed)
@@ -534,6 +564,8 @@ def _property_deltas(
         new_value, new_inherited, unit = effective(new_definitions)
         if old_value != new_value or old_unit != unit:
             changed = entry(key, new_inherited, unit, old_value=old_value, new_value=new_value)
+            with_written(changed, "old", deciding(old_definitions))
+            with_written(changed, "new", deciding(new_definitions))
             if old_unit != unit:
                 changed["old_unit"], changed["unit"] = old_unit, unit
             if len(old_definitions) > 1 or len(new_definitions) > 1:
@@ -548,17 +580,14 @@ def _property_deltas(
             old_type = [e for e in old_definitions if e.inherited]
             new_type = [e for e in new_definitions if e.inherited]
             if old_type and new_type and value_of(old_type) != value_of(new_type):
-                result["overridden_changed"].append(
-                    entry(key, True, new_type[0].unit, old_value=value_of(old_type), new_value=value_of(new_type))
-                )
+                overridden = entry(key, True, new_type[0].unit, old_value=value_of(old_type), new_value=value_of(new_type))
+                with_written(overridden, "old", old_type)
+                result["overridden_changed"].append(with_written(overridden, "new", new_type))
         for inherited in (False, True):
             old_count = sum(1 for e in old_definitions if e.inherited == inherited)
             new_count = sum(1 for e in new_definitions if e.inherited == inherited)
             if old_count != new_count:
                 result["count_changed"].append(entry(key, inherited, old_count=old_count, new_count=new_count))
-
-    if not result:
-        return None
 
     def order(item: dict) -> tuple[str, str, bool]:
         return (item["name"], item["pset"], item["inherited"])
