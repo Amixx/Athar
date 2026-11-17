@@ -192,8 +192,11 @@ def _extract_unit_context(ifc) -> dict[str, Any]:
     }
 
 
-def _map_conversion_unit_factors(ifc) -> dict[int, dict[str, float]]:
-    """Length factor per ``IfcMapConversion`` whose target CRS sets ``MapUnit``.
+_MAP_CONVERSION_LENGTHS = ("Eastings", "Northings", "OrthogonalHeight")
+
+
+def _map_conversion_unit_factors(ifc) -> dict[int, dict[str, dict[str, float]]]:
+    """Length factor of each length attribute per ``IfcMapConversion`` whose target CRS sets ``MapUnit``.
 
     The conversion's lengths are in that unit; without ``MapUnit`` they use the
     project length unit and the conversion has no entry.
@@ -212,7 +215,7 @@ def _map_conversion_unit_factors(ifc) -> dict[int, dict[str, float]]:
         factor = unit_factor(map_unit)
         if factor is None:
             raise ValueError(f"#{step_id} IfcMapConversion: TargetCRS MapUnit has no positive length factor")
-        factors[step_id] = {"LENGTHUNIT": factor}
+        factors[step_id] = {attr: {"LENGTHUNIT": factor} for attr in _MAP_CONVERSION_LENGTHS}
     return factors
 
 

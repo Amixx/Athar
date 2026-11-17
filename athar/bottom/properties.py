@@ -73,7 +73,7 @@ def _si_value(value, measure: str | None, own_unit, unit_factors: dict[str, floa
     return float(f"{value * factor:.12g}"), unit
 
 
-_OWN_UNIT_VALUES = {
+_VALUE_ATTRIBUTES = {
     "IfcPropertySingleValue": ("NominalValue",),
     "IfcPropertyBoundedValue": ("UpperBoundValue", "LowerBoundValue", "SetPointValue"),
     "IfcPropertyListValue": ("ListValues",),
@@ -82,25 +82,32 @@ _OWN_UNIT_VALUES = {
 }
 
 
-def _own_unit(entity):
-    """The unit a property, enumeration, quantity or measure with unit names for its values, or ``None``."""
-    if entity.is_a("IfcMeasureWithUnit"):
-        return entity.UnitComponent
-    if entity.is_a("IfcPropertyEnumeratedValue"):
+def _own_units(entity) -> dict[str, object]:
+    """The unit a property, enumeration, quantity or measure with unit names, by the attribute whose values it applies to."""
+    cls = entity.is_a()
+    if cls == "IfcMeasureWithUnit":
+        return {"ValueComponent": entity.UnitComponent}
+    if cls == "IfcPropertyTableValue":
+        return {"DefiningValues": entity.DefiningUnit, "DefinedValues": entity.DefinedUnit}
+    if cls == "IfcPropertyEnumeratedValue":
         reference = entity.EnumerationReference
-        return reference.Unit if reference is not None else None
-    return _safe_get(entity, "Unit")
+        return {"EnumerationValues": reference.Unit if reference is not None else None}
+    if cls in _QUANTITIES:
+        return {_QUANTITIES[cls][0]: entity.Unit}
+    return {attr: entity.Unit for attr in _VALUE_ATTRIBUTES.get(cls, ())}
 
 
-def own_unit_factors(ifc) -> dict[int, dict[str, float]]:
-    """Per property, enumeration, quantity or measure with unit naming its own unit: the factor of that unit by the unit type of its values.
+def own_unit_factors(ifc) -> dict[int, dict[str, dict[str, float]]]:
+    """Per property, enumeration, quantity or measure with unit naming its own unit: the factor of that unit by the
+    attribute holding the values and the unit type of those values.
 
-    The unit takes the place of the file's unit assignment for that record; a
-    unit without a multiplicative factor leaves the values as written (factor 1).
-    An enumerated value takes the unit of the enumeration it references.
+    The unit takes the place of the file's unit assignment for those values; a
+    unit without a multiplicative factor leaves them as written (factor 1). An
+    enumerated value takes the unit of the enumeration it references, and a
+    table's defining and defined values each take their own unit.
     """
     schema = ifc.schema_identifier
-    factors: dict[int, dict[str, float]] = {}
+    factors: dict[int, dict[str, dict[str, float]]] = {}
     records = (
         ifc.by_type("IfcSimpleProperty")
         + ifc.by_type("IfcPropertyEnumeration")
@@ -108,21 +115,20 @@ def own_unit_factors(ifc) -> dict[int, dict[str, float]]:
         + ifc.by_type("IfcMeasureWithUnit")
     )
     for entity in records:
-        own_unit = _own_unit(entity)
-        if own_unit is None:
-            continue
-        if entity.is_a("IfcMeasureWithUnit"):
-            measures = [entity.ValueComponent.is_a()]
-        elif entity.is_a() in _QUANTITIES:
-            measures = [_QUANTITIES[entity.is_a()][1]]
-        else:
-            values = [_safe_get(entity, attr) for attr in _OWN_UNIT_VALUES.get(entity.is_a(), ())]
-            values = [item for value in values for item in (value if isinstance(value, tuple) else (value,))]
-            measures = [value.is_a() for value in values if value is not None]
-        unit_types = {measure_unit_type(schema, measure) for measure in measures if measure} - {None}
-        if unit_types:
-            factor = unit_factor(own_unit)
-            factors[entity.id()] = {unit_type: 1.0 if factor is None else factor for unit_type in unit_types}
+        for attr, own_unit in _own_units(entity).items():
+            if own_unit is None:
+                continue
+            if entity.is_a() in _QUANTITIES:
+                measures = [_QUANTITIES[entity.is_a()][1]]
+            else:
+                value = getattr(entity, attr)
+                measures = [item.is_a() for item in (value if isinstance(value, tuple) else (value,)) if item is not None]
+            unit_types = {measure_unit_type(schema, measure) for measure in measures if measure} - {None}
+            if unit_types:
+                factor = unit_factor(own_unit)
+                factors.setdefault(entity.id(), {})[attr] = {
+                    unit_type: 1.0 if factor is None else factor for unit_type in unit_types
+                }
     return factors
 
 

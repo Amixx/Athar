@@ -309,3 +309,19 @@ def test_an_enumeration_unit_applies_to_the_selected_and_enumeration_values(tmp_
         ("IfcPropertyEnumeratedValue.EnumerationValues", "[IFCLENGTHMEASURE: 3 m]"),
         ("IfcPropertyEnumeration.EnumerationValues", "[IFCLENGTHMEASURE: 3 m, IFCLENGTHMEASURE: 6 m]"),
     ]
+
+
+def test_table_columns_take_their_own_units(tmp_path):
+    def properties(model):
+        millimetre = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Prefix="MILLI", Name="METRE")
+        return [model.create_entity(
+            "IfcPropertyTableValue", Name="Table",
+            DefiningValues=[model.create_entity("IfcLengthMeasure", 3.0)], DefiningUnit=_metre(model),
+            DefinedValues=[model.create_entity("IfcLengthMeasure", 3000.0)], DefinedUnit=millimetre,
+        )]
+
+    facts = _millimetre_model_with(tmp_path / "table.ifc", properties)
+    assert sorted((path.rsplit("/", 1)[-1], value) for path, value in facts if path.endswith("Values")) == [
+        ("IfcPropertyTableValue.DefinedValues", "[IFCLENGTHMEASURE: 3 m]"),
+        ("IfcPropertyTableValue.DefiningValues", "[IFCLENGTHMEASURE: 3 m]"),
+    ]

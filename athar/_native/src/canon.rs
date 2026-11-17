@@ -113,11 +113,15 @@ fn is_plain_refs(token: &Token) -> bool {
     }
 }
 
+/// Unit factors by unit type that replace the file's for the values of one
+/// attribute of one record: step id -> attribute name -> unit type -> factor.
+pub type AttrUnitFactors = HashMap<i64, HashMap<String, HashMap<String, f64>>>;
+
 pub fn canonicalize(
     records: &[Record],
     schema: &SchemaDesc,
     unit_factors: &HashMap<String, f64>,
-    record_unit_factors: &HashMap<i64, HashMap<String, f64>>,
+    record_unit_factors: &AttrUnitFactors,
 ) -> ParsedNative {
     let tri_pointlists = collect_triangulated_pointlists(records, schema, unit_factors);
     let dir_ratios: HashMap<i64, [f64; 3]> = records
@@ -181,19 +185,7 @@ pub fn canonicalize(
             geom_parts.push(part.clone());
         }
 
-        let overlaid: HashMap<String, f64>;
-        let attr_unit_factors = match record_unit_factors.get(&rec.step_id) {
-            Some(overrides) => {
-                overlaid = unit_factors
-                    .iter()
-                    .chain(overrides)
-                    .map(|(unit, factor)| (unit.clone(), *factor))
-                    .collect();
-                &overlaid
-            }
-            None => unit_factors,
-        };
-        let attr_units = Units { factors: attr_unit_factors, measures: &schema.measures };
+        let record_overrides = record_unit_factors.get(&rec.step_id);
 
         // Attributes are zipped positionally with the schema descriptor.
         let n = rec.attrs.len().min(desc.attrs.len());
@@ -220,6 +212,19 @@ pub fn canonicalize(
             if unset || is_plain_refs(token) {
                 continue;
             }
+            let overlaid: HashMap<String, f64>;
+            let attr_unit_factors = match record_overrides.and_then(|by_attr| by_attr.get(attr.name.as_str())) {
+                Some(overrides) => {
+                    overlaid = unit_factors
+                        .iter()
+                        .chain(overrides)
+                        .map(|(unit, factor)| (unit.clone(), *factor))
+                        .collect();
+                    &overlaid
+                }
+                None => unit_factors,
+            };
+            let attr_units = Units { factors: attr_unit_factors, measures: &schema.measures };
             let mut part = String::new();
             part.push_str("attr=");
             part.push_str(&attr.name);

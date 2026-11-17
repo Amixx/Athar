@@ -876,7 +876,7 @@ fn build_bundle(
     path: &str,
     schema_json: &str,
     unit_factors: &HashMap<String, f64>,
-    record_unit_factors: &HashMap<i64, HashMap<String, f64>>,
+    record_unit_factors: &canon::AttrUnitFactors,
 ) -> Result<NativeBundle, String> {
     let mut prof = StageProfiler::new();
     prof.mark("enter");
@@ -1321,8 +1321,9 @@ type CoverageTuple = (BTreeMap<String, i64>, BTreeMap<String, (i64, String)>, BT
 /// Full native parse + signature build for one IFC file.
 ///
 /// `schema_json` is the per-class descriptor map; `unit_factors` maps unit
-/// types to scale factors; `record_unit_factors` maps a step id to unit
-/// factors that override the file's for that record alone. Returns
+/// types to scale factors; `record_unit_factors` maps a step id and one of
+/// its attributes to unit factors that override the file's for that
+/// attribute's values alone. Returns
 /// `(signatures, edge_stats, (dangling_refs, cycle_breaks, warnings),
 /// (unknown_relationships, unreached, ignored_by_design),
 /// (relation_labels, related_entities))`.
@@ -1332,7 +1333,7 @@ fn build_signature_bundle(
     path: String,
     schema_json: String,
     unit_factors: HashMap<String, f64>,
-    record_unit_factors: HashMap<i64, HashMap<String, f64>>,
+    record_unit_factors: canon::AttrUnitFactors,
 ) -> PyResult<(
     Vec<SigTuple>,
     BTreeMap<String, i64>,
