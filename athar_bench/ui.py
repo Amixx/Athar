@@ -42,7 +42,7 @@ TOOL_LABELS = {
     "ifcgit_port": "IfcGit (port)",
 }
 DATASETS = ("synthetic", "revit")
-ASSESSMENTS = ("expected", "unexpected", "observed", "error", "timeout", "not_installed")
+ASSESSMENTS = ("expected", "unexpected", "observed", "error", "timeout")
 DATASET_LABELS = {"synthetic": "Synthetic", "revit": "Revit round-trip"}
 
 
@@ -387,7 +387,7 @@ def _tool_averages(aggregates: dict[str, Any]) -> str:
     <section class="mb-4" aria-label="Tool averages">
       <h2 class="h5">Tool averages</h2>
       <p class="small text-secondary mb-2">An error or timeout counts as a miss on its pair: it stays in every
-      denominator, and scores precision, recall and F1 of 0. Tools that are not installed are left out.
+      denominator, and scores precision, recall and F1 of 0. A tool that is not installed counts as an error.
       Macro is the mean of per-pair scores, so every pair weighs the same; micro sums true and false
       positives and negatives over all pairs first, so pairs with many changes weigh more. Time and
       memory are geometric means of per-pair ratios to Athar, each tool run as a subprocess the same way.</p>
@@ -423,6 +423,7 @@ def _tool_average_stats(tool: str, aggregate: dict[str, Any]) -> dict[str, Any]:
         "judged": aggregate["judged"],
         "unexpected": aggregate["unexpected"],
         "nondeterministic": aggregate["nondeterministic"],
+        "failure_reasons": "; ".join(f"{reason} ({count} pairs)" for reason, count in aggregate["failure_reasons"].items()),
         "correctness_value": aggregate["correctness"],
         "correctness": "—" if aggregate["correctness"] is None else f"{aggregate['correctness']:.0%}",
         "macro_f1": None,
@@ -456,7 +457,7 @@ def _tool_average_row(stat: dict[str, Any], ranges: dict[str, list[float | int]]
       <td class="font-monospace {_range_class(stat["coverage_value"], ranges["coverage_value"], higher_is_better=True)}">{_e(stat["coverage"])}</td>
       <td class="{_range_class(stat["correctness_value"], ranges["correctness_value"], higher_is_better=True)}">{_e(stat["correctness"])}</td>
       <td>{stat["judged"]}</td>
-      <td class="{_range_class(stat["unexpected"], ranges["unexpected"], higher_is_better=False)}">{stat["unexpected"]}</td>
+      <td class="{_range_class(stat["unexpected"], ranges["unexpected"], higher_is_better=False)}" title="{_e(stat["failure_reasons"])}">{stat["unexpected"]}</td>
       <td class="font-monospace {_range_class(stat["macro_f1"], ranges["macro_f1"], higher_is_better=True)}">{_e(stat["macro"])}</td>
       <td class="font-monospace {_range_class(stat["micro_f1"], ranges["micro_f1"], higher_is_better=True)}">{_e(stat["micro"])}</td>
       <td class="font-monospace">{_e(stat["fp_total"])}</td>
@@ -631,7 +632,6 @@ def _badge_class(assessment: str) -> str:
         "observed": "text-bg-secondary",
         "error": "text-bg-danger",
         "timeout": "text-bg-danger",
-        "not_installed": "text-bg-light border",
         "refused": "text-bg-warning",
     }.get(assessment, "text-bg-secondary")
 
@@ -641,9 +641,8 @@ def _assessment_title(assessment: str) -> str:
         "expected": "Matches the encoded expected outcome for this benchmark pair.",
         "unexpected": "Does not match the encoded expected outcome for this benchmark pair.",
         "observed": "No pass/fail expectation is encoded for this pair/tool; result is shown for reference only and excluded from correctness.",
-        "error": "The tool crashed or produced unparsable output; scored as a miss on this pair.",
+        "error": "The tool crashed, produced unparsable output or is not installed; scored as a miss on this pair.",
         "timeout": "The tool hit the timeout; scored as a miss on this pair.",
-        "not_installed": "The tool is not installed; left out of every average.",
     }.get(assessment, "Benchmark assessment")
 
 

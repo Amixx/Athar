@@ -805,7 +805,7 @@ def _run_ifcdiff(
     relationships: str | None = None,
 ) -> dict:
     if importlib.util.find_spec("ifcdiff") is None:
-        return {"status": "not_installed", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
+        return {"status": "error", "error": "install benchmark extra: python -m pip install '.[benchmark]'"}
 
     output_path = workdir / "ifcdiff.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -854,8 +854,8 @@ DEFAULT_SPECKLE_PYTHON = REPO_ROOT / ".athar-benchmark" / "speckle-venv" / "bin"
 def _run_speckle(python: Path, old_path: str, new_path: str, timeout_s: int) -> dict:
     if not python.is_file():
         return {
-            "status": "not_installed",
-            "reason": f"Speckle interpreter {python} not found; run make benchmark-setup",
+            "status": "error",
+            "error": f"Speckle interpreter {python} not found; run make benchmark-setup",
         }
     return _run_json_runner(_SPECKLE_RUNNER, old_path, new_path, timeout_s, python=python)
 
@@ -895,7 +895,7 @@ _IFCFAST_RUNNER = (
 
 def _run_ifcfast(old_path: str, new_path: str, timeout_s: int) -> dict:
     if importlib.util.find_spec("ifcfast") is None:
-        return {"status": "not_installed", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
+        return {"status": "error", "error": "install benchmark extra: python -m pip install '.[benchmark]'"}
     argv = [sys.executable, "-c", _IFCFAST_RUNNER, old_path, new_path]
     start = time.perf_counter()
     completed = _run_subprocess(argv, timeout_s)
@@ -1036,8 +1036,6 @@ def finish_pair(entry: dict, expected: Expected | None) -> dict:
 
 def assess_run(name: str, run: dict, expected: Expected | None) -> str:
     status = run.get("status")
-    if status == "not_installed":
-        return "not_installed"
     if status in FAILED_STATUSES:
         return status
     if expected is None:
@@ -1093,8 +1091,6 @@ def score_pair(entry: dict, expected: Expected | None) -> dict[str, dict]:
     scores = {}
     for name, run in entry.get("runs", {}).items():
         status = run.get("status")
-        if status == "not_installed":
-            continue
         if status == "ok":
             if run.get("reported_guids") is None:
                 raise ValueError(f"{name}: completed run carries no reported_guids to score")
@@ -1131,6 +1127,8 @@ def _summary_row(entry: dict) -> dict:
             "gb_seconds_median": run.get("gb_seconds_median", run.get("gb_seconds")),
             "nondeterministic": "nondeterministic" in run,
         }
+        if run.get("error"):
+            row[name]["error"] = run["error"]
         score = scores.get(name)
         if score is not None:
             row[name]["changeset"] = {
@@ -1142,8 +1140,9 @@ def _summary_row(entry: dict) -> dict:
 def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
     """Per dataset and tool: coverage, correctness and changeset averages over the summary rows.
 
-    A pair counts as attempted for a tool unless the tool is not installed; an error or
-    timeout stays in every denominator (correctness, coverage, changeset average).
+    Every pair counts as attempted for a tool; an error or timeout (including a tool that
+    is not installed) stays in every denominator (correctness, coverage, changeset average),
+    and ``failure_reasons`` counts the distinct error messages of its failed pairs.
     Changeset scores are averaged both macro (mean of per-pair values) and micro (from
     TP/FP/FN summed over pairs). Time and memory are the geometric mean of per-pair
     ratios to ``TIMING_REFERENCE``, over pairs both completed.
@@ -1157,8 +1156,6 @@ def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
             if not isinstance(result, dict) or "status" not in result:
                 continue
             status = result["status"]
-            if status == "not_installed":
-                continue
             stats = out.setdefault(dataset, {}).setdefault(
                 tool,
                 {
@@ -1169,6 +1166,7 @@ def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
                     "expected": 0,
                     "unexpected": 0,
                     "nondeterministic": 0,
+                    "failure_reasons": {},
                     "_scores": [],
                     "_ratios": {metric: [] for metric in RATIO_METRICS},
                 },
@@ -1183,6 +1181,8 @@ def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
                         values.append(mine / theirs)
             stats["completed"] += status in COMPLETED_STATUSES
             stats["failed"] += status in FAILED_STATUSES
+            if status in FAILED_STATUSES and result.get("error"):
+                stats["failure_reasons"][result["error"]] = stats["failure_reasons"].get(result["error"], 0) + 1
             assessment = row.get("assessment", {}).get(tool)
             if assessment in {"expected", "unexpected"} or (row.get("has_expectation") and status in FAILED_STATUSES):
                 stats["judged"] += 1

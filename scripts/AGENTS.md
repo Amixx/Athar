@@ -54,13 +54,14 @@ Scripts are for inspection and repeatable investigation.
       pairs diff a byte-identical copy at a second path, since
       `diff_files` parses once when both arguments name one file.
     - Run statuses: `ok`, `refused` (Athar's schema refusal), `error`,
-      `timeout`, `not_installed`. `not_installed` is shown and left out of
-      every average. `error` and `timeout` are a miss on that pair: assessed
+      `timeout`. A tool that is not installed is an `error` carrying the
+      install hint. `error` and `timeout` are a miss on that pair: assessed
       as such, counted in the judged pairs, and scored precision = recall =
       F1 = 0 where GUID truth exists. A failure on any repeat is the tool's
       outcome for the pair. The JSON's `aggregates[set][tool]` holds the
       per-tool figures the dashboard shows, including coverage (pairs
-      completed out of pairs attempted), changeset precision/recall/F1 both
+      completed out of pairs attempted) and `failure_reasons` (error message
+      to pair count), changeset precision/recall/F1 both
       macro (mean of per-pair values) and micro (from TP/FP/FN summed over
       pairs), and time/peak-RSS/GB-seconds as the geometric mean of per-pair
       ratios to Athar. Status, counts and reported GUID sets must agree
@@ -98,7 +99,7 @@ Scripts are for inspection and repeatable investigation.
     its own venv (`make benchmark-setup` builds `.athar-benchmark/speckle-venv`,
     passed as `--speckle-python`) because `specklepy[speckleifc]` needs an older
     `ifcopenshell` than Athar's. A missing interpreter records the runs as
-    `not_installed` with the reason.
+    `error` with the reason.
   - `explore/ifcgit_diff_runner.py` is a headless port of Bonsai IfcGit's
     diff (git text diff of STEP lines, propagated to products); the original
     is Blender-bound. Both runners print one JSON object to stdout and are

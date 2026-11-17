@@ -146,7 +146,7 @@ def test_failed_runs_count_as_misses_and_lower_coverage():
         ),
         _scored_pair(
             "slow",
-            {"steady": _ok_run(modified=["M"]), "crashy": {"status": "timeout"}, "absent": {"status": "not_installed"}},
+            {"steady": _ok_run(modified=["M"]), "crashy": {"status": "timeout"}},
             expected,
         ),
     ]
@@ -159,7 +159,6 @@ def test_failed_runs_count_as_misses_and_lower_coverage():
     assert crashy["changeset"]["pairs"] == 3
     assert crashy["changeset"]["macro"]["recall"] == round(1 / 3, 4)
     assert aggregates["steady"]["changeset"]["macro"]["f1"] == 1.0
-    assert "absent" not in aggregates
 
 
 def test_benchmark_provenance_is_stamped_and_rendered():
@@ -397,8 +396,21 @@ def test_provenance_commit_names_head_and_marks_tracked_edits():
     assert bench._provenance({})["athar_commit"] == (f"{head}-dirty" if dirty else head)
 
 
-def test_speckle_run_without_its_interpreter_is_reported_not_installed(tmp_path):
+def test_speckle_without_its_interpreter_counts_as_failed_in_the_aggregate(tmp_path):
     missing = tmp_path / "no-venv" / "bin" / "python"
-    run = bench._run_speckle(missing, "old.ifc", "new.ifc", 5)
-    assert run["status"] == "not_installed"
-    assert str(missing) in run["reason"]
+    expected = bench.Expected(counts={"added": 0, "deleted": 0, "modified": 1}, changed_guids={"modified": ["M"]})
+    rows = [
+        _scored_pair(
+            name,
+            {"athar": _ok_run(modified=["M"]), "speckle_local": bench._run_speckle(missing, "old.ifc", "new.ifc", 5)},
+            expected,
+        )
+        for name in ("first", "second")
+    ]
+    speckle = bench.aggregate_tools(rows)["synthetic"]["speckle_local"]
+    assert (speckle["attempted"], speckle["completed"], speckle["failed"]) == (2, 0, 2)
+    assert speckle["coverage"] == 0.0
+    assert speckle["changeset"]["macro"]["recall"] == 0.0
+    (reason, pairs), = speckle["failure_reasons"].items()
+    assert pairs == 2
+    assert str(missing) in reason
