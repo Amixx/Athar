@@ -668,16 +668,9 @@ def main() -> int:
                 ),
             },
         }
-        if tools.get("ifcfast", {}).get("available"):
-            entry["runs"]["ifcfast"] = _repeat(lambda: _run_ifcfast(old_path, new_path, args.timeout_s), args.repeats)
-        if "speckle_digest" in tools:
-            entry["runs"]["speckle_digest"] = _repeat(
-                lambda: _run_speckle(Path(args.speckle_python), old_path, new_path, args.timeout_s), args.repeats
-            )
-        if tools.get("ifcgit_port", {}).get("available"):
-            entry["runs"]["ifcgit_port"] = _repeat(
-                lambda: _run_json_runner(_IFCGIT_RUNNER, old_path, new_path, args.timeout_s), args.repeats
-            )
+        entry["runs"].update(
+            _optional_runs(tools, old_path, new_path, Path(args.speckle_python), args.timeout_s, args.repeats)
+        )
         results["pairs"].append(entry)
         results["summary"].append(finish_pair(entry, expected))
         results["aggregates"] = aggregate_tools(results["summary"])
@@ -690,6 +683,19 @@ def main() -> int:
 
 def _repeat(fn: Callable[[], dict], repeats: int) -> dict:
     return combine_repeats([fn() for _ in range(repeats)])
+
+
+def _optional_runs(
+    tools: dict, old_path: str, new_path: str, speckle_python: Path, timeout_s: int, repeats: int
+) -> dict[str, dict]:
+    runs = {}
+    if "ifcfast" in tools:
+        runs["ifcfast"] = _repeat(lambda: _run_ifcfast(old_path, new_path, timeout_s), repeats)
+    if "speckle_digest" in tools:
+        runs["speckle_digest"] = _repeat(lambda: _run_speckle(speckle_python, old_path, new_path, timeout_s), repeats)
+    if tools.get("ifcgit_port", {}).get("available"):
+        runs["ifcgit_port"] = _repeat(lambda: _run_json_runner(_IFCGIT_RUNNER, old_path, new_path, timeout_s), repeats)
+    return runs
 
 
 def combine_repeats(runs: list[dict]) -> dict:
@@ -895,7 +901,7 @@ _IFCFAST_RUNNER = (
 
 def _run_ifcfast(old_path: str, new_path: str, timeout_s: int) -> dict:
     if importlib.util.find_spec("ifcfast") is None:
-        return {"status": "error", "error": "install benchmark extra: python -m pip install '.[benchmark]'"}
+        return {"status": "error", "error": "ifcfast is not installed: python -m pip install '.[benchmark]'"}
     argv = [sys.executable, "-c", _IFCFAST_RUNNER, old_path, new_path]
     start = time.perf_counter()
     completed = _run_subprocess(argv, timeout_s)

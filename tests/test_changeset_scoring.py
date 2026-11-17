@@ -424,3 +424,13 @@ def test_dashboard_names_the_speckle_tool_for_its_athar_defined_digest():
     assert key in ui.TOOLS
     assert "Athar digest" in ui.TOOL_LABELS[key]
     assert "Athar-defined" in inventory[key]["notes"]
+
+
+def test_ifcfast_missing_from_the_environment_is_run_and_fails(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "ifcfast", None)
+    tools = bench._tool_inventory(
+        include_ifcfast=True, include_speckle=False, include_ifcgit=False, speckle_python=tmp_path / "python"
+    )
+    runs = bench._optional_runs(tools, "old.ifc", "new.ifc", tmp_path / "python", timeout_s=5, repeats=1)
+    assert runs["ifcfast"]["status"] == "error"
+    assert "ifcfast" in runs["ifcfast"]["error"]
