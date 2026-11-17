@@ -484,6 +484,8 @@ def _property_deltas(
     or in two sets of one name. The effective value is the occurrence's when
     it defines the key, the type's otherwise; definitions of the effective
     origin that disagree make it the sorted list of their distinct values.
+    Values compare in SI; ``old_written`` / ``new_written`` carry the values
+    as the files write them where those differ.
     """
 
     def by_key(entries: list[PropertyEntry]) -> dict[tuple[str, str], list[PropertyEntry]]:
@@ -495,16 +497,30 @@ def _property_deltas(
     def encoded(value) -> str:
         return json.dumps(value, sort_keys=True, default=str)
 
+    def distinct(values: list) -> object:
+        unique = {encoded(value): value for value in values}
+        if len(unique) == 1:
+            return next(iter(unique.values()))
+        return [unique[key] for key in sorted(unique)]
+
     def value_of(definitions: list[PropertyEntry]):
-        distinct = {encoded(entry.value): entry.value for entry in definitions}
-        if len(distinct) == 1:
-            return next(iter(distinct.values()))
-        return [distinct[key] for key in sorted(distinct)]
+        return distinct([entry.value for entry in definitions])
+
+    def written_of(definitions: list[PropertyEntry]):
+        return distinct([entry.value if entry.written is None else entry.written for entry in definitions])
+
+    def deciding(definitions: list[PropertyEntry]) -> list[PropertyEntry]:
+        return [entry for entry in definitions if not entry.inherited] or definitions
 
     def effective(definitions: list[PropertyEntry]) -> tuple[object, bool, str | None]:
-        own = [entry for entry in definitions if not entry.inherited]
-        deciding = own or definitions
-        return value_of(deciding), not own, deciding[0].unit
+        decided = deciding(definitions)
+        return value_of(decided), decided[0].inherited, decided[0].unit
+
+    def with_written(out: dict, side: str, definitions: list[PropertyEntry]) -> dict:
+        written = written_of(definitions)
+        if encoded(written) != encoded(out[f"{side}_value"]):
+            out[f"{side}_written"] = written
+        return out
 
     def origin(inherited: bool) -> str:
         return "type" if inherited else "occurrence"
@@ -512,6 +528,7 @@ def _property_deltas(
     def listed(definitions: list[PropertyEntry]) -> list[dict]:
         rows = [
             {"origin": origin(entry.inherited), "pset_guid": entry.pset_guid, "value": entry.value}
+            | ({} if entry.written is None else {"written": entry.written})
             for entry in definitions
         ]
         return sorted(rows, key=lambda row: (row["origin"], row["pset_guid"] or "", encoded(row["value"])))
@@ -530,14 +547,14 @@ def _property_deltas(
         new_definitions = new_keys.get(key)
         if old_definitions is None:
             value, inherited, unit = effective(new_definitions)
-            added = entry(key, inherited, unit, new_value=value)
+            added = with_written(entry(key, inherited, unit, new_value=value), "new", deciding(new_definitions))
             if len(new_definitions) > 1:
                 added["new_definitions"] = listed(new_definitions)
             result["added"].append(added)
             continue
         if new_definitions is None:
             value, inherited, unit = effective(old_definitions)
-            removed = entry(key, inherited, unit, old_value=value)
+            removed = with_written(entry(key, inherited, unit, old_value=value), "old", deciding(old_definitions))
             if len(old_definitions) > 1:
                 removed["old_definitions"] = listed(old_definitions)
             result["removed"].append(removed)
@@ -547,6 +564,8 @@ def _property_deltas(
         new_value, new_inherited, unit = effective(new_definitions)
         if old_value != new_value or old_unit != unit:
             changed = entry(key, new_inherited, unit, old_value=old_value, new_value=new_value)
+            with_written(changed, "old", deciding(old_definitions))
+            with_written(changed, "new", deciding(new_definitions))
             if old_unit != unit:
                 changed["old_unit"], changed["unit"] = old_unit, unit
             if len(old_definitions) > 1 or len(new_definitions) > 1:
@@ -561,9 +580,9 @@ def _property_deltas(
             old_type = [e for e in old_definitions if e.inherited]
             new_type = [e for e in new_definitions if e.inherited]
             if old_type and new_type and value_of(old_type) != value_of(new_type):
-                result["overridden_changed"].append(
-                    entry(key, True, new_type[0].unit, old_value=value_of(old_type), new_value=value_of(new_type))
-                )
+                overridden = entry(key, True, new_type[0].unit, old_value=value_of(old_type), new_value=value_of(new_type))
+                with_written(overridden, "old", old_type)
+                result["overridden_changed"].append(with_written(overridden, "new", new_type))
         for inherited in (False, True):
             old_count = sum(1 for e in old_definitions if e.inherited == inherited)
             new_count = sum(1 for e in new_definitions if e.inherited == inherited)

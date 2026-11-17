@@ -353,3 +353,50 @@ def test_integer_measures_with_a_unit_type_normalize_and_counts_stay_integers(tm
         "IFCINTEGERCOUNTRATEMEASURE: 1",
         "IFCLENGTHMEASURE: 3 m",
     ]
+
+
+def test_property_deltas_compare_si_values_and_show_the_written_ones(tmp_path):
+    from athar.check import evaluate_report
+
+    old, new = tmp_path / "old.ifc", tmp_path / "new.ifc"
+    _with_measures(old, [_thermal_units(None)], [("ThermalTransmittance", "IfcThermalTransmittanceMeasure", 0.25, None)])
+    _with_measures(new, [_thermal_units(None)],
+                   [("ThermalTransmittance", "IfcThermalTransmittanceMeasure", 0.25e-6, _thermal_units("MILLI"))])
+    model = ifcopenshell.open(str(new))
+    length = next(prop for prop in model.by_type("IfcPropertySingleValue") if prop.Name == "NominalLength")
+    length.NominalValue.wrappedValue = 4000.0
+    length.Unit = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Prefix="MILLI", Name="METRE")
+    model.write(str(new))
+
+    report = diff_files(str(old), str(new))
+    assert_report_invariants(report)
+    result = evaluate_report(report, {"forbid_property_value_change": {"ThermalTransmittance": "*"}})
+    assert result["ok"], result["violations"]
+    (item,) = [item for item in report["modified"] if item["new"]["guid"] == _GUID]
+    assert item["property_deltas"] == {"changed": [{
+        "pset": "Pset_Test", "name": "NominalLength", "inherited": False, "unit": "m",
+        "old_value": 3.0, "new_value": 4.0, "new_written": 4000.0,
+    }]}
+
+
+def test_enumerated_property_entries_carry_si_values_and_the_written_ones(tmp_path):
+    from athar.bottom.signatures import build_signature_bundle
+
+    path = tmp_path / "enumerated.ifc"
+
+    def properties(model):
+        enumeration = model.create_entity("IfcPropertyEnumeration", Name="Widths", Unit=_metre(model),
+                                          EnumerationValues=[model.create_entity("IfcLengthMeasure", 3.0)])
+        return [
+            model.create_entity("IfcPropertyEnumeratedValue", Name="Width", EnumerationReference=enumeration,
+                                EnumerationValues=[model.create_entity("IfcLengthMeasure", 3.0)]),
+            model.create_entity("IfcPropertyEnumeratedValue", Name="Depth",
+                                EnumerationValues=[model.create_entity("IfcLengthMeasure", 3000.0)]),
+        ]
+
+    _millimetre_model_with(path, properties)
+    bundle = build_signature_bundle(str(path))
+    (step,) = [step for step, signature in bundle.signatures.items() if signature.guid == _GUID]
+    entries = {entry.name: (entry.value, entry.unit, entry.written) for entry in bundle.property_index[step]}
+    assert entries["Width"] == ([3.0], "m", None)
+    assert entries["Depth"] == ([3.0], "m", [3000.0])

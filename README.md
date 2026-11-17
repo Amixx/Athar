@@ -74,7 +74,7 @@ an explicit timestamp when an archived copy should embed a generation time.
 Schema support: **IFC4 and IFC2X3**, same-schema comparisons only (no
 IFC2X3↔IFC4 translation).
 
-IfcOpenShell 0.9.0.post1+ supplies unit conversion factors, including SI prefixes, conversion-based chains and derived units. Supported property measures are reported in SI using the file's unit or the property's own unit. Context-dependent units and conversions that require an offset have no multiplicative factor: their values stay unscaled and unlabelled. Missing native unit factors likewise leave signature numbers unscaled.
+IfcOpenShell 0.9.0.post1+ supplies unit conversion factors, including SI prefixes, conversion-based chains and derived units. Property measures with a unit type are compared in SI using the file's unit or the property's own unit, and reported with the value as written where it differs. Context-dependent units and conversions that require an offset have no multiplicative factor: their values stay unscaled and unlabelled. Missing native unit factors likewise leave signature numbers unscaled.
 
 ## Installation
 

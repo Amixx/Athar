@@ -257,11 +257,18 @@ corpus evidence and tests.
   printed as a decimal with the unit its measure is normalized to
   (`IFCLENGTHMEASURE: 3.25 m`, `m2`, `m3`, `rad`, `kg`, `s`; other measures
   print the SI value without a unit, a real without a measure has no unit), so two values print alike exactly when they hash alike.
-  `property_deltas` values of length, area, volume, plane angle, time and
-  mass measures and of the matching quantities are converted from the file's
-  unit (or the unit the property or quantity names itself) and the entry
-  carries `unit` (`m`, `m2`, `m3`, `rad`, `s`, `kg`); other values are as
-  written, without `unit`. A value is also as written, without `unit`, when
+  `property_deltas` values of every measure with a unit type, and of the
+  quantities, are converted to SI from the file's unit (or the unit the
+  property, quantity or referenced enumeration names itself) and the entry
+  carries `unit`: `m`, `m2`, `m3`, `rad`, `s` or `kg`, otherwise the unit
+  type standing for its SI unit (`THERMALTRANSMITTANCEUNIT`). Values without
+  a unit type are as written, without `unit`. `old_value` / `new_value` are
+  the converted values: they decide `changed`, `added`/`removed` pairing and
+  every policy rule, so an equivalent value written in another unit is no
+  change. `old_written` / `new_written` give the effective value as the file
+  writes it, present only where it differs from `old_value` / `new_value`;
+  `old_definitions` / `new_definitions` rows carry `written` the same way.
+  A value is also as written, without `unit`, when
   the file's unit of the measure's type, or the unit the property names, is
   not convertible by IfcOpenShell's unit helpers (an
   `IfcContextDependentUnit`, a conversion chain or derived unit containing one,

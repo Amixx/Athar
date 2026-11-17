@@ -1,28 +1,27 @@
 """Property and quantity value extraction from an IFC file.
 
 Captures property values for human-readable delta reports through
-ifcopenshell, without quantization. Measures with an SI unit are converted
-from the file's unit to that unit, which the entry names.
+ifcopenshell, without quantization. A measure with a unit type is converted
+from the file's unit, or the unit the property names, to SI, which the entry
+names; the entry keeps the value as written beside it.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from .parser import measure_unit_type, unit_factor
 from .types import OrphanPropertySet, PropertyEntry
 
-# Measure class -> (unit type of the unit assignment, SI unit).
-_SI_UNITS = {
-    "IfcLengthMeasure": ("LENGTHUNIT", "m"),
-    "IfcPositiveLengthMeasure": ("LENGTHUNIT", "m"),
-    "IfcNonNegativeLengthMeasure": ("LENGTHUNIT", "m"),
-    "IfcAreaMeasure": ("AREAUNIT", "m2"),
-    "IfcVolumeMeasure": ("VOLUMEUNIT", "m3"),
-    "IfcPlaneAngleMeasure": ("PLANEANGLEUNIT", "rad"),
-    "IfcPositivePlaneAngleMeasure": ("PLANEANGLEUNIT", "rad"),
-    "IfcTimeMeasure": ("TIMEUNIT", "s"),
-    "IfcMassMeasure": ("MASSUNIT", "kg"),
+# Unit type -> symbol of its SI unit; any other unit type is labelled by its own name.
+_SI_SYMBOLS = {
+    "LENGTHUNIT": "m",
+    "AREAUNIT": "m2",
+    "VOLUMEUNIT": "m3",
+    "PLANEANGLEUNIT": "rad",
+    "TIMEUNIT": "s",
+    "MASSUNIT": "kg",
 }
 _QUANTITIES = {
     "IfcQuantityLength": ("LengthValue", "IfcLengthMeasure"),
@@ -34,6 +33,12 @@ _QUANTITIES = {
 }
 
 
+@dataclass(frozen=True)
+class _Units:
+    schema: str
+    factors: dict[str, float]
+
+
 def extract_properties(ifc, unit_factors: dict[str, float]) -> dict[int, list[PropertyEntry]]:
     """Extract property and quantity values keyed by product step_id.
 
@@ -42,35 +47,53 @@ def extract_properties(ifc, unit_factors: dict[str, float]) -> dict[int, list[Pr
     """
 
     index: dict[int, list[PropertyEntry]] = {}
+    units = _Units(ifc.schema_identifier, unit_factors)
 
-    _collect_direct_properties(ifc, index, unit_factors)
-    _collect_type_properties(ifc, index, unit_factors)
+    _collect_direct_properties(ifc, index, units)
+    _collect_type_properties(ifc, index, units)
 
     return index
 
 
-def _si_value(value, measure: str | None, own_unit, unit_factors: dict[str, float]):
-    """``(value in the SI unit of ``measure``, that unit)``; the value as written and ``None`` without one.
+def _si_value(value, measure: str | None, own_unit, units: _Units):
+    """``(value in the SI unit of the unit type of ``measure``, that unit's label)``; the value as written and ``None`` without one.
 
     ``own_unit`` is the unit the property or quantity names itself, which
     takes the place of the file's unit assignment. A unit without a multiplicative
     conversion factor, or an undeclared unit of the measure's type, leaves the
     value as written.
     """
-    if measure not in _SI_UNITS or isinstance(value, bool) or not isinstance(value, (int, float)):
+    if measure is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         return value, None
-    unit_type, unit = _SI_UNITS[measure]
-    if own_unit is None:
-        factor = unit_factors.get(unit_type)
-        if factor is None:
-            return value, None
+    unit_type = measure_unit_type(units.schema, measure)
+    if unit_type is None:
+        return value, None
+    factor = units.factors.get(unit_type) if own_unit is None else unit_factor(own_unit)
+    if factor is None:
+        return value, None
+    return float(f"{value * factor:.12g}"), _SI_SYMBOLS.get(unit_type, unit_type)
+
+
+def _entry(pset: str, name: str, written, measure, own_unit, units: _Units, inherited: bool, pset_guid) -> PropertyEntry:
+    """``measure`` is the measure of ``written``, or a list of the measure of each value when ``written`` is a list."""
+    if isinstance(written, list):
+        converted = [_si_value(item, item_measure, own_unit, units) for item, item_measure in zip(written, measure)]
+        labels = {unit for _, unit in converted}
+        if len(labels) == 1:
+            value, unit = [item for item, _ in converted], labels.pop()
+        else:
+            value, unit = written, None
     else:
-        factor = unit_factor(own_unit)
-        if factor is None:
-            return value, None
-    if factor == 1.0:
-        return value, unit
-    return float(f"{value * factor:.12g}"), unit
+        value, unit = _si_value(written, measure, own_unit, units)
+    return PropertyEntry(
+        pset=pset,
+        name=name,
+        value=value,
+        inherited=inherited,
+        pset_guid=pset_guid,
+        unit=unit,
+        written=None if value == written else written,
+    )
 
 
 _VALUE_ATTRIBUTES = {
@@ -187,13 +210,13 @@ def _content_value(value):
     return value
 
 
-def _collect_direct_properties(ifc, index: dict[int, list[PropertyEntry]], unit_factors: dict[str, float]) -> None:
+def _collect_direct_properties(ifc, index: dict[int, list[PropertyEntry]], units: _Units) -> None:
     linked: set[tuple[int, int]] = set()
     for rel in ifc.by_type("IfcRelDefinesByProperties"):
         pset = rel.RelatingPropertyDefinition
         if pset is None:
             continue
-        entries = _extract_from_pset_or_qto(pset, unit_factors, inherited=False)
+        entries = _extract_from_pset_or_qto(pset, units, inherited=False)
         if not entries:
             continue
         for obj in rel.RelatedObjects or ():
@@ -204,14 +227,14 @@ def _collect_direct_properties(ifc, index: dict[int, list[PropertyEntry]], unit_
             index.setdefault(step_id, []).extend(entries)
 
 
-def _collect_type_properties(ifc, index: dict[int, list[PropertyEntry]], unit_factors: dict[str, float]) -> None:
+def _collect_type_properties(ifc, index: dict[int, list[PropertyEntry]], units: _Units) -> None:
     for rel in ifc.by_type("IfcRelDefinesByType"):
         type_obj = rel.RelatingType
         if type_obj is None:
             continue
         entries: list[PropertyEntry] = []
         for pset in type_obj.HasPropertySets or ():
-            entries.extend(_extract_from_pset_or_qto(pset, unit_factors, inherited=True))
+            entries.extend(_extract_from_pset_or_qto(pset, units, inherited=True))
         if not entries:
             continue
         for obj in rel.RelatedObjects or ():
@@ -221,15 +244,15 @@ def _collect_type_properties(ifc, index: dict[int, list[PropertyEntry]], unit_fa
             index.setdefault(step_id, []).extend(entries)
 
 
-def _extract_from_pset_or_qto(definition, unit_factors: dict[str, float], *, inherited: bool) -> list[PropertyEntry]:
+def _extract_from_pset_or_qto(definition, units: _Units, *, inherited: bool) -> list[PropertyEntry]:
     if hasattr(definition, "HasProperties"):
-        return _extract_from_property_set(definition, unit_factors, inherited)
+        return _extract_from_property_set(definition, units, inherited)
     if hasattr(definition, "Quantities"):
-        return _extract_from_quantity_set(definition, unit_factors, inherited)
+        return _extract_from_quantity_set(definition, units, inherited)
     return []
 
 
-def _extract_from_property_set(pset, unit_factors: dict[str, float], inherited: bool) -> list[PropertyEntry]:
+def _extract_from_property_set(pset, units: _Units, inherited: bool) -> list[PropertyEntry]:
     pset_name = str(_safe_get(pset, "Name") or "")
     pset_guid = _safe_get(pset, "GlobalId")
     entries: list[PropertyEntry] = []
@@ -243,22 +266,22 @@ def _extract_from_property_set(pset, unit_factors: dict[str, float], inherited: 
                 continue
             value = _safe_get(nominal, "wrappedValue")
             if value is not None:
-                value, unit = _si_value(value, nominal.is_a(), _safe_get(prop, "Unit"), unit_factors)
                 entries.append(
-                    PropertyEntry(
-                        pset=pset_name, name=str(name), value=value, inherited=inherited, pset_guid=pset_guid, unit=unit
-                    )
+                    _entry(pset_name, str(name), value, nominal.is_a(), prop.Unit, units, inherited, pset_guid)
                 )
         elif prop.is_a("IfcPropertyEnumeratedValue"):
             name = _safe_get(prop, "Name")
             if not name:
                 continue
-            values = [_safe_get(v, "wrappedValue") for v in (prop.EnumerationValues or ())]
-            entries.append(PropertyEntry(pset=pset_name, name=str(name), value=values, inherited=inherited, pset_guid=pset_guid))
+            selected = prop.EnumerationValues or ()
+            values = [_safe_get(v, "wrappedValue") for v in selected]
+            measures = [v.is_a() for v in selected]
+            own_unit = _own_units(prop)["EnumerationValues"]
+            entries.append(_entry(pset_name, str(name), values, measures, own_unit, units, inherited, pset_guid))
     return entries
 
 
-def _extract_from_quantity_set(qto, unit_factors: dict[str, float], inherited: bool) -> list[PropertyEntry]:
+def _extract_from_quantity_set(qto, units: _Units, inherited: bool) -> list[PropertyEntry]:
     qto_name = str(_safe_get(qto, "Name") or "")
     pset_guid = _safe_get(qto, "GlobalId")
     entries: list[PropertyEntry] = []
@@ -271,12 +294,7 @@ def _extract_from_quantity_set(qto, unit_factors: dict[str, float], inherited: b
         attr, measure = _QUANTITIES[qty.is_a()]
         value = _safe_get(qty, attr)
         if value is not None:
-            value, unit = _si_value(value, measure, _safe_get(qty, "Unit"), unit_factors)
-            entries.append(
-                PropertyEntry(
-                    pset=qto_name, name=str(name), value=value, inherited=inherited, pset_guid=pset_guid, unit=unit
-                )
-            )
+            entries.append(_entry(qto_name, str(name), value, measure, qty.Unit, units, inherited, pset_guid))
     return entries
 
 

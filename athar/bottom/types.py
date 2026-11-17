@@ -14,18 +14,20 @@ class PropertyEntry:
     """One extracted property or quantity value.
 
     ``inherited`` is true for a definition on the type object. ``pset_guid``
-    is the GlobalId of the defining property or quantity set. A length, area,
-    volume, plane angle, time or mass value is converted from the file's unit
-    to the SI unit named by ``unit``; other values are as written and
-    ``unit`` is ``None``.
+    is the GlobalId of the defining property or quantity set. A value of a
+    measure with a unit type is converted from the file's unit, or the unit
+    the property names, to the SI unit labelled by ``unit``; other values are
+    as written and ``unit`` is ``None``. ``written`` is the value as the file
+    writes it where that differs from ``value``.
     """
 
     pset: str
     name: str
-    value: str | int | float | bool | list[str]
+    value: str | int | float | bool | list
     inherited: bool
     pset_guid: str | None = None
     unit: str | None = None
+    written: str | int | float | bool | list | None = None
 
 
 @dataclass(frozen=True)
