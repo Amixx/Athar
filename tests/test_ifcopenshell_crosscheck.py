@@ -328,6 +328,7 @@ def test_kernel_placement_agreement(source):
 
 
 _ZERO_FRAME = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+_AXIS_ONLY = "Invalid input: Axis without RefDirection (IFC2X3 WR5, IFC4 AxisAndRefDirProvision)"
 _PARALLEL = "Undefined frame (RefDirection parallel to Axis): native has a zero rotation, the kernel keeps Z with zero X and Y"
 # (Axis, RefDirection, native (X, Z) where it differs from the kernel, reason).
 # A 2-tuple Axis is an IfcAxis2Placement2D with that RefDirection.
@@ -344,16 +345,16 @@ _AXES = [
     ((0.0, 0.0, 1.0), (0.0, 1.0), None, ""),
     ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), None, ""),
     ((1.0, 0.0, 0.0), None, ((0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
-     "IfcFirstProjAxis takes (0,1,0) for Z=(1,0,0); the kernel keeps OCC's default X (0,0,1)"),
+     f"{_AXIS_ONLY}; native takes IfcFirstProjAxis's default (0,1,0) for Z=(1,0,0), the kernel's fallback is (0,0,1)"),
     ((1.0, 1.0, 1.0), None, ((2 / 6**0.5, -1 / 6**0.5, -1 / 6**0.5), (3**-0.5,) * 3),
-     "IfcFirstProjAxis projects (1,0,0) onto the plane of Z; the kernel keeps OCC's default X (-1,-1,2)/sqrt(6)"),
+     f"{_AXIS_ONLY}; native projects IfcFirstProjAxis's default (1,0,0) onto the plane of Z, the kernel's fallback is (-1,-1,2)/sqrt(6)"),
     ((-1.0, 0.0, 0.0), None, ((0.0, 1.0, 0.0), (-1.0, 0.0, 0.0)),
-     "IfcFirstProjAxis is undefined (its default (1,0,0) is parallel to Z); native takes (0,1,0) as for +X, "
+     f"{_AXIS_ONLY} and IfcFirstProjAxis's default (1,0,0) is parallel to Z; native takes (0,1,0) as for +X, "
      "the kernel returns zero X and Y axes"),
     (None, (0.0, 0.0, 3.0), _ZERO_FRAME, _PARALLEL),
     ((0.0, 0.0, 1.0), (0.0, 0.0, -1.0), _ZERO_FRAME, _PARALLEL),
     ((0.0, 0.0, 1e-300), (1.0, 0.0, 0.0), ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
-     "The kernel squares the ratios before normalising and underflows; IfcNormalise is defined for any nonzero direction"),
+     "The kernel squares the ratios before normalising and underflows (IfcOpenShell #10240); IfcNormalise is defined for any nonzero direction"),
     ((3.0, 4.0), None, None, ""),
     ((1.0, 1.0, 1.0), None, None, ""),
     ((0.0, 0.0), None, _ZERO_FRAME, "Zero RefDirection: native has a zero rotation, the kernel keeps Z with zero X and Y"),
