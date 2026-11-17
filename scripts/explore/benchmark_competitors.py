@@ -670,8 +670,8 @@ def main() -> int:
         }
         if tools.get("ifcfast", {}).get("available"):
             entry["runs"]["ifcfast"] = _repeat(lambda: _run_ifcfast(old_path, new_path, args.timeout_s), args.repeats)
-        if "speckle_local" in tools:
-            entry["runs"]["speckle_local"] = _repeat(
+        if "speckle_digest" in tools:
+            entry["runs"]["speckle_digest"] = _repeat(
                 lambda: _run_speckle(Path(args.speckle_python), old_path, new_path, args.timeout_s), args.repeats
             )
         if tools.get("ifcgit_port", {}).get("available"):
@@ -1244,15 +1244,15 @@ def _tool_inventory(
             "notes": "Model.diff is GUID/product-table based; output normalized to added/deleted/modified counts.",
         }
     if include_speckle:
-        tools["speckle_local"] = {
+        tools["speckle_digest"] = {
             "runner": str(_SPECKLE_RUNNER.relative_to(REPO_ROOT)),
             "available": speckle_python.is_file(),
             "version": _interpreter_package_version(speckle_python, "specklepy"),
             "ifcopenshell_version": _interpreter_package_version(speckle_python, "ifcopenshell"),
             "notes": (
                 "speckleifc (Speckle's production IFC importer, ships in specklepy) converts locally; "
-                "specklepy serializer computes object hashes; Speckle version-diff semantics "
-                "(applicationId=GlobalId correlation, hash equality) — no server involved."
+                "modified/unchanged is decided by an Athar-defined content digest over the Parquet bundle, "
+                "not by Speckle's own object IDs; applicationId=GlobalId correlation; no server involved."
             ),
         }
     if include_ifcgit:

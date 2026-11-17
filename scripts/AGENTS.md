@@ -27,7 +27,7 @@ Scripts are for inspection and repeatable investigation.
       (`{"added": [...], "deleted": [...], "modified": [...]}`). When present,
       every runner that emits `reported_guids` is scored for precision/recall/
       F1 against it via `athar_dev.changeset_scoring.score_changeset`; results
-      land in each pair's `changeset_scores`. Athar, `speckle_local`,
+      land in each pair's `changeset_scores`. Athar, `speckle_digest`,
       `ifcgit_port`, `ifcdiff_default`/`ifcdiff_relationships`, and `ifcfast`
       all emit `reported_guids` (ifcfast's runner passes `sample=0` so its
       added/removed/changed arrays are unclipped, since its `sample=5` default
@@ -93,9 +93,12 @@ Scripts are for inspection and repeatable investigation.
     - `--only SUBSTRING` restricts a run to pairs whose name contains the
       substring (combine with `--revit`/`--large` to reach one gated pair
       cheaply, e.g. `--revit --only r8_r9 --repeats 1`).
-  - `explore/speckle_diff_runner.py` runs Speckle's diff semantics locally:
-    speckleifc conversion (ships in `specklepy`) + serializer hashes +
-    applicationId/id classification. No Speckle server involved. It runs in
+  - `explore/speckle_diff_runner.py` (tool key `speckle_digest`, dashboard
+    label "Speckle conversion, Athar digest") is not Speckle's own change
+    detection: speckleifc conversion (ships in `specklepy`) + an Athar-defined
+    SHA-256 digest over the Parquet bundle + applicationId correlation. Speckle
+    itself compares serialized object IDs, which this does not compute. No
+    Speckle server involved. It runs in
     its own venv (`make benchmark-setup` builds `.athar-benchmark/speckle-venv`,
     passed as `--speckle-python`) because `specklepy[speckleifc]` needs an older
     `ifcopenshell` than Athar's. A missing interpreter records the runs as

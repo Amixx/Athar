@@ -402,15 +402,25 @@ def test_speckle_without_its_interpreter_counts_as_failed_in_the_aggregate(tmp_p
     rows = [
         _scored_pair(
             name,
-            {"athar": _ok_run(modified=["M"]), "speckle_local": bench._run_speckle(missing, "old.ifc", "new.ifc", 5)},
+            {"athar": _ok_run(modified=["M"]), "speckle_digest": bench._run_speckle(missing, "old.ifc", "new.ifc", 5)},
             expected,
         )
         for name in ("first", "second")
     ]
-    speckle = bench.aggregate_tools(rows)["synthetic"]["speckle_local"]
+    speckle = bench.aggregate_tools(rows)["synthetic"]["speckle_digest"]
     assert (speckle["attempted"], speckle["completed"], speckle["failed"]) == (2, 0, 2)
     assert speckle["coverage"] == 0.0
     assert speckle["changeset"]["macro"]["recall"] == 0.0
     (reason, pairs), = speckle["failure_reasons"].items()
     assert pairs == 2
     assert str(missing) in reason
+
+
+def test_dashboard_names_the_speckle_tool_for_its_athar_defined_digest():
+    from athar_bench import ui
+
+    inventory = bench._tool_inventory(include_ifcfast=False, speckle_python=Path("missing-python"))
+    (key,) = (name for name in inventory if name.startswith("speckle"))
+    assert key in ui.TOOLS
+    assert "Athar digest" in ui.TOOL_LABELS[key]
+    assert "Athar-defined" in inventory[key]["notes"]

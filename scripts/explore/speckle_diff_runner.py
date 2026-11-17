@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Speckle's IFC diff semantics on two IFC files, fully locally.
+"""Diff two IFC files by converting them with Speckle's importer and comparing an Athar-defined digest.
 
 Conversion uses ``speckleifc`` — Speckle's production IFC importer, shipped
 inside ``specklepy`` and itself built on ifcopenshell. The importer writes a
@@ -10,8 +10,9 @@ no server is involved here.
 Each object's content digest is a SHA-256 over its own property rows, its type
 rows, and everything reachable through its outgoing relations: geometry bytes,
 placement transforms, materials, levels and containers resolved by content,
-other objects by applicationId. Classification mirrors Speckle's version-diff
-semantics: per object, ``applicationId`` (= IFC GlobalId) is the correlation
+other objects by applicationId. The digest is defined here, not by Speckle:
+Speckle itself compares serialized object IDs, which this runner does not
+compute. Per object, ``applicationId`` (= IFC GlobalId) is the correlation
 key and the digest decides the verdict — same digest on both sides is
 unchanged, same applicationId with a different digest is modified, the rest
 is added/deleted. Objects without an applicationId are excluded.
@@ -163,7 +164,7 @@ def main() -> int:
 
     counts, reported_guids = _classify(old_elements, new_elements)
     result = {
-        "tool": "speckle_local",
+        "tool": "speckle_digest",
         "specklepy_version": importlib.metadata.version("specklepy"),
         "counts": counts,
         "reported_guids": reported_guids,

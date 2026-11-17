@@ -32,13 +32,13 @@ from athar_view.server import MANIFEST_SCHEMA_VERSION, build_report_bytes, find_
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BENCHMARK = REPO_ROOT / ".athar-benchmark" / "competitor-benchmark.json"
-TOOLS = ("athar", "ifcdiff_default", "ifcdiff_relationships", "ifcfast", "speckle_local", "ifcgit_port")
+TOOLS = ("athar", "ifcdiff_default", "ifcdiff_relationships", "ifcfast", "speckle_digest", "ifcgit_port")
 TOOL_LABELS = {
     "athar": "Athar",
     "ifcdiff_default": "IfcDiff",
     "ifcdiff_relationships": "IfcDiff + relationships",
     "ifcfast": "IfcFast",
-    "speckle_local": "Speckle (local)",
+    "speckle_digest": "Speckle conversion, Athar digest",
     "ifcgit_port": "IfcGit (port)",
 }
 DATASETS = ("synthetic", "revit")
