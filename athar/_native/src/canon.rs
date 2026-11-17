@@ -860,6 +860,10 @@ fn encode_scalar_into(
         Token::Ref(_) => out.push('R'),
         Token::Null => out.push('$'),
         Token::Derived => out.push('*'),
+        Token::Int(i) if measure.unit_type().is_some() => {
+            out.push('r');
+            let _ = write!(out, "{}", quantize_real(*i as f64, measure, attr_dir, units.factors));
+        }
         Token::Int(i) => {
             out.push('i');
             let _ = write!(out, "{i}");
@@ -1072,6 +1076,7 @@ fn human_scalar(
         Token::Ref(_) => "<ref>".to_string(),
         Token::Null => "<null>".to_string(),
         Token::Derived => "<derived>".to_string(),
+        Token::Int(i) if measure.unit_type().is_some() => human_real(*i as f64, measure, attr_dir, units),
         Token::Int(i) => i.to_string(),
         Token::Real(r) => human_real(*r, measure, attr_dir, units),
         Token::Str(s) => nfc_strip(s),
@@ -1225,6 +1230,33 @@ mod tests {
         encode_select_into(&mut encoded, &value, false, &u);
         assert_eq!(encoded, "sel(T(IFCTHERMALTRANSMITTANCEMEASURE:r5678000))");
         assert_eq!(fact_value(&value, &Shape::Select, false, &u), "IFCTHERMALTRANSMITTANCEMEASURE: 5.678");
+    }
+
+    #[test]
+    fn integers_of_a_measure_with_a_unit_type_scale_like_reals() {
+        let factors = units(&[("LENGTHUNIT", 0.001), ("INTEGERCOUNTRATEUNIT", 1.0 / 60.0)]);
+        let mut measures = measures();
+        measures.insert("IFCINTEGERCOUNTRATEMEASURE".to_string(), Measure::Unit("INTEGERCOUNTRATEUNIT"));
+        let u = Units { factors: &factors, measures: &measures };
+        let encoded = |token: &Token| {
+            let mut out = String::new();
+            encode_select_into(&mut out, token, false, &u);
+            (out, fact_value(token, &Shape::Select, false, &u))
+        };
+        let typed = |keyword: &str, value: Token| Token::Typed(keyword.to_string(), vec![value]);
+        assert_eq!(
+            encoded(&typed("IFCLENGTHMEASURE", Token::Int(3000))),
+            encoded(&typed("IFCLENGTHMEASURE", Token::Real(3000.0)))
+        );
+        assert_eq!(
+            encoded(&typed("IFCINTEGERCOUNTRATEMEASURE", Token::Int(60))),
+            ("sel(T(IFCINTEGERCOUNTRATEMEASURE:r1000000))".to_string(), "IFCINTEGERCOUNTRATEMEASURE: 1".to_string())
+        );
+        assert_eq!(
+            encoded(&typed("IFCCOUNTMEASURE", Token::Int(60))),
+            ("sel(T(IFCCOUNTMEASURE:i60))".to_string(), "IFCCOUNTMEASURE: 60".to_string())
+        );
+        assert_eq!(encoded(&Token::Int(60)), ("sel(i60)".to_string(), "60".to_string()));
     }
 
     #[test]

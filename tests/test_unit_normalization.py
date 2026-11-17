@@ -325,3 +325,31 @@ def test_table_columns_take_their_own_units(tmp_path):
         ("IfcPropertyTableValue.DefinedValues", "[IFCLENGTHMEASURE: 3 m]"),
         ("IfcPropertyTableValue.DefiningValues", "[IFCLENGTHMEASURE: 3 m]"),
     ]
+
+
+def _per_minute(model):
+    second = model.create_entity("IfcSIUnit", UnitType="TIMEUNIT", Name="SECOND")
+    dimensions = model.create_entity("IfcDimensionalExponents", 0, 0, 1, 0, 0, 0, 0)
+    conversion = model.create_entity("IfcMeasureWithUnit", model.create_entity("IfcTimeMeasure", 60.0), second)
+    minute = model.create_entity("IfcConversionBasedUnit", dimensions, "TIMEUNIT", "minute", conversion)
+    return _derived(model, "INTEGERCOUNTRATEUNIT", (minute, -1))
+
+
+def test_integer_measures_with_a_unit_type_normalize_and_counts_stay_integers(tmp_path):
+    def properties(model):
+        return [
+            model.create_entity("IfcPropertySingleValue", Name="Rate", Unit=_per_minute(model),
+                                NominalValue=model.create_entity("IfcIntegerCountRateMeasure", 60)),
+            model.create_entity("IfcPropertySingleValue", Name="Count",
+                                NominalValue=model.create_entity("IfcCountMeasure", 60)),
+            model.create_entity("IfcPropertySingleValue", Name="Integer",
+                                NominalValue=model.create_entity("IfcInteger", 60)),
+        ]
+
+    facts = _millimetre_model_with(tmp_path / "integers.ifc", properties)
+    assert sorted(value for path, value in facts if ".NominalValue" in path) == [
+        "IFCCOUNTMEASURE: 60",
+        "IFCINTEGER: 60",
+        "IFCINTEGERCOUNTRATEMEASURE: 1",
+        "IFCLENGTHMEASURE: 3 m",
+    ]
