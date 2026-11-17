@@ -259,3 +259,19 @@ def test_a_property_unit_takes_the_place_of_the_file_unit(tmp_path):
         return [value for path, value in signature.data_facts if value.startswith("IFCLENGTHMEASURE")]
 
     assert nominal(tmp_path / "own.ifc", 3.0, unit=True) == nominal(tmp_path / "file.ifc", 3000.0, unit=False) == ["IFCLENGTHMEASURE: 3 m"]
+
+
+def _year_unit(model):
+    second = model.create_entity("IfcSIUnit", UnitType="TIMEUNIT", Name="SECOND")
+    dimensions = model.create_entity("IfcDimensionalExponents", 0, 0, 1, 0, 0, 0, 0)
+    conversion = model.create_entity("IfcMeasureWithUnit", model.create_entity("IfcTimeMeasure", 31556926.0), second)
+    return model.create_entity("IfcConversionBasedUnit", dimensions, "TIMEUNIT", "year", conversion)
+
+
+def test_a_measure_with_unit_takes_its_value_in_its_own_unit(tmp_path):
+    from athar.bottom.signatures import build_signature_bundle
+
+    path = tmp_path / "conversions.ifc"
+    _with_measures(path, [_mass_unit(True), _year_unit], [])
+    facts = {value for signature in build_signature_bundle(str(path)).signatures.values() for _, value in signature.data_facts}
+    assert {"IFCMASSMEASURE: 1000 kg", "IFCTIMEMEASURE: 31556926 s"} <= facts

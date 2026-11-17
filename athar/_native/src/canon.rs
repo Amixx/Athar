@@ -498,7 +498,7 @@ fn collect_triangulated_pointlists(
     records: &[Record],
     schema: &SchemaDesc,
     unit_factors: &HashMap<String, f64>,
-) -> HashMap<i64, Vec<[i64; 3]>> {
+) -> HashMap<i64, Vec<[i128; 3]>> {
     let mut wanted: std::collections::HashSet<i64> = std::collections::HashSet::new();
     for rec in records {
         if rec.keyword != "IFCTRIANGULATEDFACESET" {
@@ -514,13 +514,13 @@ fn collect_triangulated_pointlists(
         return HashMap::new();
     }
 
-    let mut out: HashMap<i64, Vec<[i64; 3]>> = HashMap::with_capacity(wanted.len());
+    let mut out: HashMap<i64, Vec<[i128; 3]>> = HashMap::with_capacity(wanted.len());
     for rec in records {
         if rec.keyword != "IFCCARTESIANPOINTLIST3D" || !wanted.contains(&rec.step_id) {
             continue;
         }
         let Some(Token::List(rows)) = rec.attrs.first() else { continue };
-        let mut points: Vec<[i64; 3]> = Vec::with_capacity(rows.len());
+        let mut points: Vec<[i128; 3]> = Vec::with_capacity(rows.len());
         let mut ok = true;
         'rows: for row in rows {
             let Token::List(coords) = row else {
@@ -531,7 +531,7 @@ fn collect_triangulated_pointlists(
                 ok = false;
                 break;
             }
-            let mut point = [0i64; 3];
+            let mut point = [0i128; 3];
             for (k, coord) in coords.iter().take(3).enumerate() {
                 let value = match coord {
                     Token::Real(r) => *r,
@@ -562,7 +562,7 @@ fn collect_triangulated_pointlists(
 fn canonical_triangle_parts(
     rec: &Record,
     desc: &ClassDesc,
-    pointlists: &HashMap<i64, Vec<[i64; 3]>>,
+    pointlists: &HashMap<i64, Vec<[i128; 3]>>,
 ) -> Option<Vec<String>> {
     let attr_token = |name: &str| -> Option<&Token> {
         desc.attrs
@@ -595,7 +595,7 @@ fn canonical_triangle_parts(
         }
         Some(_) => return None,
     };
-    let resolve = |index: i64| -> Option<[i64; 3]> {
+    let resolve = |index: i64| -> Option<[i128; 3]> {
         if index < 1 {
             return None;
         }
@@ -617,7 +617,7 @@ fn canonical_triangle_parts(
         if indices.len() != 3 {
             return None;
         }
-        let mut verts = [[0i64; 3]; 3];
+        let mut verts = [[0i128; 3]; 3];
         for (k, idx_token) in indices.iter().enumerate() {
             let Token::Int(raw) = idx_token else {
                 return None;
@@ -728,7 +728,7 @@ fn quantize_real(
     measure: Measure,
     attr_direction: bool,
     unit_factors: &HashMap<String, f64>,
-) -> i64 {
+) -> i128 {
     if !value.is_finite() {
         return 0;
     }
@@ -747,7 +747,7 @@ fn quantize_real(
 }
 
 /// Round half to even.
-fn round_half_even(x: f64) -> i64 {
+fn round_half_even(x: f64) -> i128 {
     let floor = x.floor();
     let diff = x - floor;
     let rounded = if diff > 0.5 {
@@ -756,13 +756,13 @@ fn round_half_even(x: f64) -> i64 {
         floor
     } else {
         // exactly .5 -> round to even
-        if (floor as i64) % 2 == 0 {
+        if (floor as i128) % 2 == 0 {
             floor
         } else {
             floor + 1.0
         }
     };
-    rounded as i64
+    rounded as i128
 }
 
 // ----- canonical-string encoding ------------------------------------------
@@ -1030,7 +1030,7 @@ fn human_value(
 fn human_real(value: f64, measure: Measure, attr_dir: bool, units: &Units) -> String {
     let effective = if measure == Measure::Default && attr_dir { Measure::Direction } else { measure };
     let quantized = quantize_real(value, measure, attr_dir, units.factors);
-    let scale = effective.scale() as u64;
+    let scale = effective.scale() as u128;
     let digits = scale.ilog10() as usize;
     let magnitude = quantized.unsigned_abs();
     let mut out = String::new();
@@ -1229,6 +1229,13 @@ mod tests {
         let m = units(&[("LENGTHUNIT", 1.0)]);
         assert_eq!(quantize_real(3000.0, Measure::LENGTH, false, &mm), 3_000_000);
         assert_eq!(quantize_real(3.0, Measure::LENGTH, false, &m), 3_000_000);
+    }
+
+    #[test]
+    fn reals_beyond_the_i64_range_keep_their_magnitude() {
+        let m = units(&[("LENGTHUNIT", 1.0)]);
+        assert_eq!(quantize_real(1e14, Measure::LENGTH, false, &m), 100_000_000_000_000_000_000);
+        assert_ne!(quantize_real(1e14, Measure::LENGTH, false, &m), quantize_real(2e14, Measure::LENGTH, false, &m));
     }
 
     #[test]

@@ -81,18 +81,20 @@ _OWN_UNIT_VALUES = {
 
 
 def own_unit_factors(ifc) -> dict[int, dict[str, float]]:
-    """Per property or quantity naming its own unit: the factor of that unit by the unit type of its values.
+    """Per property, quantity or measure with unit naming its own unit: the factor of that unit by the unit type of its values.
 
     The unit takes the place of the file's unit assignment for that record; a
     unit without a multiplicative factor leaves the values as written (factor 1).
     """
     schema = ifc.schema_identifier
     factors: dict[int, dict[str, float]] = {}
-    for entity in ifc.by_type("IfcSimpleProperty") + ifc.by_type("IfcPhysicalSimpleQuantity"):
-        own_unit = _safe_get(entity, "Unit")
+    for entity in ifc.by_type("IfcSimpleProperty") + ifc.by_type("IfcPhysicalSimpleQuantity") + ifc.by_type("IfcMeasureWithUnit"):
+        own_unit = _safe_get(entity, "UnitComponent" if entity.is_a("IfcMeasureWithUnit") else "Unit")
         if own_unit is None:
             continue
-        if entity.is_a() in _QUANTITIES:
+        if entity.is_a("IfcMeasureWithUnit"):
+            measures = [entity.ValueComponent.is_a()]
+        elif entity.is_a() in _QUANTITIES:
             measures = [_QUANTITIES[entity.is_a()][1]]
         else:
             values = [_safe_get(entity, attr) for attr in _OWN_UNIT_VALUES.get(entity.is_a(), ())]
