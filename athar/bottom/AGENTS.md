@@ -12,7 +12,7 @@ surface is thin glue:
 
 - `_native.py` — discovers the compiled module (`native()`).
 - `parser.py` — file-independent schema/unit glue only: schema-support guard,
-  measure-type helpers, `IfcUnitAssignment` factor extraction. `open_ifc` is
+  measure-type helpers, `IfcUnitAssignment` factor extraction through `ifcopenshell.util.unit.get_unit_scale` (IfcOpenShell 0.9.0.post1+). `unit_factor` also converts a property's own unit. SI, conversion-based chains and derived units have multiplicative factors; context-dependent units, chains or derived units containing them, and nonzero-offset conversions are omitted from both factor mappings. The first unit assignment supplies the unit types. Factors retain IfcOpenShell's gram basis for mass; property reporting converts grams to kilograms. Native `Measure` looks up length, area, volume and plane angle only (`descriptor.rs`); an absent factor leaves the number unscaled in `canon.rs`, without an SI property label. `open_ifc` is
   the one place `ifcopenshell` opens a file. ifcopenshell crashes the
   interpreter on a file it cannot open, so `require_readable_file` raises an
   `OSError` naming the path unless it is a regular file the process can read.
@@ -38,6 +38,8 @@ bytes decode as UTF-8 where valid and as Latin-1 per byte otherwise, then STEP
 control directives are decoded, so raw and escaped spellings hash alike
 (canon-v10). ifcopenshell drops raw non-ASCII string bytes, so values read
 through it (property extraction) can differ from the hashed ones.
+
+`athar_native.parse_step_file(path)` is the tokenizer inspection entry point, outside the signature pipeline. It returns `(step_id, class, attributes)` records with tagged values: `integer`, `real`, `string`, `enum`, `reference`, `null`, `derived`, `list`, and `typed` (type name plus arguments). Lists and typed arguments retain nesting; `$` and `*` remain distinct. `tests/test_ifcopenshell_crosscheck.py` compares these records with IfcOpenShell, with exact expected differences for malformed corpus records.
 
 Signature roots are products, spatial elements (IFC4 `IfcSpatialElement`,
 IFC2X3 `IfcSpatialStructureElement`) and `IfcProject` (descriptor flags
@@ -80,6 +82,7 @@ and `athar_native.reference_policy()`:
   placement plane equals its projection. The axis references produce no edge.
   A frame the rules leave undefined (parallel axes, an axis reference that is
   not a direction) keeps the attribute-wise encoding.
+- Spatial coordinates are converted to metres without quantization before placement-chain composition. World and local matrices are quantized at `PLACEMENT_SCALE = 1e6` (one micrometre for translations, `1e-6` for rotation entries). IfcOpenShell's `get_local_placement` returns file units; crosschecks scale its translation to metres and allow one quantum plus `1e-9` relative. IfcOpenShell's helper retains a non-perpendicular RefDirection; the engine uses the IFC-derived projection.
 - `spatial.rs` builds placement matrices from the same axes (`placement_axes`
   in `canon.rs`). A relative placement whose frame is undefined, including an
   axis attribute set to a zero, malformed or missing direction, has a zero
@@ -318,3 +321,4 @@ comparable within one version.
 | v12 | signatures carry the local placement and the placement parent beside the world placement, and the relation targets of each root |
 | v13 | `vh_geometry` of a root does not cover the root's class |
 | v14 | hashes as in v13; `data_facts` paths label an owner below the root by class and `Name`; related entities say whether their GlobalId is shared; property values without a declared or convertible unit stay as written |
+| v15 | spatial coordinates remain unquantized until frame composition; world/local matrices and relative feature-position hashes use the composed frame |

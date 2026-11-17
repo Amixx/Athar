@@ -17,6 +17,7 @@ place would risk an incomplete conversion and a misleading test.
 from __future__ import annotations
 
 import ifcopenshell
+import pytest
 
 from athar.engine import diff_files
 from tests.corpus import assert_report_invariants, assert_zero_diff
@@ -136,3 +137,46 @@ def test_metre_and_millimetre_models_differ_only_in_the_project_units(tmp_path):
     assert item["old"]["guid"] == _GUID
     for aspect in ("geometry", "data", "topology", "placement"):
         assert item["aspects"][aspect] == "unchanged", item
+
+
+@pytest.mark.parametrize(("kind", "expected", "label"), [
+    ("prefixed", (0.003, 0.006), "m"),
+    ("foot", (0.9144, 1.8288), "m"),
+    ("derived", (0.003, 0.006), "m"),
+    ("context", (3.0, 6.0), None),
+    ("conversion_context", (3.0, 6.0), None),
+])
+def test_property_unit_conversion_through_diff(tmp_path, kind, expected, label):
+    old, new = tmp_path / "old.ifc", tmp_path / "new.ifc"
+    _build(str(old), 1.0, None)
+    model = ifcopenshell.open(str(old))
+    metre = model.by_type("IfcSIUnit")[0]
+    if kind == "prefixed":
+        unit = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Prefix="MILLI", Name="METRE")
+    elif kind == "foot":
+        dimensions = model.create_entity("IfcDimensionalExponents", 1, 0, 0, 0, 0, 0, 0)
+        conversion = model.create_entity("IfcMeasureWithUnit", model.create_entity("IfcLengthMeasure", 0.3048), metre)
+        unit = model.create_entity("IfcConversionBasedUnit", dimensions, "LENGTHUNIT", "foot", conversion)
+    elif kind == "derived":
+        millimetre = model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Prefix="MILLI", Name="METRE")
+        element = model.create_entity("IfcDerivedUnitElement", millimetre, 1)
+        unit = model.create_entity("IfcDerivedUnit", [element], "USERDEFINED", "length")
+    else:
+        dimensions = model.create_entity("IfcDimensionalExponents", 1, 0, 0, 0, 0, 0, 0)
+        unit = model.create_entity("IfcContextDependentUnit", dimensions, "LENGTHUNIT", "context length")
+        if kind == "conversion_context":
+            conversion = model.create_entity("IfcMeasureWithUnit", model.create_entity("IfcLengthMeasure", 2.0), unit)
+            unit = model.create_entity("IfcConversionBasedUnit", dimensions, "LENGTHUNIT", "context conversion", conversion)
+    model.by_type("IfcUnitAssignment")[0].Units = [unit]
+    prop = model.by_type("IfcPropertySingleValue")[0]
+    prop.Unit = unit if kind in ("derived", "conversion_context") else None
+    model.write(str(old))
+    prop.NominalValue.wrappedValue = 6.0
+    model.write(str(new))
+    report = diff_files(str(old), str(new))
+    assert_report_invariants(report)
+    (item,) = report["modified"]
+    (delta,) = item["property_deltas"]["changed"]
+    assert delta["old_value"] == expected[0]
+    assert delta["new_value"] == expected[1]
+    assert delta.get("unit") == label

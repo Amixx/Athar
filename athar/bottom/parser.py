@@ -158,9 +158,9 @@ def _safe_type_name(attr_type) -> str | None:
 def _extract_unit_context(ifc) -> dict[str, Any]:
     """Factors per unit type of the file's unit assignment.
 
-    ``unit_factors`` covers every unit; ``property_unit_factors`` only the unit
-    types whose unit is an ``IfcSIUnit`` or an ``IfcConversionBasedUnit``,
-    the ones a value can be converted from to SI.
+    Both mappings contain only units with a finite positive conversion factor.
+    Native factors normalize the four spatial measure families; property factors
+    label supported property measures in SI.
     """
     unit_factors: dict[str, float] = {}
     property_unit_factors: dict[str, float] = {}
@@ -171,82 +171,39 @@ def _extract_unit_context(ifc) -> dict[str, Any]:
             if not isinstance(unit_type, str) or not unit_type:
                 continue
             factor = unit_factor(unit)
-            if not (isinstance(factor, (int, float)) and math.isfinite(float(factor)) and float(factor) > 0):
-                continue
-            unit_factors[unit_type] = float(factor)
-            if unit.is_a("IfcSIUnit") or unit.is_a("IfcConversionBasedUnit"):
-                property_unit_factors[unit_type] = float(factor)
-            else:
+            if factor is None:
+                unit_factors.pop(unit_type, None)
                 property_unit_factors.pop(unit_type, None)
+                continue
+            unit_factors[unit_type] = factor
+            property_unit_factors[unit_type] = factor
     return {
         "unit_factors": {k: unit_factors[k] for k in sorted(unit_factors)},
         "property_unit_factors": {k: property_unit_factors[k] for k in sorted(property_unit_factors)},
     }
 
 
-def unit_factor(unit) -> float:
-    if unit is None or not hasattr(unit, "is_a"):
-        return 1.0
-    if unit.is_a("IfcSIUnit"):
-        return _si_unit_factor(unit)
-    if unit.is_a("IfcConversionBasedUnit") or unit.is_a("IfcConversionBasedUnitWithOffset"):
-        conversion = getattr(unit, "ConversionFactor", None)
-        if conversion is None:
-            return 1.0
-        base = unit_factor(getattr(conversion, "UnitComponent", None))
-        value = _float_value_component(getattr(conversion, "ValueComponent", None))
-        return base if value is None else value * base
-    if unit.is_a("IfcDerivedUnit"):
-        factor = 1.0
-        for element in getattr(unit, "Elements", []) or []:
-            element_factor = unit_factor(getattr(element, "Unit", None))
-            exponent = int(getattr(element, "Exponent", 0) or 0)
-            factor *= element_factor ** exponent
-        return factor
-    return 1.0
+def unit_factor(unit) -> float | None:
+    import ifcopenshell.util.unit as units
 
-
-def _si_unit_factor(unit) -> float:
-    prefix_factor = _prefix_factor(getattr(unit, "Prefix", None))
-    unit_type = getattr(unit, "UnitType", None)
-    if unit_type == "AREAUNIT":
-        return prefix_factor ** 2
-    if unit_type == "VOLUMEUNIT":
-        return prefix_factor ** 3
-    return prefix_factor
-
-
-def _prefix_factor(prefix: str | None) -> float:
-    if prefix is None:
-        return 1.0
-    factors = {
-        "ATTO": 1e-18,
-        "FEMTO": 1e-15,
-        "PICO": 1e-12,
-        "NANO": 1e-9,
-        "MICRO": 1e-6,
-        "MILLI": 1e-3,
-        "CENTI": 1e-2,
-        "DECI": 1e-1,
-        "DECA": 1e1,
-        "HECTO": 1e2,
-        "KILO": 1e3,
-        "MEGA": 1e6,
-        "GIGA": 1e9,
-        "TERA": 1e12,
-    }
-    return factors.get(str(prefix), 1.0)
-
-
-def _float_value_component(value_component) -> float | None:
-    if value_component is None:
-        return None
-    wrapped = getattr(value_component, "wrappedValue", None)
-    if isinstance(wrapped, (int, float)):
-        return float(wrapped)
-    if isinstance(value_component, (int, float)):
-        return float(value_component)
-    try:
-        return float(value_component)
-    except Exception:
-        return None
+    pending = [unit]
+    while pending:
+        component = pending.pop()
+        if component is None:
+            return None
+        if component.is_a("IfcSIUnit"):
+            if component.Prefix is not None and component.Prefix not in units.prefixes:
+                return None
+        elif component.is_a("IfcConversionBasedUnit"):
+            if component.is_a("IfcConversionBasedUnitWithOffset") and component.ConversionOffset:
+                return None
+            conversion = component.ConversionFactor
+            if conversion is None or conversion.ValueComponent is None:
+                return None
+            pending.append(conversion.UnitComponent)
+        elif component.is_a("IfcDerivedUnit"):
+            pending.extend(element.Unit for element in component.Elements)
+        else:
+            return None
+    factor = units.get_unit_scale(unit)
+    return float(factor) if math.isfinite(factor) and factor > 0 else None

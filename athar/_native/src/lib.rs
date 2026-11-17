@@ -18,6 +18,30 @@ mod spatial;
 mod step;
 
 #[pyfunction]
+fn parse_step_file(py: Python<'_>, path: &str) -> PyResult<Vec<(i64, String, Vec<PyObject>)>> {
+    fn value(py: Python<'_>, token: step::Token) -> PyObject {
+        use step::Token;
+        match token {
+            Token::Int(v) => ("integer", v).into_py(py),
+            Token::Real(v) => ("real", v).into_py(py),
+            Token::Str(v) => ("string", v).into_py(py),
+            Token::Enum(v) => ("enum", v).into_py(py),
+            Token::Ref(v) => ("reference", v).into_py(py),
+            Token::Null => ("null", py.None()).into_py(py),
+            Token::Derived => ("derived", py.None()).into_py(py),
+            Token::List(v) => ("list", v.into_iter().map(|v| value(py, v)).collect::<Vec<_>>()).into_py(py),
+            Token::Typed(name, v) => ("typed", name, v.into_iter().map(|v| value(py, v)).collect::<Vec<_>>()).into_py(py),
+        }
+    }
+    let bytes = std::fs::read(path)?;
+    let records = step::Parser::new(&bytes).parse()
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(records.into_iter().map(|r| (
+        r.step_id, r.keyword, r.attrs.into_iter().map(|v| value(py, v)).collect(),
+    )).collect())
+}
+
+#[pyfunction]
 fn rekey_step_file(input: &str, output: &str, mapping: HashMap<i64, i64>) -> PyResult<()> {
     let bytes = std::fs::read(input)?;
     let rewritten = step::Parser::new(&bytes)
@@ -1518,6 +1542,7 @@ mod tests {
 #[pymodule]
 fn athar_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_function(wrap_pyfunction!(parse_step_file, m)?)?;
     m.add_function(wrap_pyfunction!(rekey_step_file, m)?)?;
     m.add_function(wrap_pyfunction!(build_signature_bundle, m)?)?;
     m.add_function(wrap_pyfunction!(relationship_policy, m)?)?;

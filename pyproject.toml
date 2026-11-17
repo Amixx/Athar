@@ -16,7 +16,7 @@ classifiers = [
   "Programming Language :: Rust",
 ]
 dependencies = [
-  "ifcopenshell",
+  "ifcopenshell>=0.9.0.post1",
 ]
 
 [project.urls]
