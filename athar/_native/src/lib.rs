@@ -41,6 +41,36 @@ fn parse_step_file(py: Python<'_>, path: &str) -> PyResult<Vec<(i64, String, Vec
     )).collect())
 }
 
+type ReferenceGraph = (Vec<(i64, String, i64)>, Vec<(i64, i64, String, String)>, Vec<(i64, i64)>, Vec<(i64, i64)>);
+
+/// The canonicalized references `(source, attribute, target)` and the graph
+/// built from them: include edges `(source, target, label, domain)` and the
+/// context and spatial pairs, all by step id.
+#[pyfunction]
+fn reference_graph(py: Python<'_>, path: String, schema_json: String) -> PyResult<ReferenceGraph> {
+    py.allow_threads(|| {
+        let bytes = std::fs::read(&path).map_err(|e| format!("read {path}: {e}"))?;
+        let records = step::Parser::new(&bytes).parse()?;
+        let schema = descriptor::parse_schema(&schema_json)?;
+        let parsed = canon::canonicalize(&records, &schema, &HashMap::new(), &HashMap::new());
+        let graph = edges::build_edges(&parsed.entities, &parsed.index);
+        let step = |entity: u32| parsed.entities[entity as usize].step_id;
+        let refs = parsed
+            .entities
+            .iter()
+            .flat_map(|e| e.refs.iter().map(|r| (e.step_id, r.attr_name.to_string(), r.target)))
+            .collect();
+        let includes = graph
+            .includes
+            .iter()
+            .map(|edge| (step(edge.source), step(edge.target), edge.label.to_string(), format!("{:?}", edge.domain)))
+            .collect();
+        let pairs = |set: &HashSet<(u32, u32)>| set.iter().map(|&(a, b)| (step(a), step(b))).collect();
+        Ok((refs, includes, pairs(&graph.context), pairs(&graph.spatial)))
+    })
+    .map_err(|e: String| pyo3::exceptions::PyValueError::new_err(e))
+}
+
 #[pyfunction]
 fn rekey_step_file(input: &str, output: &str, mapping: HashMap<i64, i64>) -> PyResult<()> {
     let bytes = std::fs::read(input)?;
@@ -805,7 +835,7 @@ fn topology_hashes(entities: &[canon::Entity], graph: &edges::Graph) -> HashMap<
 /// One root signature, flattened for the FFI boundary:
 /// (step_id, guid, name, entity_type, canonical_class, vh_geometry, vh_data,
 ///  vh_topology, (placement, placement_unresolved, local_placement,
-///  placement_parent), centroid, aabb, (data_facts, relation_targets)).
+///  placement_parent), (data_facts, relation_targets)).
 ///
 /// `placement_parent` is the step id of the root whose object placement the
 /// local placement is relative to.
@@ -822,8 +852,6 @@ type SigTuple = (
     String,
     String,
     (Option<Vec<i64>>, Option<String>, Option<Vec<i64>>, Option<i64>),
-    Option<Vec<f64>>,
-    Option<Vec<f64>>,
     (Vec<(String, String)>, Vec<(u32, i64)>),
 );
 
@@ -848,7 +876,7 @@ fn build_bundle(
     path: &str,
     schema_json: &str,
     unit_factors: &HashMap<String, f64>,
-    record_unit_factors: &HashMap<i64, HashMap<String, f64>>,
+    record_unit_factors: &canon::AttrUnitFactors,
 ) -> Result<NativeBundle, String> {
     let mut prof = StageProfiler::new();
     prof.mark("enter");
@@ -991,8 +1019,6 @@ fn build_bundle(
         let placement_unresolved = feat.placement_unresolved.clone();
         let local_placement = feat.local_placement.clone();
         let placement_parent = feat.placement_parent.map(|parent| parsed.entities[parent as usize].step_id);
-        let centroid = feat.centroid.map(|c| c.to_vec());
-        let aabb = feat.aabb.map(|a| a.to_vec());
         let data_facts = facts.collect(entity);
         let mut relation_targets: Vec<(u32, i64)> = Vec::new();
         while let Some(&(_, label, target)) = relations.next_if(|relation| relation.0 == entity) {
@@ -1008,8 +1034,6 @@ fn build_bundle(
             vh_data,
             vh_topology,
             (placement, placement_unresolved, local_placement, placement_parent),
-            centroid,
-            aabb,
             (data_facts, relation_targets),
         ));
     }
@@ -1297,8 +1321,9 @@ type CoverageTuple = (BTreeMap<String, i64>, BTreeMap<String, (i64, String)>, BT
 /// Full native parse + signature build for one IFC file.
 ///
 /// `schema_json` is the per-class descriptor map; `unit_factors` maps unit
-/// types to scale factors; `record_unit_factors` maps a step id to unit
-/// factors that override the file's for that record alone. Returns
+/// types to scale factors; `record_unit_factors` maps a step id and one of
+/// its attributes to unit factors that override the file's for that
+/// attribute's values alone. Returns
 /// `(signatures, edge_stats, (dangling_refs, cycle_breaks, warnings),
 /// (unknown_relationships, unreached, ignored_by_design),
 /// (relation_labels, related_entities))`.
@@ -1308,7 +1333,7 @@ fn build_signature_bundle(
     path: String,
     schema_json: String,
     unit_factors: HashMap<String, f64>,
-    record_unit_factors: HashMap<i64, HashMap<String, f64>>,
+    record_unit_factors: canon::AttrUnitFactors,
 ) -> PyResult<(
     Vec<SigTuple>,
     BTreeMap<String, i64>,
@@ -1547,6 +1572,7 @@ mod tests {
 fn athar_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(parse_step_file, m)?)?;
+    m.add_function(wrap_pyfunction!(reference_graph, m)?)?;
     m.add_function(wrap_pyfunction!(rekey_step_file, m)?)?;
     m.add_function(wrap_pyfunction!(spatial::placement_motion, m)?)?;
     m.add_function(wrap_pyfunction!(build_signature_bundle, m)?)?;

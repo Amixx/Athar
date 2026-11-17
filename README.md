@@ -11,7 +11,7 @@ For each IFC file, Athar builds a **signature vector** per product, spatial elem
 - `vh_geometry` — sha256 Merkle hash over the entity's geometry-domain subgraph, **excluding placement**, so identical components share it across locations. A host element also covers its openings and projections and where each sits relative to it.
 - `vh_data` — Merkle hash over everything else the entity owns or uses: attributes, properties, materials, classifications, groups, typing, styles; for the project also units, contexts and georeferencing. GlobalId and OwnerHistory never enter any hash.
 - `vh_topology` — WL-style gossip hash over context and spatial neighborhoods.
-- World-space placement matrix (quantized), centroid, and AABB from the resolved `ObjectPlacement` chain; a digest of the chain's content where it cannot be resolved (grid placements, placement cycles). Coordinates are converted to metres before composing the chain; matrices are quantized only after composition at one micrometre for translations and `1e-6` for rotation entries.
+- World-space placement matrix (quantized) from the resolved `ObjectPlacement` chain; a digest of the chain's content where it cannot be resolved (grid placements, placement cycles). Coordinates are converted to metres before composing the chain; matrices are quantized only after composition at one micrometre for translations and `1e-6` for rotation entries.
 
 Coverage is the default: every attribute and reference is examined unless an explicit table excludes it with a reason. What no signature reaches is counted and digested per class, and the report's `stats.coverage.unexamined_changes` names the classes that differ there.
 
@@ -74,7 +74,7 @@ an explicit timestamp when an archived copy should embed a generation time.
 Schema support: **IFC4 and IFC2X3**, same-schema comparisons only (no
 IFC2X3↔IFC4 translation).
 
-IfcOpenShell 0.9.0.post1+ supplies unit conversion factors, including SI prefixes, conversion-based chains and derived units. Supported property measures are reported in SI using the file's unit or the property's own unit. Context-dependent units and conversions that require an offset have no multiplicative factor: their values stay unscaled and unlabelled. Missing native unit factors likewise leave signature numbers unscaled.
+IfcOpenShell 0.9.0.post1+ supplies unit conversion factors, including SI prefixes, conversion-based chains and derived units. Property measures with a unit type are compared in SI using the file's unit or the property's own unit, and reported with the value as written where it differs. Context-dependent units and conversions that require an offset have no multiplicative factor: their values stay unscaled and unlabelled. Missing native unit factors likewise leave signature numbers unscaled.
 
 ## Installation
 
@@ -447,7 +447,7 @@ validated in a temporary directory before Twine uploads them to PyPI.
 ```bash
 make test                    # full default suite (~20 seconds)
 make test-large-acceptance   # opt-in large IFC acceptance checks
-# Parser/placement oracle checks; include local IfcOpenShell manifest files via ATHAR_IFCOS_CORPUS_DIR:
+# IfcOpenShell oracle checks (parser, placements, frames); include local IfcOpenShell manifest files via ATHAR_IFCOS_CORPUS_DIR:
 ATHAR_RUN_LARGE_ACCEPTANCE=1 python -m pytest tests/test_ifcopenshell_crosscheck.py -q
 ```
 

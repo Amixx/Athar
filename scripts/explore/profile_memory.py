@@ -236,7 +236,7 @@ def _build_bundle_phased(path: str, rec: Recorder):
         signatures: dict[int, SignatureVector] = {}
         for (
             step_id, guid, name, entity_type, canonical_class,
-            vh_geometry, vh_data, vh_topology, (placement, placement_unresolved), centroid, aabb,
+            vh_geometry, vh_data, vh_topology, (placement, placement_unresolved),
             data_facts,
         ) in sigs:
             signatures[step_id] = SignatureVector(
@@ -244,8 +244,6 @@ def _build_bundle_phased(path: str, rec: Recorder):
                 canonical_class=canonical_class, vh_geometry=vh_geometry, vh_data=vh_data,
                 vh_topology=vh_topology,
                 placement=tuple(placement) if placement is not None else None,
-                centroid=tuple(centroid) if centroid is not None else None,
-                aabb=tuple(aabb) if aabb is not None else None,
                 canon_version=CANON_VERSION,
                 data_facts=tuple((p, v) for p, v in data_facts),
                 placement_unresolved=placement_unresolved,

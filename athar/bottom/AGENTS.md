@@ -12,24 +12,26 @@ surface is thin glue:
 
 - `_native.py` — discovers the compiled module (`native()`).
 - `parser.py` — file-independent schema/unit glue only: schema-support guard,
-  measure-type helpers, `IfcUnitAssignment` factor extraction through `ifcopenshell.util.unit.get_unit_scale` (IfcOpenShell 0.9.0.post1+). `unit_factor` also converts a property's own unit. SI, conversion-based chains and derived units have multiplicative factors; context-dependent units, chains or derived units containing them, and nonzero-offset conversions are omitted from both factor mappings. The first unit assignment supplies the unit types. Factors retain IfcOpenShell's gram basis for mass; property reporting converts grams to kilograms. Native `Measure` looks up length, area, volume and plane angle only (`descriptor.rs`); an absent factor leaves the number unscaled in `canon.rs`, without an SI property label. `open_ifc` is
+  measure-type helpers, `IfcUnitAssignment` factor extraction through `ifcopenshell.util.unit.get_unit_scale` (IfcOpenShell 0.9.0.post1+). `unit_factor` also converts a property's own unit. SI, conversion-based chains and derived units have multiplicative factors; context-dependent units, chains or derived units containing them, and nonzero-offset conversions are omitted from both factor mappings. The first unit assignment supplies the unit types. Factors are to SI with mass in kilograms (IfcOpenShell scales mass relative to the gram, so `unit_factor` divides by 1000 per gram exponent). Every measure type whose unit type (`ifcopenshell.util.unit.get_measure_unit_type`) is an `IfcUnitEnum` or `IfcDerivedUnitEnum` value other than `USERDEFINED` scales natively by the file factor of that unit type (`Measure::Unit` in `descriptor.rs`); an absent factor leaves the number unscaled in `canon.rs`, without an SI property label. An integer of such a measure (`IfcIntegerCountRateMeasure`, or an integer literal where a real measure is expected) hashes and prints as the scaled quantity, exactly as the equal real; integers without a unit type (`IfcInteger`, `IfcCountMeasure`) keep their integer form. A property value, quantity or `IfcMeasureWithUnit.ValueComponent` that names its own unit hashes in that unit (a `record_unit_factors` override, factor 1 for a unit without a multiplicative factor), as property reporting converts it. Overrides are per attribute (step id -> attribute -> unit type -> factor), so an `IfcPropertyTableValue`'s `DefiningValues` take `DefiningUnit` and its `DefinedValues` take `DefinedUnit`, even for one measure type in two units. An `IfcPropertyEnumeration` names its unit for its values, and an `IfcPropertyEnumeratedValue` takes the unit of the enumeration its `EnumerationReference` names. `open_ifc` is
   the one place `ifcopenshell` opens a file. ifcopenshell crashes the
   interpreter on a file it cannot open, so `require_readable_file` raises an
   `OSError` naming the path unless it is a regular file the process can read.
   `open_ifc` calls it, and the Git cache calls it before hashing a file.
-- `native_schema.py` — builds the per-class descriptor map (JSON, cached per
-  schema) that Rust applies to the STEP records.
+- `native_schema.py` — builds the per-class descriptor map and the unit type
+  of every measure type (JSON, cached per schema) that Rust applies to the
+  STEP records.
 - `signatures.py` — opens the file once via `ifcopenshell` for the schema name
   and unit factors, releases it, runs the native pipeline, and wraps the result
   in `SignatureVector` / `SignatureBundle`.
   `IfcMapConversion` lengths are in the target `IfcProjectedCRS.MapUnit`, so
-  `record_unit_factors` overrides the length factor for that record's step id;
+  `record_unit_factors` overrides the length factor of its `Eastings`,
+  `Northings` and `OrthogonalHeight`;
   without a `MapUnit` the project length unit applies.
 
 The Rust side (`athar/_native/src/`): `step.rs` tokenize → `canon.rs`
-canonicalize (NFC, round-half-even quantization, `data_facts`) → `edges.rs`
+canonicalize (NFC, round-half-even quantization to `i128`, `data_facts`) → `edges.rs`
 edge classification → Merkle (geometry/data), coverage accounting and fact
-collection → WL topology → `spatial.rs` placement/centroid/AABB. `make
+collection → WL topology → `spatial.rs` placements. `make
 native-test` runs the crate's unit tests; CI runs it before the default suite.
 
 `step.rs` reads every byte from the `DATA` statement (found after the header's
@@ -42,7 +44,7 @@ control directives are decoded, so raw and escaped spellings hash alike
 (canon-v10). ifcopenshell drops raw non-ASCII string bytes, so values read
 through it (property extraction) can differ from the hashed ones.
 
-`athar_native.parse_step_file(path)` is the tokenizer inspection entry point, outside the signature pipeline. It returns `(step_id, class, attributes)` records with tagged values: `integer`, `real`, `string`, `enum`, `reference`, `null`, `derived`, `list`, and `typed` (type name plus arguments). Lists and typed arguments retain nesting; `$` and `*` remain distinct. `tests/test_ifcopenshell_crosscheck.py` compares these records with IfcOpenShell, with exact expected differences for malformed corpus records.
+`athar_native.parse_step_file(path)` is the tokenizer inspection entry point, outside the signature pipeline. It returns `(step_id, class, attributes)` records with tagged values: `integer`, `real`, `string`, `enum`, `reference`, `null`, `derived`, `list`, and `typed` (type name plus arguments). Lists and typed arguments retain nesting; `$` and `*` remain distinct. `tests/test_ifcopenshell_crosscheck.py` compares these records with IfcOpenShell, with exact expected differences for malformed corpus records. `athar_native.reference_graph(path, schema_json)` returns the canonicalized references `(source, attribute, target)` and the edges built from them (include edges `(source, target, label, domain)`, context and spatial pairs); the crosscheck compares every entity's references, inverse counts and reverse-attached children with IfcOpenShell (`traverse` at depth 1, `get_inverse`), and each reference's edge with the denied, reverse-attachment and relationship policy tables.
 
 Signature roots are products, spatial elements (IFC4 `IfcSpatialElement`,
 IFC2X3 `IfcSpatialStructureElement`) and `IfcProject` (descriptor flags
@@ -76,16 +78,20 @@ and `athar_native.reference_policy()`:
 ## Canonical Frames And Directions
 
 - `IfcDirection` ratios are hashed at unit length: a direction has no
-  magnitude. `IfcVector` keeps its `Magnitude` attribute.
+  magnitude. Any finite, nonzero ratios normalize, however small. `IfcVector`
+  keeps its `Magnitude` attribute.
 - `IfcAxis1Placement`, `IfcAxis2Placement2D`, `IfcAxis2Placement3D` and the
   `IfcCartesianTransformationOperator*` classes hash one `frame=` part: the
   axes the schema derives (`IfcBuildAxes`, `IfcBuild2Axes`, `IfcBaseAxis`) and,
   for operators, the derived scales, quantized after resolution. An omitted
   axis or scale equals its default written out, and a `RefDirection` off the
-  placement plane equals its projection. The axis references produce no edge.
-  A frame the rules leave undefined (parallel axes, an axis reference that is
-  not a direction) keeps the attribute-wise encoding.
-- Spatial coordinates are converted to metres without quantization before placement-chain composition. World and local matrices are quantized at `PLACEMENT_SCALE = 1e6` (one micrometre for translations, `1e-6` for rotation entries). IfcOpenShell's `get_local_placement` returns file units; crosschecks scale its translation to metres and allow one quantum plus `1e-9` relative. IfcOpenShell's helper retains a non-perpendicular RefDirection; the engine uses the IFC-derived projection.
+  placement plane (of a 2D placement too) equals its projection. The axis
+  references produce no edge. A frame the rules leave undefined (axes parallel
+  within `1e-12` after normalization, an axis reference that is not a
+  direction) keeps the attribute-wise encoding. `IfcFirstProjAxis` takes
+  `(0,1,0)` as the default X for a Z axis within `1e-9` of either X direction;
+  the schema leaves -X undefined.
+- Spatial coordinates are converted to metres without quantization before placement-chain composition. World and local matrices are quantized at `PLACEMENT_SCALE = 1e6` (one micrometre for translations, `1e-6` for rotation entries). IfcOpenShell's `get_local_placement` returns file units; crosschecks scale its translation to metres and allow one quantum plus `1e-9` relative. IfcOpenShell's helper retains a non-perpendicular RefDirection; the engine uses the IFC-derived projection. IfcOpenShell's geometry kernel (`create_shape` on a placement with `convert-back-units`, then scaled the same way) projects like the engine; its divergences on degenerate frames (OCC's default X for an `Axis` without `RefDirection`, a kept Z axis for an undefined frame) are listed in `tests/test_ifcopenshell_crosscheck.py`.
 - `spatial.rs` builds placement matrices from the same axes (`placement_axes`
   in `canon.rs`). A relative placement whose frame is undefined, including an
   axis attribute set to a zero, malformed or missing direction, has a zero
@@ -326,3 +332,4 @@ comparable within one version.
 | v14 | hashes as in v13; `data_facts` paths label an owner below the root by class and `Name`; related entities say whether their GlobalId is shared; property values without a declared or convertible unit stay as written |
 | v15 | spatial coordinates remain unquantized until frame composition; world/local matrices and relative feature-position hashes use the composed frame |
 | v16 | `IfcMapConversion` lengths scale by the target CRS `MapUnit` when it is set |
+| v17 | directions normalize at any nonzero magnitude; a 2D placement's `RefDirection` is projected into its plane; every measure with a unit type scales to SI by the file's factor (mass in kilograms), integers of such a measure included, and a property, enumeration, quantity or `IfcMeasureWithUnit` unit replaces the file's for that record (an enumerated value takes its enumeration's unit, a table's defining and defined values each their own); quantized reals are 128-bit; signatures carry no centroid or AABB |

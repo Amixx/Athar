@@ -113,11 +113,15 @@ fn is_plain_refs(token: &Token) -> bool {
     }
 }
 
+/// Unit factors by unit type that replace the file's for the values of one
+/// attribute of one record: step id -> attribute name -> unit type -> factor.
+pub type AttrUnitFactors = HashMap<i64, HashMap<String, HashMap<String, f64>>>;
+
 pub fn canonicalize(
     records: &[Record],
     schema: &SchemaDesc,
     unit_factors: &HashMap<String, f64>,
-    record_unit_factors: &HashMap<i64, HashMap<String, f64>>,
+    record_unit_factors: &AttrUnitFactors,
 ) -> ParsedNative {
     let tri_pointlists = collect_triangulated_pointlists(records, schema, unit_factors);
     let dir_ratios: HashMap<i64, [f64; 3]> = records
@@ -146,7 +150,7 @@ pub fn canonicalize(
         };
 
         if rec.keyword == "IFCCARTESIANPOINT" {
-            if let Some(c) = coords_from_first_list(rec, &Measure::Length, unit_factors) {
+            if let Some(c) = coords_from_first_list(rec, &Measure::LENGTH, unit_factors) {
                 point_coords.insert(rec.step_id, c);
             }
         }
@@ -181,18 +185,7 @@ pub fn canonicalize(
             geom_parts.push(part.clone());
         }
 
-        let overlaid: HashMap<String, f64>;
-        let attr_unit_factors = match record_unit_factors.get(&rec.step_id) {
-            Some(overrides) => {
-                overlaid = unit_factors
-                    .iter()
-                    .chain(overrides)
-                    .map(|(unit, factor)| (unit.clone(), *factor))
-                    .collect();
-                &overlaid
-            }
-            None => unit_factors,
-        };
+        let record_overrides = record_unit_factors.get(&rec.step_id);
 
         // Attributes are zipped positionally with the schema descriptor.
         let n = rec.attrs.len().min(desc.attrs.len());
@@ -219,16 +212,29 @@ pub fn canonicalize(
             if unset || is_plain_refs(token) {
                 continue;
             }
+            let overlaid: HashMap<String, f64>;
+            let attr_unit_factors = match record_overrides.and_then(|by_attr| by_attr.get(attr.name.as_str())) {
+                Some(overrides) => {
+                    overlaid = unit_factors
+                        .iter()
+                        .chain(overrides)
+                        .map(|(unit, factor)| (unit.clone(), *factor))
+                        .collect();
+                    &overlaid
+                }
+                None => unit_factors,
+            };
+            let attr_units = Units { factors: attr_unit_factors, measures: &schema.measures };
             let mut part = String::new();
             part.push_str("attr=");
             part.push_str(&attr.name);
             part.push(':');
-            encode_inner_into(&mut part, token, &attr.shape, attr.direction, attr_unit_factors);
+            encode_inner_into(&mut part, token, &attr.shape, attr.direction, &attr_units);
             let geom = desc.geometric && !attr.text;
             if !geom {
-                data_facts.push((attr_rc, fact_value(token, &attr.shape, attr.direction, attr_unit_factors)));
+                data_facts.push((attr_rc, fact_value(token, &attr.shape, attr.direction, &attr_units)));
             } else if !matches!(attr.shape, Shape::Agg { .. }) {
-                geom_facts.push((attr_rc, fact_value(token, &attr.shape, attr.direction, attr_unit_factors)));
+                geom_facts.push((attr_rc, fact_value(token, &attr.shape, attr.direction, &attr_units)));
             }
             if geom {
                 geom_parts.push(part);
@@ -314,22 +320,34 @@ fn unit_direction(rec: &Record) -> Option<([f64; 3], usize)> {
     unit(ratios).map(|u| (u, items.len()))
 }
 
+/// `v` at unit length; `None` for a zero or non-finite vector. Dividing by the
+/// largest component first keeps tiny ratios from underflowing when squared.
 fn unit(v: [f64; 3]) -> Option<[f64; 3]> {
-    let norm = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    if !norm.is_finite() || norm <= 1e-12 {
+    if v.iter().any(|c| !c.is_finite()) {
         return None;
     }
-    Some([v[0] / norm, v[1] / norm, v[2] / norm])
+    let largest = v.iter().fold(0.0f64, |m, c| m.max(c.abs()));
+    if largest == 0.0 {
+        return None;
+    }
+    let w = [v[0] / largest, v[1] / largest, v[2] / largest];
+    let norm = dot(w, w).sqrt();
+    Some([w[0] / norm, w[1] / norm, w[2] / norm])
 }
 
 fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-/// `v` minus its component along the unit vector `axis`, at unit length.
+/// The unit vector `v` minus its component along the unit vector `axis`, at
+/// unit length; `None` when `v` is parallel to `axis` within `1e-12`.
 fn reject(v: [f64; 3], axis: [f64; 3]) -> Option<[f64; 3]> {
     let d = dot(v, axis);
-    unit([v[0] - d * axis[0], v[1] - d * axis[1], v[2] - d * axis[2]])
+    let r = [v[0] - d * axis[0], v[1] - d * axis[1], v[2] - d * axis[2]];
+    if dot(r, r).sqrt() <= 1e-12 {
+        return None;
+    }
+    unit(r)
 }
 
 /// EXPRESS `IfcBuildAxes`: the unit X and Z axes of an `IfcAxis2Placement3D`
@@ -384,7 +402,10 @@ fn placement_axes(
 ) -> Option<([f64; 3], [f64; 3])> {
     let axis = |name: &str| axis_attribute(rec, desc, directions, name);
     match rec.keyword.as_str() {
-        "IFCAXIS2PLACEMENT2D" => Some((axis("RefDirection")?.unwrap_or([1.0, 0.0, 0.0]), [0.0, 0.0, 1.0])),
+        "IFCAXIS2PLACEMENT2D" => {
+            let z = [0.0, 0.0, 1.0];
+            Some((reject(axis("RefDirection")?.unwrap_or([1.0, 0.0, 0.0]), z)?, z))
+        }
         "IFCAXIS2PLACEMENT3D" => build_axes(axis("Axis")?, axis("RefDirection")?),
         _ => None,
     }
@@ -482,7 +503,7 @@ fn collect_triangulated_pointlists(
     records: &[Record],
     schema: &SchemaDesc,
     unit_factors: &HashMap<String, f64>,
-) -> HashMap<i64, Vec<[i64; 3]>> {
+) -> HashMap<i64, Vec<[i128; 3]>> {
     let mut wanted: std::collections::HashSet<i64> = std::collections::HashSet::new();
     for rec in records {
         if rec.keyword != "IFCTRIANGULATEDFACESET" {
@@ -498,13 +519,13 @@ fn collect_triangulated_pointlists(
         return HashMap::new();
     }
 
-    let mut out: HashMap<i64, Vec<[i64; 3]>> = HashMap::with_capacity(wanted.len());
+    let mut out: HashMap<i64, Vec<[i128; 3]>> = HashMap::with_capacity(wanted.len());
     for rec in records {
         if rec.keyword != "IFCCARTESIANPOINTLIST3D" || !wanted.contains(&rec.step_id) {
             continue;
         }
         let Some(Token::List(rows)) = rec.attrs.first() else { continue };
-        let mut points: Vec<[i64; 3]> = Vec::with_capacity(rows.len());
+        let mut points: Vec<[i128; 3]> = Vec::with_capacity(rows.len());
         let mut ok = true;
         'rows: for row in rows {
             let Token::List(coords) = row else {
@@ -515,7 +536,7 @@ fn collect_triangulated_pointlists(
                 ok = false;
                 break;
             }
-            let mut point = [0i64; 3];
+            let mut point = [0i128; 3];
             for (k, coord) in coords.iter().take(3).enumerate() {
                 let value = match coord {
                     Token::Real(r) => *r,
@@ -525,7 +546,7 @@ fn collect_triangulated_pointlists(
                         break 'rows;
                     }
                 };
-                point[k] = quantize_real(value, Measure::Length, false, unit_factors);
+                point[k] = quantize_real(value, Measure::LENGTH, false, unit_factors);
             }
             points.push(point);
         }
@@ -546,7 +567,7 @@ fn collect_triangulated_pointlists(
 fn canonical_triangle_parts(
     rec: &Record,
     desc: &ClassDesc,
-    pointlists: &HashMap<i64, Vec<[i64; 3]>>,
+    pointlists: &HashMap<i64, Vec<[i128; 3]>>,
 ) -> Option<Vec<String>> {
     let attr_token = |name: &str| -> Option<&Token> {
         desc.attrs
@@ -579,7 +600,7 @@ fn canonical_triangle_parts(
         }
         Some(_) => return None,
     };
-    let resolve = |index: i64| -> Option<[i64; 3]> {
+    let resolve = |index: i64| -> Option<[i128; 3]> {
         if index < 1 {
             return None;
         }
@@ -601,7 +622,7 @@ fn canonical_triangle_parts(
         if indices.len() != 3 {
             return None;
         }
-        let mut verts = [[0i64; 3]; 3];
+        let mut verts = [[0i128; 3]; 3];
         for (k, idx_token) in indices.iter().enumerate() {
             let Token::Int(raw) = idx_token else {
                 return None;
@@ -712,7 +733,7 @@ fn quantize_real(
     measure: Measure,
     attr_direction: bool,
     unit_factors: &HashMap<String, f64>,
-) -> i64 {
+) -> i128 {
     if !value.is_finite() {
         return 0;
     }
@@ -731,7 +752,7 @@ fn quantize_real(
 }
 
 /// Round half to even.
-fn round_half_even(x: f64) -> i64 {
+fn round_half_even(x: f64) -> i128 {
     let floor = x.floor();
     let diff = x - floor;
     let rounded = if diff > 0.5 {
@@ -740,16 +761,35 @@ fn round_half_even(x: f64) -> i64 {
         floor
     } else {
         // exactly .5 -> round to even
-        if (floor as i64) % 2 == 0 {
+        if (floor as i128) % 2 == 0 {
             floor
         } else {
             floor + 1.0
         }
     };
-    rounded as i64
+    rounded as i128
 }
 
 // ----- canonical-string encoding ------------------------------------------
+
+/// The unit context of one record: unit factors by unit type, and the measure
+/// of each measure type keyword.
+pub struct Units<'a> {
+    pub factors: &'a HashMap<String, f64>,
+    pub measures: &'a HashMap<String, Measure>,
+}
+
+impl Units<'_> {
+    /// The measure a typed value's keyword names; an untyped measure at a
+    /// direction attribute otherwise.
+    fn measure(&self, keyword: &str, attr_dir: bool) -> Measure {
+        match self.measures.get(keyword) {
+            Some(measure) => *measure,
+            None if attr_dir => Measure::Direction,
+            None => Measure::Default,
+        }
+    }
+}
 
 // The encoders append into a caller-provided buffer, so a whole attribute
 // value, nested aggregates and typed wrappers included, is one allocation.
@@ -769,7 +809,7 @@ fn encode_inner_into(
     token: &Token,
     shape: &Shape,
     attr_dir: bool,
-    units: &HashMap<String, f64>,
+    units: &Units,
 ) {
     match shape {
         Shape::Select => encode_select_into(out, token, attr_dir, units),
@@ -814,19 +854,23 @@ fn encode_scalar_into(
     token: &Token,
     measure: Measure,
     attr_dir: bool,
-    units: &HashMap<String, f64>,
+    units: &Units,
 ) {
     match token {
         Token::Ref(_) => out.push('R'),
         Token::Null => out.push('$'),
         Token::Derived => out.push('*'),
+        Token::Int(i) if measure.unit_type().is_some() => {
+            out.push('r');
+            let _ = write!(out, "{}", quantize_real(*i as f64, measure, attr_dir, units.factors));
+        }
         Token::Int(i) => {
             out.push('i');
             let _ = write!(out, "{i}");
         }
         Token::Real(r) => {
             out.push('r');
-            let _ = write!(out, "{}", quantize_real(*r, measure, attr_dir, units));
+            let _ = write!(out, "{}", quantize_real(*r, measure, attr_dir, units.factors));
         }
         Token::Str(s) => encode_string_into(out, s),
         Token::Enum(e) => encode_enum_into(out, e),
@@ -874,13 +918,9 @@ fn encode_typed_into(
     keyword: &str,
     inner: &[Token],
     attr_dir: bool,
-    units: &HashMap<String, f64>,
+    units: &Units,
 ) {
-    let measure = Measure::from_keyword(keyword).unwrap_or(if attr_dir {
-        Measure::Direction
-    } else {
-        Measure::Default
-    });
+    let measure = units.measure(keyword, attr_dir);
     out.push_str("T(");
     out.push_str(keyword);
     out.push(':');
@@ -903,7 +943,7 @@ fn encode_select_into(
     out: &mut String,
     token: &Token,
     attr_dir: bool,
-    units: &HashMap<String, f64>,
+    units: &Units,
 ) {
     match token {
         Token::Ref(_) => out.push_str("sel(R)"),
@@ -954,7 +994,7 @@ fn is_text(token: &Token) -> bool {
 /// never hashed). A text longer than `FACT_VALUE_LIMIT` bytes keeps the
 /// leading characters that fit, followed by its byte length and a digest of
 /// the whole text.
-fn fact_value(token: &Token, shape: &Shape, attr_dir: bool, units: &HashMap<String, f64>) -> String {
+fn fact_value(token: &Token, shape: &Shape, attr_dir: bool, units: &Units) -> String {
     let value = human_value(token, shape, attr_dir, units);
     if value.len() <= FACT_VALUE_LIMIT || !is_text(token) {
         return bounded_fact(&value);
@@ -975,7 +1015,7 @@ fn human_value(
     token: &Token,
     shape: &Shape,
     attr_dir: bool,
-    units: &HashMap<String, f64>,
+    units: &Units,
 ) -> String {
     match shape {
         Shape::Select => human_select(token, attr_dir, units),
@@ -996,10 +1036,10 @@ fn human_value(
 /// A real as people read it: the hashed quantity as a decimal number in the
 /// SI unit its measure is normalized to, followed by that unit. Two reals
 /// print alike exactly when they hash alike.
-fn human_real(value: f64, measure: Measure, attr_dir: bool, units: &HashMap<String, f64>) -> String {
+fn human_real(value: f64, measure: Measure, attr_dir: bool, units: &Units) -> String {
     let effective = if measure == Measure::Default && attr_dir { Measure::Direction } else { measure };
-    let quantized = quantize_real(value, measure, attr_dir, units);
-    let scale = effective.scale() as u64;
+    let quantized = quantize_real(value, measure, attr_dir, units.factors);
+    let scale = effective.scale() as u128;
     let digits = scale.ilog10() as usize;
     let magnitude = quantized.unsigned_abs();
     let mut out = String::new();
@@ -1013,12 +1053,14 @@ fn human_real(value: f64, measure: Measure, attr_dir: bool, units: &HashMap<Stri
         out.push('.');
         out.push_str(fraction);
     }
-    let unit = match effective {
-        Measure::Length => " m",
-        Measure::Area => " m2",
-        Measure::Volume => " m3",
-        Measure::Angle => " rad",
-        Measure::Direction | Measure::Default => "",
+    let unit = match effective.unit_type() {
+        Some("LENGTHUNIT") => " m",
+        Some("AREAUNIT") => " m2",
+        Some("VOLUMEUNIT") => " m3",
+        Some("PLANEANGLEUNIT") => " rad",
+        Some("MASSUNIT") => " kg",
+        Some("TIMEUNIT") => " s",
+        _ => "",
     };
     out.push_str(unit);
     out
@@ -1028,12 +1070,13 @@ fn human_scalar(
     token: &Token,
     measure: Measure,
     attr_dir: bool,
-    units: &HashMap<String, f64>,
+    units: &Units,
 ) -> String {
     match token {
         Token::Ref(_) => "<ref>".to_string(),
         Token::Null => "<null>".to_string(),
         Token::Derived => "<derived>".to_string(),
+        Token::Int(i) if measure.unit_type().is_some() => human_real(*i as f64, measure, attr_dir, units),
         Token::Int(i) => i.to_string(),
         Token::Real(r) => human_real(*r, measure, attr_dir, units),
         Token::Str(s) => nfc_strip(s),
@@ -1043,11 +1086,7 @@ fn human_scalar(
             other => other.to_string(),
         },
         Token::Typed(kw, inner) if inner.len() == 1 => {
-            let m = Measure::from_keyword(kw).unwrap_or(if attr_dir {
-                Measure::Direction
-            } else {
-                Measure::Default
-            });
+            let m = units.measure(kw, attr_dir);
             format!("{}: {}", kw, human_scalar(&inner[0], m, attr_dir, units))
         }
         Token::Typed(kw, _) => kw.clone(),
@@ -1061,10 +1100,10 @@ fn human_scalar(
     }
 }
 
-fn human_select(token: &Token, attr_dir: bool, units: &HashMap<String, f64>) -> String {
+fn human_select(token: &Token, attr_dir: bool, units: &Units) -> String {
     match token {
         Token::Typed(kw, inner) if inner.len() == 1 => {
-            let m = Measure::from_keyword(kw).unwrap_or(Measure::Default);
+            let m = units.measure(kw, false);
             format!("{}: {}", kw, human_scalar(&inner[0], m, attr_dir, units))
         }
         other => human_scalar(other, Measure::Default, attr_dir, units),
@@ -1077,6 +1116,13 @@ mod tests {
 
     fn units(pairs: &[(&str, f64)]) -> HashMap<String, f64> {
         pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    fn measures() -> HashMap<String, Measure> {
+        [("IFCLENGTHMEASURE", "LENGTHUNIT"), ("IFCTHERMALTRANSMITTANCEMEASURE", "THERMALTRANSMITTANCEUNIT")]
+            .into_iter()
+            .map(|(keyword, unit_type)| (keyword.to_string(), Measure::Unit(unit_type)))
+            .collect()
     }
 
     #[test]
@@ -1100,7 +1146,9 @@ mod tests {
 
     #[test]
     fn unset_equals_derived_only_at_derive_redeclared_attributes() {
-        let none = units(&[]);
+        let factors = units(&[]);
+        let measures = measures();
+        let none = Units { factors: &factors, measures: &measures };
         let encode = |t: &Token, derived: bool| {
             let attr = AttrDesc {
                 name: "Precision".to_string(),
@@ -1119,7 +1167,9 @@ mod tests {
 
     #[test]
     fn fact_values_are_bounded() {
-        let none = units(&[]);
+        let factors = units(&[]);
+        let measures = measures();
+        let none = Units { factors: &factors, measures: &measures };
         let shape = Shape::Agg { sorted: false, elem: Box::new(Shape::Leaf { m: Measure::Default }) };
         let short = fact_value(&Token::List(vec![Token::Int(1), Token::Int(2)]), &shape, false, &none);
         assert_eq!(short, "[1, 2]");
@@ -1135,7 +1185,9 @@ mod tests {
 
     #[test]
     fn long_text_facts_keep_a_readable_start() {
-        let none = units(&[]);
+        let factors = units(&[]);
+        let measures = measures();
+        let none = Units { factors: &factors, measures: &measures };
         let leaf = Shape::Leaf { m: Measure::Default };
         let text = |tail: &str| format!("{}{tail}", "é".repeat(60));
         let fact = |tail: &str| fact_value(&Token::Str(text(tail)), &leaf, false, &none);
@@ -1153,17 +1205,58 @@ mod tests {
 
     #[test]
     fn reals_read_as_si_numbers_with_their_unit() {
-        let mm = units(&[("LENGTHUNIT", 0.001), ("AREAUNIT", 0.000001)]);
-        assert_eq!(human_real(3000.0, Measure::Length, false, &mm), "3 m");
-        assert_eq!(human_real(-12.5, Measure::Length, false, &mm), "-0.0125 m");
-        assert_eq!(human_real(2_500_000.0, Measure::Area, false, &mm), "2.5 m2");
+        let factors = units(&[("LENGTHUNIT", 0.001), ("AREAUNIT", 0.000001)]);
+        let measures = measures();
+        let mm = Units { factors: &factors, measures: &measures };
+        assert_eq!(human_real(3000.0, Measure::LENGTH, false, &mm), "3 m");
+        assert_eq!(human_real(-12.5, Measure::LENGTH, false, &mm), "-0.0125 m");
+        assert_eq!(human_real(2_500_000.0, Measure::Unit("AREAUNIT"), false, &mm), "2.5 m2");
         assert_eq!(human_real(0.25, Measure::Default, false, &mm), "0.25");
         assert_eq!(human_real(-0.5, Measure::Default, true, &mm), "-0.5");
-        assert_eq!(human_real(0.0, Measure::Angle, false, &mm), "0 rad");
+        assert_eq!(human_real(0.0, Measure::Unit("PLANEANGLEUNIT"), false, &mm), "0 rad");
         assert_eq!(
-            human_real(3000.0000001, Measure::Length, false, &mm),
-            human_real(3000.0, Measure::Length, false, &mm)
+            human_real(3000.0000001, Measure::LENGTH, false, &mm),
+            human_real(3000.0, Measure::LENGTH, false, &mm)
         );
+    }
+
+    #[test]
+    fn typed_measures_scale_by_the_factor_of_their_unit_type() {
+        let factors = units(&[("THERMALTRANSMITTANCEUNIT", 5.678)]);
+        let measures = measures();
+        let u = Units { factors: &factors, measures: &measures };
+        let value = Token::Typed("IFCTHERMALTRANSMITTANCEMEASURE".to_string(), vec![Token::Real(1.0)]);
+        let mut encoded = String::new();
+        encode_select_into(&mut encoded, &value, false, &u);
+        assert_eq!(encoded, "sel(T(IFCTHERMALTRANSMITTANCEMEASURE:r5678000))");
+        assert_eq!(fact_value(&value, &Shape::Select, false, &u), "IFCTHERMALTRANSMITTANCEMEASURE: 5.678");
+    }
+
+    #[test]
+    fn integers_of_a_measure_with_a_unit_type_scale_like_reals() {
+        let factors = units(&[("LENGTHUNIT", 0.001), ("INTEGERCOUNTRATEUNIT", 1.0 / 60.0)]);
+        let mut measures = measures();
+        measures.insert("IFCINTEGERCOUNTRATEMEASURE".to_string(), Measure::Unit("INTEGERCOUNTRATEUNIT"));
+        let u = Units { factors: &factors, measures: &measures };
+        let encoded = |token: &Token| {
+            let mut out = String::new();
+            encode_select_into(&mut out, token, false, &u);
+            (out, fact_value(token, &Shape::Select, false, &u))
+        };
+        let typed = |keyword: &str, value: Token| Token::Typed(keyword.to_string(), vec![value]);
+        assert_eq!(
+            encoded(&typed("IFCLENGTHMEASURE", Token::Int(3000))),
+            encoded(&typed("IFCLENGTHMEASURE", Token::Real(3000.0)))
+        );
+        assert_eq!(
+            encoded(&typed("IFCINTEGERCOUNTRATEMEASURE", Token::Int(60))),
+            ("sel(T(IFCINTEGERCOUNTRATEMEASURE:r1000000))".to_string(), "IFCINTEGERCOUNTRATEMEASURE: 1".to_string())
+        );
+        assert_eq!(
+            encoded(&typed("IFCCOUNTMEASURE", Token::Int(60))),
+            ("sel(T(IFCCOUNTMEASURE:i60))".to_string(), "IFCCOUNTMEASURE: 60".to_string())
+        );
+        assert_eq!(encoded(&Token::Int(60)), ("sel(i60)".to_string(), "60".to_string()));
     }
 
     #[test]
@@ -1171,16 +1264,65 @@ mod tests {
         // 3000 mm (LENGTHUNIT=0.001) and 3 m (LENGTHUNIT=1.0) must agree.
         let mm = units(&[("LENGTHUNIT", 0.001)]);
         let m = units(&[("LENGTHUNIT", 1.0)]);
-        assert_eq!(quantize_real(3000.0, Measure::Length, false, &mm), 3_000_000);
-        assert_eq!(quantize_real(3.0, Measure::Length, false, &m), 3_000_000);
+        assert_eq!(quantize_real(3000.0, Measure::LENGTH, false, &mm), 3_000_000);
+        assert_eq!(quantize_real(3.0, Measure::LENGTH, false, &m), 3_000_000);
+    }
+
+    #[test]
+    fn reals_beyond_the_i64_range_keep_their_magnitude() {
+        let m = units(&[("LENGTHUNIT", 1.0)]);
+        assert_eq!(quantize_real(1e14, Measure::LENGTH, false, &m), 100_000_000_000_000_000_000);
+        assert_ne!(quantize_real(1e14, Measure::LENGTH, false, &m), quantize_real(2e14, Measure::LENGTH, false, &m));
     }
 
     #[test]
     fn direction_uses_its_own_scale() {
         // A default-measure real on a direction-named attribute uses 1e5.
-        let none = units(&[]);
-        assert_eq!(quantize_real(1.0, Measure::Default, true, &none), 100_000);
-        assert_eq!(quantize_real(1.0, Measure::Default, false, &none), 1_000_000);
+        let factors = units(&[]);
+        let measures = measures();
+        let none = Units { factors: &factors, measures: &measures };
+        assert_eq!(quantize_real(1.0, Measure::Default, true, none.factors), 100_000);
+        assert_eq!(quantize_real(1.0, Measure::Default, false, none.factors), 1_000_000);
+    }
+
+    #[test]
+    fn any_nonzero_direction_has_a_unit_vector() {
+        assert_eq!(unit([0.0, 0.0, 1e-13]), Some([0.0, 0.0, 1.0]));
+        assert_eq!(unit([0.0, 0.0, -1e-300]), Some([0.0, 0.0, -1.0]));
+        assert_eq!(unit([0.0, 0.0, 0.0]), None);
+        assert_eq!(unit([f64::NAN, 0.0, 1.0]), None);
+    }
+
+    #[test]
+    fn a_2d_placement_frame_lies_in_its_plane() {
+        let desc = ClassDesc {
+            class: "IfcAxis2Placement2D".to_string(),
+            product: false,
+            spatial: false,
+            project: false,
+            relationship: false,
+            geometric: true,
+            guid: None,
+            name: None,
+            attrs: ["Location", "RefDirection"]
+                .iter()
+                .map(|name| AttrDesc {
+                    name: name.to_string(),
+                    direction: false,
+                    derived: false,
+                    text: false,
+                    shape: Shape::Select,
+                })
+                .collect(),
+        };
+        let rec = Record {
+            step_id: 1,
+            keyword: "IFCAXIS2PLACEMENT2D".to_string(),
+            attrs: vec![Token::Ref(2), Token::Ref(3)],
+        };
+        let axes = |ratios: [f64; 3]| placement_axes(&rec, &desc, &HashMap::from([(3, unit(ratios).unwrap())]));
+        assert_eq!(axes([1.0, 0.0, 1.0]), Some(([1.0, 0.0, 0.0], [0.0, 0.0, 1.0])));
+        assert_eq!(axes([0.0, 0.0, 2.0]), None);
     }
 
     #[test]

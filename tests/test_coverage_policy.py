@@ -132,7 +132,7 @@ def test_case_subtypes_collapse_to_their_supertype(schema_name):
 
 
 def test_ifc4_case_classes_share_the_matcher_class_of_their_supertype():
-    descriptors = _build_descriptors("IFC4")
+    descriptors = _build_descriptors("IFC4")["classes"]
     assert descriptors["IFCSLABELEMENTEDCASE"]["class"] == "IfcSlab"
     assert descriptors["IFCOPENINGSTANDARDCASE"]["class"] == "IfcOpeningElement"
     assert descriptors["IFCBEAMSTANDARDCASE"]["class"] == "IfcBeam"
@@ -140,7 +140,7 @@ def test_ifc4_case_classes_share_the_matcher_class_of_their_supertype():
 
 @pytest.mark.parametrize("schema_name", SCHEMAS)
 def test_descriptor_flags_mark_the_project_and_relationships(schema_name):
-    descriptors = _build_descriptors(schema_name)
+    descriptors = _build_descriptors(schema_name)["classes"]
     project = descriptors["IFCPROJECT"]
     assert project["project"] and not project["spatial"] and not project["product"]
     assert descriptors["IFCRELAGGREGATES"]["relationship"]

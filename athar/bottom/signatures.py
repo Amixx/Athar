@@ -35,7 +35,7 @@ def build_signature_bundle(filepath: str) -> SignatureBundle:
 def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle:
     from .native_schema import schema_descriptors_json
     from .parser import _assert_supported_schema, _extract_unit_context, open_ifc
-    from .properties import extract_orphan_property_sets, extract_properties
+    from .properties import extract_orphan_property_sets, extract_properties, own_unit_factors
 
     # The ifcopenshell model is released before the native parse so both
     # representations of the file are never resident together.
@@ -44,7 +44,7 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
     _assert_supported_schema(schema)
     unit_context = _extract_unit_context(ifc)
     unit_factors = unit_context.get("unit_factors", {})
-    record_unit_factors = unit_context["record_unit_factors"]
+    record_unit_factors = {**unit_context["record_unit_factors"], **own_unit_factors(ifc)}
     property_index = extract_properties(ifc, unit_context["property_unit_factors"])
     orphan_property_sets = extract_orphan_property_sets(ifc)
     del ifc
@@ -69,8 +69,6 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
         vh_data,
         vh_topology,
         (placement, placement_unresolved, local_placement, placement_parent),
-        centroid,
-        aabb,
         (data_facts, relation_targets),
     ) in sigs:
         signatures[step_id] = SignatureVector(
@@ -83,8 +81,6 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
             vh_data=vh_data,
             vh_topology=vh_topology,
             placement=tuple(placement) if placement is not None else None,
-            centroid=tuple(centroid) if centroid is not None else None,
-            aabb=tuple(aabb) if aabb is not None else None,
             canon_version=CANON_VERSION,
             data_facts=tuple((path, value) for path, value in data_facts),
             placement_unresolved=placement_unresolved,

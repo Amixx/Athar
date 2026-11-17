@@ -1079,3 +1079,57 @@ def test_element_moved_from_a_deleted_storey_to_a_present_one_changed_intrinsica
     assert targets(relation(wall, "IfcRelContainedInSpatialStructure")) == (["L2"], ["L1"])
     assert wall["aspects"]["placement"] == "unchanged"
     assert wall["change_scope"] == "intrinsic"
+
+
+def test_micro_difference_in_an_si_value_is_a_property_change(tmp_path):
+    def edit(model):
+        model["measure"].NominalValue = model.file.create_entity("IfcLengthMeasure", 1000000.000002)
+
+    setup = lambda model: single_value(model, model.file.create_entity("IfcLengthMeasure", 1000000.000001))
+    item = modified(diff(tmp_path, edit, setup=setup), "W1")
+
+    assert item["property_deltas"]["changed"] == [
+        {
+            "pset": "Pset_X",
+            "name": "Measure",
+            "inherited": False,
+            "old_value": 1000000.000001,
+            "new_value": 1000000.000002,
+            "unit": "m",
+        }
+    ]
+
+
+def _ifc2x3_bounded_value(path, upper: float):
+    f = ifcopenshell.file(schema="IFC2X3")
+    metre = f.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE")
+    f.create_entity(
+        "IfcProject",
+        GlobalId=guid("project"),
+        Name="Project",
+        UnitsInContext=f.create_entity("IfcUnitAssignment", Units=[metre]),
+    )
+    wall = f.create_entity("IfcWall", GlobalId=guid("W1"), Name="W1")
+    bounded = f.create_entity(
+        "IfcPropertyBoundedValue",
+        Name="Clearance",
+        UpperBoundValue=f.create_entity("IfcLengthMeasure", upper),
+        LowerBoundValue=f.create_entity("IfcLengthMeasure", 1.0),
+        Unit=metre,
+    )
+    pset = f.create_entity("IfcPropertySet", GlobalId=guid("pset"), Name="Pset_X", HasProperties=[bounded])
+    f.create_entity(
+        "IfcRelDefinesByProperties", GlobalId=guid("rel"), RelatedObjects=[wall], RelatingPropertyDefinition=pset
+    )
+    f.write(str(path))
+    return path
+
+
+def test_ifc2x3_bounded_value_with_a_unit_diffs_and_compares_its_bounds(tmp_path):
+    old = _ifc2x3_bounded_value(tmp_path / "old.ifc", 2.0)
+    new = _ifc2x3_bounded_value(tmp_path / "new.ifc", 3.0)
+
+    report = diff_files(old, new)
+
+    assert names(report["modified"]) == {"W1"}
+    assert diff_files(old, old)["modified"] == []
