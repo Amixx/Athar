@@ -18,11 +18,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout (LFS pointers only)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           lfs: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -42,7 +42,7 @@ jobs:
 
       - name: Restore LFS object cache
         id: lfs-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .git/lfs
           key: lfs-default-${{ hashFiles('.lfs-assets-id') }}
@@ -55,21 +55,23 @@ jobs:
 
       - name: Save LFS object cache
         if: steps.lfs-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .git/lfs
           key: ${{ steps.lfs-cache.outputs.cache-primary-key }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: athar/_native
 
       - name: Build Athar with the native extension
         run: |
           python -m venv .venv
-          .venv/bin/python -m pip install pytest
+          .venv/bin/python -m pip install pytest pyyaml
           make native-build
 
       - name: Default suite

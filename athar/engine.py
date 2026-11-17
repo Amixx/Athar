@@ -179,7 +179,7 @@ def _audit_metadata(
         "report_schema_version": 1,
         "producer": {
             "name": "athar",
-            "version": _package_version(),
+            "version": package_version(),
             "canon_version": CANON_VERSION,
         },
         "inputs": {
@@ -214,7 +214,7 @@ def _file_sha256(path: str) -> str:
     return digest.hexdigest()
 
 
-def _package_version() -> str:
+def package_version() -> str:
     try:
         return metadata.version("athar-ifc")
     except metadata.PackageNotFoundError as error:

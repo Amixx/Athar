@@ -44,7 +44,6 @@ module-name = "athar_native"
 python-packages = [
   "athar",
   "athar_bench",
-  "athar_dev",
   "athar_git",
   "athar_qa",
   "athar_store",

@@ -31,7 +31,7 @@ help:
 	"  make publish RUN=<id>       Upload a Python release run's wheels and sdist to PyPI (token from ~/.pypirc)"
 
 dev-setup:
-	@missing="$$( $(PYTHON) -c "import importlib.util; packages=['pytest','ifcopenshell']; print(' '.join(name for name in packages if importlib.util.find_spec(name) is None))" )"; \
+	@missing="$$( $(PYTHON) -c "import importlib.util; packages={'pytest': 'pytest', 'ifcopenshell': 'ifcopenshell', 'yaml': 'pyyaml'}; print(' '.join(dist for name, dist in packages.items() if importlib.util.find_spec(name) is None))" )"; \
 	if [ -n "$$missing" ]; then $(PYTHON) -m pip install $$missing; else echo "Dependencies already available in active venv."; fi
 
 benchmark-setup:
@@ -87,10 +87,71 @@ viewer-package-static: viewer-build
 viewer-test:
 	cd viewer && bun test tests && bunx playwright test
 
+define PUBLISH_RELEASE_SCRIPT
+import json
+import subprocess
+import sys
+import tarfile
+import tempfile
+import zipfile
+from email.parser import BytesParser
+from pathlib import Path
+from urllib.parse import quote
+
+
+def gh_api(path, failure):
+    result = subprocess.run(["gh", "api", path], capture_output=True, text=True)
+    if result.returncode != 0:
+        sys.exit(f"{failure}: {result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
+run_id = sys.argv[1]
+run = gh_api(f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}", f"cannot read run {run_id}")
+if run["path"].split("@", 1)[0] != ".github/workflows/python-release.yml":
+    sys.exit("run is not the Python release workflow")
+if run["conclusion"] != "success":
+    sys.exit("release run did not succeed")
+tag = run["head_branch"]
+if not tag:
+    sys.exit("release run has no ref name")
+target = gh_api(
+    f"repos/{{owner}}/{{repo}}/git/ref/tags/{quote(tag, safe='')}",
+    f"release run ref {tag} is not a tag in this repository",
+)["object"]
+while target["type"] == "tag":
+    target = gh_api(f"repos/{{owner}}/{{repo}}/git/tags/{target['sha']}", f"cannot read tag object {target['sha']}")["object"]
+if target["type"] != "commit" or target["sha"] != run["head_sha"]:
+    sys.exit(f"tag {tag} does not point at the release run's commit {run['head_sha']}")
+with tempfile.TemporaryDirectory(prefix="athar-publish-") as directory:
+    root = Path(directory)
+    subprocess.run(["gh", "run", "download", run_id, "--pattern", "dist-*", "--dir", str(root / "dist")], check=True)
+    artifacts = sorted(p for p in (root / "dist").rglob("*") if p.is_file())
+    if not artifacts or not any(p.suffix == ".whl" for p in artifacts) or not any(p.name.endswith(".tar.gz") for p in artifacts):
+        sys.exit("release run must provide wheels and an sdist")
+    for artifact in artifacts:
+        if artifact.suffix == ".whl":
+            with zipfile.ZipFile(artifact) as archive:
+                names = [n for n in archive.namelist() if n.endswith(".dist-info/METADATA")]
+                if len(names) != 1:
+                    sys.exit(f"expected one wheel METADATA in {artifact.name}")
+                metadata = archive.read(names[0])
+        elif artifact.name.endswith(".tar.gz"):
+            with tarfile.open(artifact) as archive:
+                names = [m for m in archive.getmembers() if m.name.count("/") == 1 and m.name.endswith("/PKG-INFO") and m.isfile()]
+                if len(names) != 1:
+                    sys.exit(f"expected one sdist PKG-INFO in {artifact.name}")
+                metadata = archive.extractfile(names[0]).read()
+        else:
+            sys.exit(f"unexpected release artifact: {artifact.name}")
+        fields = BytesParser().parsebytes(metadata)
+        if fields["Name"] != "athar-ifc" or fields["Version"] != tag:
+            sys.exit(f"artifact {artifact.name}: {fields['Name']} {fields['Version']} does not equal tag {tag}")
+    subprocess.run(["uvx", "twine", "check", *map(str, artifacts)], check=True)
+    subprocess.run(["uvx", "twine", "upload", *map(str, artifacts)], check=True)
+endef
+
+publish: export ATHAR_PUBLISH_SCRIPT = $(PUBLISH_RELEASE_SCRIPT)
 publish:
 	@test -n "$(RUN)" || { echo "usage: make publish RUN=<python-release run id>"; exit 2; }
-	@test "$$(gh run view $(RUN) --json conclusion -q .conclusion)" = success || { echo "run $(RUN) did not succeed"; exit 1; }
-	rm -rf dist
-	gh run download $(RUN) --pattern 'dist-*' --dir dist
-	uvx twine check dist/*/*
-	uvx twine upload dist/*/*
+	@$(PYTHON) -c "$$ATHAR_PUBLISH_SCRIPT" "$(RUN)"

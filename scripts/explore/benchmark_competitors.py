@@ -1210,7 +1210,7 @@ def _run_counts(run: dict) -> dict | None:
 
 def _tool_inventory(*, include_ifcfast: bool, include_speckle: bool = True, include_ifcgit: bool = True) -> dict:
     tools = {
-        "athar": {"status": "subprocess", "version": athar_engine._package_version()},
+        "athar": {"status": "subprocess", "version": athar_engine.package_version()},
         "ifcopenshell": {"version": _package_version("ifcopenshell")},
         "ifcdiff": {
             "module": "ifcdiff",

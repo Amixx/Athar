@@ -49,10 +49,12 @@ IFC2X3↔IFC4 translation).
 ## Installation
 
 ```bash
-pipx install athar-ifc
+pip install athar-ifc     # into the active virtualenv
+pipx install athar-ifc    # or as a standalone command
 ```
 
-This installs the `athar` command. The PyPI distribution is `athar-ifc`; the
+Either installs the `athar` command (`athar --help` lists the subcommands,
+`athar --version` prints the installed version). The PyPI distribution is `athar-ifc`; the
 Python packages import as `athar`, `athar_git`, and so on. Wheels ship the Rust
 signature pipeline (`athar_native`) and the viewer bundle for Linux (x86_64,
 aarch64), macOS (arm64, x86_64), and Windows (x86_64); other platforms build
@@ -72,24 +74,27 @@ make test
 ## Usage
 
 ```bash
-# Two-file diff (JSON output)
-python -m athar old.ifc new.ifc
+# Two-file diff (JSON output); `athar diff old.ifc new.ifc` is the same
+athar old.ifc new.ifc
 
 # Include an audit generation timestamp for an archived report
-python -m athar old.ifc new.ifc --generated-at now
+athar old.ifc new.ifc --generated-at now
 
 # CI policy gate over a fresh diff; exits 2 on policy violations
-python -m athar check old.ifc new.ifc --policy athar-policy.json
+athar check old.ifc new.ifc --policy athar-policy.json
 
 # CI policy gate over an existing JSON report
-python -m athar check --report report.json --policy athar-policy.json
+athar check --report report.json --policy athar-policy.json
 
 # Stream output as NDJSON records (header, one record per entity, end with stats)
-python -m athar old.ifc new.ifc --stream ndjson
+athar old.ifc new.ifc --stream ndjson
 
 # Stream output as chunked JSON
-python -m athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
+athar old.ifc new.ifc --stream chunked_json --chunk-size 1000
 ```
+
+`athar COMMAND --help` documents each subcommand (`diff`, `check`, `git`,
+`view`, `store`, `rekey`).
 
 ### Experimental STEP ID Restoration
 
@@ -224,15 +229,22 @@ signature bundles on disk by Git blob id (falling back to a content hash for
 working-tree files).
 
 ```bash
-# Configure the current repository and add .gitattributes guidance
+# Configure the current repository and add the .gitattributes rule
 athar git install
 
 # Manual terminal rendering without Git plumbing
 athar git diff old.ifc new.ifc
 ```
 
-`athar git install` sets `diff.athar.command` to
-`athar git diff --external` and appends:
+`athar git install` sets `diff.athar.command` to an absolute command for the
+installation that ran it: the `athar` console script that installation recorded,
+or that interpreter running a bootstrap that drops the current directory from
+`sys.path` when the record lists no script on disk. Git runs the
+driver from the repository's top level, so the command never imports modules
+from the repository being diffed, and it works without activating the
+virtualenv or having `athar` on `PATH`; run it again after moving or
+recreating that environment. It must run inside a repository and appends this
+rule to the `.gitattributes` at the repository's top level:
 
 ```gitattributes
 *.ifc diff=athar -merge
@@ -243,9 +255,13 @@ merge can silently splice two exported models into a corrupt file with
 duplicate or dangling STEP ids. Athar provides semantic diffing; it does not
 attempt semantic merge.
 
-The persistent signature cache is versioned and deterministic, but v1 does not
-evict old entries. Set `ATHAR_CACHE_DIR` to isolate or periodically clear a
-large repository's cache.
+The persistent signature cache is versioned (by the installed `athar-ifc`
+version) and deterministic, but v1 does not evict old entries. Set
+`ATHAR_CACHE_DIR` to isolate or periodically clear a large repository's cache.
+Cache entries are Python pickles, so the cache directory is trusted local
+state: Athar creates it with mode 0700, refuses one that another user owns or
+that group or others can write, and it must never be shared with or restored
+from a source you do not control.
 
 ### GitHub PR Comments
 
@@ -265,8 +281,71 @@ athar git pr-comment \
 Use `--dry-run` to print the Markdown comment body without calling GitHub.
 When `--policy-result athar-check.json` is supplied, the comment includes a
 pass/fail summary from an `athar check` result, but policy enforcement remains
-separate. The checked-in `.github/workflows/athar-pr-diff.yml` workflow shows
-the default pull-request setup using `GITHUB_TOKEN`.
+separate.
+
+To run it in another repository, add `.github/workflows/athar-ifc-diff.yml`.
+It installs the published wheel, comments on pull requests from the same
+repository, and writes the comment to the job summary for fork and Dependabot
+pull requests, whose token cannot comment:
+
+```yaml
+name: Athar IFC PR Diff
+
+on:
+  pull_request:
+    paths: ["**.ifc", "**.IFC"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: athar-ifc-diff-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  athar-ifc-diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - run: python -I -m pip install athar-ifc
+
+      - name: Post IFC diff comment
+        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          athar git pr-comment
+          --base "$BASE_SHA" --head "$HEAD_SHA" --repo "$REPOSITORY" --pr "$PR_NUMBER"
+
+      - name: Write IFC diff to the job summary
+        if: github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]'
+        run: >-
+          athar git pr-comment --dry-run
+          --base "$BASE_SHA" --head "$HEAD_SHA" --repo "$REPOSITORY" --pr "$PR_NUMBER"
+          >> "$GITHUB_STEP_SUMMARY"
+```
+
+`python -I` keeps the checked-out pull request's files off `sys.path`, so a
+`pip/` directory in the pull request cannot replace pip; the `athar` console
+script never imports from the current directory.
+
+This repository's own `.github/workflows/athar-pr-diff.yml` runs the same
+steps against an editable install of the checkout, with pip and cargo caches.
 
 ### Visual 3D Diff Viewer
 
@@ -283,9 +362,16 @@ athar git install --difftool                      # then: git difftool -t athar 
 ```
 
 The browser does all tessellation (`@ifc-lite/geometry` WASM); rendering is
-three.js. `--viewer-url` (or `ATHAR_VIEWER_URL`) hands off to a hosted viewer
-Perfetto-style: the page fetches the models back from the local server via
-`?src=`, so nothing is uploaded. Offline mode serves a local build from
+three.js. The local server listens on 127.0.0.1 only, answers only requests
+addressed to its own origin, and serves the models and report under a secret
+per-launch path that is part of the printed URL. Cross-origin viewer development
+requires explicit `--dev-origin URL`, which authorizes exactly that origin; no
+private-network permission is granted. For example, use
+`--viewer-url http://localhost:5173/ --dev-origin http://localhost:5173` with
+Vite. `--viewer-url` (or `ATHAR_VIEWER_URL`) selects the viewer but cannot grant
+access by itself: `athar view` refuses to start unless `--dev-origin` equals
+that viewer's origin, or `--offline` is given. The viewer fetches models from localhost via `?src=`; nothing
+is uploaded. Offline mode serves a local build from
 `ATHAR_VIEWER_DIST`, a release-packaged `athar_view/static`, or a freshly built
 `viewer/dist`. The same SPA also accepts plain drag-drop of `old.ifc`,
 `new.ifc`, and a report JSON — no launcher needed.
@@ -294,6 +380,16 @@ Viewer development requires [bun](https://bun.sh) and lives entirely under
 `viewer/` (see [viewer/README.md](viewer/README.md)). Build the local bundle
 with `make viewer-build`; `make viewer-package-static` copies it into
 `athar_view/static`, which the release workflow does before building wheels.
+
+## Publishing
+
+Dispatch `.github/workflows/python-release.yml` on a release tag matching the
+package version (for example `0.1.1`), then run `make publish RUN=<id>`.
+Publishing requires a successful release-workflow run whose ref is a tag of
+this repository that, read through the GitHub API (annotated tags
+dereferenced), points at the run's commit, and wheels and an sdist whose
+package metadata all identify `athar-ifc` at the tag's version. Artifacts are
+validated in a temporary directory before Twine uploads them to PyPI.
 
 ## Testing
 

@@ -20,7 +20,6 @@ import pytest
 
 from tests.corpus import REPO_ROOT, corpus_path
 
-DRIVER_COMMAND = f'"{sys.executable}" -m athar git diff --external'
 REVIT_EXPORTS = REPO_ROOT / "corpus" / "roundtrip-revit-2026-07-06" / "exports"
 
 
@@ -76,7 +75,6 @@ def test_real_ifc_history_diffs_semantically_through_git(tmp_path, git_env):
     )
     assert "Configured Git diff driver" in install.stdout
     assert "*.ifc diff=athar -merge" in (repo / ".gitattributes").read_text()
-    _run(["git", "config", "diff.athar.command", DRIVER_COMMAND], cwd=repo, env=git_env)
 
     _commit_version(repo, git_env, v0, "v0: original landscaping model")
     _commit_version(repo, git_env, v1, "v1: first revision")
@@ -127,7 +125,6 @@ def test_revit_roundtrip_chain_diffs_semantically_through_git(tmp_path, git_env)
     repo.mkdir()
     _run(["git", "init", "-q"], cwd=repo, env=git_env)
     _run([sys.executable, "-m", "athar", "git", "install", "--local"], cwd=repo, env=git_env)
-    _run(["git", "config", "diff.athar.command", DRIVER_COMMAND], cwd=repo, env=git_env)
 
     _commit_version(repo, git_env, r7, "r7: door frame-type property edit")
     _commit_version(repo, git_env, r8, "r8: duplicated that door twice")
@@ -156,8 +153,7 @@ def test_lfs_tracked_ifc_diffs_semantically_through_git(tmp_path, git_env):
     _run(["git", "init", "-q"], cwd=repo, env=git_env)
     _run(["git", "lfs", "install", "--local"], cwd=repo, env=git_env)
     (repo / ".gitattributes").write_text("*.ifc filter=lfs diff=athar -merge\n", encoding="utf-8")
-    _run(["git", "config", "diff.athar.command", DRIVER_COMMAND], cwd=repo, env=git_env)
-    _run(["git", "config", "diff.athar.binary", "true"], cwd=repo, env=git_env)
+    _run([sys.executable, "-m", "athar", "git", "install", "--local", "--no-attributes"], cwd=repo, env=git_env)
 
     _commit_version(repo, git_env, v0, "v0: original landscaping model")
     _commit_version(repo, git_env, v1, "v1: first revision")

@@ -6,6 +6,7 @@ import hashlib
 import os
 import pickle
 import re
+import stat
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ from typing import Any
 from athar.bottom.constants import CANON_VERSION
 from athar.bottom.signatures import build_signature_bundle
 from athar.bottom.types import SignatureBundle
-from athar_git import __version__ as ATHAR_GIT_VERSION
+from athar.engine import package_version
 
 CACHE_FORMAT_VERSION = 2
 
@@ -60,6 +61,8 @@ def load_or_build_bundle(
         cache_key = _cache_key(source_path, key)
     directory = Path(cache_dir) if cache_dir is not None else default_cache_dir()
     entry_path = _entry_path(directory, cache_key)
+    _require_private_dir(directory)
+    _require_private_dir(entry_path.parent)
 
     cached = _read_entry(entry_path)
     if cached is not None:
@@ -138,6 +141,24 @@ def _entry_path(cache_dir: Path, key: str) -> Path:
     return cache_dir / CANON_VERSION / f"{key}.pickle"
 
 
+def _require_private_dir(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.name != "posix":
+        return
+    info = path.stat()
+    reason = None
+    if info.st_uid != os.getuid():
+        reason = f"it is owned by uid {info.st_uid}, not the current user (uid {os.getuid()})"
+    elif info.st_mode & 0o022:
+        reason = f"it is writable by group or others (mode {stat.S_IMODE(info.st_mode):03o}; chmod 700 fixes that)"
+    if reason is not None:
+        raise PermissionError(
+            f"Refusing signature cache directory {path}: {reason}. Cache entries are pickles and "
+            "loading one runs code, so the directory must be private to you "
+            "(set ATHAR_CACHE_DIR or --cache-dir to another directory)."
+        )
+
+
 def _read_entry(path: Path) -> SignatureBundle | None:
     try:
         with path.open("rb") as handle:
@@ -150,7 +171,7 @@ def _read_entry(path: Path) -> SignatureBundle | None:
         return None
     if payload.get("canon_version") != CANON_VERSION:
         return None
-    if payload.get("producer_version") != ATHAR_GIT_VERSION:
+    if payload.get("producer_version") != package_version():
         return None
     bundle = payload.get("bundle")
     if not isinstance(bundle, SignatureBundle):
@@ -161,11 +182,10 @@ def _read_entry(path: Path) -> SignatureBundle | None:
 
 
 def _write_entry(path: Path, bundle: SignatureBundle, key: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "format_version": CACHE_FORMAT_VERSION,
         "canon_version": CANON_VERSION,
-        "producer_version": ATHAR_GIT_VERSION,
+        "producer_version": package_version(),
         "key": key,
         "schema": bundle.schema,
         "bundle": bundle,
