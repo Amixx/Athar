@@ -235,9 +235,11 @@ type value changing under an occurrence override. A duplicated key's effective
 value is the sorted list of its distinct values, and a duplicated key that
 gains or loses a copy fails closed. Added values alone are checked only by
 `forbid_property_addition` (the same shape). Property
-rules require `property_deltas` on data-changed entities: the engine can omit
-it both when comparison is unavailable and when no property changed, so these
-ambiguous reports produce exit `1`. No engine changes are implied by this gate.
+rules read `property_deltas` on data-changed entities: the report carries it
+(`{}` when only non-property attributes changed) whenever properties were
+compared, and omits it only when the comparison was unavailable, which produces
+exit `1`. An entity outside the class scope of every property rule is not
+required to carry it.
 
 `max_placement_cohort_share` is a fraction from 0 to 1. A cohort exceeds the
 budget when its member count divided by all matched products (modified plus

@@ -71,12 +71,10 @@ def build_delta_report(
         if aspects["data"] == "changed":
             item["data_delta"] = _data_delta(old_sig, new_sig)
             if old_props is not None and new_props is not None:
-                deltas = _property_deltas(
+                item["property_deltas"] = _property_deltas(
                     old_props.get(pair.old_step, []),
                     new_props.get(pair.new_step, []),
                 )
-                if deltas:
-                    item["property_deltas"] = deltas
         if any(value == "changed" for key, value in aspects.items() if key != "placement_delta_mm"):
             modified.append(item)
         else:
@@ -477,8 +475,10 @@ def _scope_stats(modified: list[dict]) -> dict[str, int]:
 def _property_deltas(
     old_entries: list[PropertyEntry],
     new_entries: list[PropertyEntry],
-) -> dict | None:
+) -> dict:
     """Compare old and new properties per (pset name, property name).
+
+    Only the kinds with entries appear; ``{}`` means the properties are equal.
 
     A key may have several definitions: on the occurrence and on its type,
     or in two sets of one name. The effective value is the occurrence's when
@@ -588,9 +588,6 @@ def _property_deltas(
             new_count = sum(1 for e in new_definitions if e.inherited == inherited)
             if old_count != new_count:
                 result["count_changed"].append(entry(key, inherited, old_count=old_count, new_count=new_count))
-
-    if not result:
-        return None
 
     def order(item: dict) -> tuple[str, str, bool]:
         return (item["name"], item["pset"], item["inherited"])

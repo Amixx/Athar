@@ -451,14 +451,14 @@ def test_property_deltas_detects_added_and_removed():
     ]
 
 
-def test_property_deltas_returns_none_when_no_difference():
+def test_property_deltas_is_empty_when_no_difference():
     old_props = [PropertyEntry(pset="P", inherited=False, name="FireRating", value="F90")]
     new_props = [PropertyEntry(pset="P", inherited=False, name="FireRating", value="F90")]
-    assert _property_deltas(old_props, new_props) is None
+    assert _property_deltas(old_props, new_props) == {}
 
 
-def test_property_deltas_returns_none_when_both_empty():
-    assert _property_deltas([], []) is None
+def test_property_deltas_is_empty_when_both_empty():
+    assert _property_deltas([], []) == {}
 
 
 def test_property_deltas_keys_same_name_by_pset():
@@ -543,6 +543,38 @@ def test_build_delta_report_emits_property_deltas_when_data_changed():
     assert item["property_deltas"]["changed"] == [
         {"pset": "P", "inherited": False, "name": "FireRating", "old_value": "F90", "new_value": "F60"},
     ]
+
+
+def test_build_delta_report_emits_empty_property_deltas_when_data_changed_without_property_change():
+    props = [PropertyEntry(pset="P", inherited=False, name="FireRating", value="F90")]
+    old_bundle = _bundle(
+        schema="IFC4", signatures={1: _signature(1, guid="A", vh_data="h-old")}, property_index={1: props}
+    )
+    new_bundle = _bundle(
+        schema="IFC4", signatures={10: _signature(10, guid="A", vh_data="h-new")}, property_index={10: props}
+    )
+    report = build_delta_report(
+        old_bundle,
+        new_bundle,
+        matches=[MatchedPair(old_step=1, new_step=10, score=0.9, reason="guid")],
+        unmatched_old=[],
+        unmatched_new=[],
+    )
+    assert report["modified"][0]["property_deltas"] == {}
+
+
+def test_build_delta_report_omits_property_deltas_when_property_comparison_is_unavailable():
+    old_bundle = _bundle(schema="IFC4", signatures={1: _signature(1, guid="A", vh_data="h-old")})
+    new_bundle = _bundle(schema="IFC4", signatures={10: _signature(10, guid="A", vh_data="h-new")})
+    report = build_delta_report(
+        old_bundle,
+        new_bundle,
+        matches=[MatchedPair(old_step=1, new_step=10, score=0.9, reason="guid")],
+        unmatched_old=[],
+        unmatched_new=[],
+    )
+    assert report["modified"][0]["aspects"]["data"] == "changed"
+    assert "property_deltas" not in report["modified"][0]
 
 
 def test_build_delta_report_omits_property_deltas_when_not_data_changed():
