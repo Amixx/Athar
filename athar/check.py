@@ -269,7 +269,7 @@ def _validate_report(report: Any, policy: dict[str, Any]) -> None:
             if delta is not None and not _is_vector(delta):
                 raise ValueError(f"Report '{where}.aspects.placement_delta_mm' must be null or three finite numbers")
             if section == "modified":
-                _validate_rule_detail(item, where, policy)
+                _validate_rule_detail(item, where, report, policy)
     if "max_placement_cohort_share" in policy:
         _validate_cohorts(report)
 
@@ -313,11 +313,18 @@ def _validate_entity(entity: Any, where: str) -> None:
         raise ValueError(f"Report '{where}.class' must be a string")
 
 
-def _validate_rule_detail(item: dict[str, Any], where: str, policy: dict[str, Any]) -> None:
+def _validate_rule_detail(item: dict[str, Any], where: str, report: dict[str, Any], policy: dict[str, Any]) -> None:
     if "max_modified_change_scope" in policy and item.get("change_scope") not in CHANGE_SCOPES:
         raise ValueError(f"Policy rule max_modified_change_scope needs '{where}.change_scope', which the report lacks")
-    property_rules = [key for key in _PROPERTY_RULES if key in policy]
-    if not property_rules or item["aspects"]["data"] != "changed":
+    if item["aspects"]["data"] != "changed":
+        return
+    property_rules = [
+        rule
+        for rule in _PROPERTY_RULES
+        if rule in policy
+        and any(_class_matches(classes, report, item) for classes in _property_rule_scopes(rule, policy[rule]))
+    ]
+    if not property_rules:
         return
     rule = property_rules[0]
     if not isinstance(item.get("data_delta"), list):
@@ -347,6 +354,12 @@ def _validate_rule_detail(item: dict[str, Any], where: str, policy: dict[str, An
 
 
 _PROPERTY_RULES = ("forbid_property_removal", "forbid_property_value_change", "forbid_property_addition")
+
+
+def _property_rule_scopes(rule: str, spec: Any) -> list[Any]:
+    return [spec] if rule == "forbid_property_removal" else list(spec.values())
+
+
 _PROPERTY_DELTA_VALUES = {
     "changed": ("old_value", "new_value"),
     "added": ("new_value",),

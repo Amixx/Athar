@@ -31,8 +31,10 @@ GitHub comments, and other presentation concerns.
   `placement`, `relations` and `class`. Property-level gates
   (`forbid_property_removal`,
   `forbid_property_value_change`, `forbid_property_addition`) require the
-  report's `property_deltas` on data-changed entities. Absence is ambiguous
-  (comparison unavailable or no property changes) and raises an error.
+  report's `property_deltas` on every data-changed entity inside the class
+  scope of at least one of those rules. A missing `property_deltas` there
+  means the comparison was unavailable and raises an error; entities outside
+  every property rule's scope are not checked for it.
   Each `property_deltas` entry carries `pset`, `name` and `inherited` (the
   origin of the effective value).
   `forbid_property_value_change` keys are property names and match that name
@@ -231,7 +233,13 @@ corpus evidence and tests.
   one content are reported from the end of the file. `stats.orphan_property_sets`
   carries `{old, new, added, removed}` counts; streams emit
   `orphan_property_set_added` / `_removed` records.
-- `property_deltas` compares properties per (pset name, property name). A key
+- `property_deltas` is on every data-changed matched entity whenever property
+  extraction ran for both files; `{}` means the data changed through
+  attributes other than properties (an address, a map conversion) and the
+  properties are equal. Only kinds with entries appear. The field is absent
+  only when a side has no property index, which means the comparison is
+  unavailable, never "no change".
+  It compares properties per (pset name, property name). A key
   can have several definitions: on the occurrence and on its type, or in two
   sets of one name. All are kept (`PropertyEntry` carries `inherited` and the
   set's `pset_guid`). The effective value is the occurrence's when it defines
