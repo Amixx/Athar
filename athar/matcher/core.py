@@ -16,7 +16,8 @@ Tiers, strongest evidence first:
                         tier. A GlobalId reused across classes falls through
                         too instead of poisoning both entities.
 2. ``geometry_hash``    same canonical class + full signature-vector equality
-                        (geometry/data/topology hashes + quantized placement),
+                        (geometry/data/topology hashes + quantized placement
+                        or, for an unresolved chain, its placement digest),
                         zipped 1:1 in step order per bucket. Equal placement
                         implies co-location, so bucket members are
                         semantically interchangeable. Score 0.8.
@@ -105,7 +106,14 @@ def _bucket(pool: set[int], signatures: dict[int, SignatureVector], key) -> dict
 def _vector_key(sig: SignatureVector) -> tuple | None:
     if not (sig.vh_geometry and sig.vh_data and sig.vh_topology):
         return None
-    return (sig.canonical_class, sig.vh_geometry, sig.vh_data, sig.vh_topology, sig.placement)
+    return (
+        sig.canonical_class,
+        sig.vh_geometry,
+        sig.vh_data,
+        sig.vh_topology,
+        sig.placement,
+        sig.placement_unresolved,
+    )
 
 
 def _same_vector(a: SignatureVector, b: SignatureVector) -> bool:
@@ -114,4 +122,5 @@ def _same_vector(a: SignatureVector, b: SignatureVector) -> bool:
         and a.vh_data == b.vh_data
         and a.vh_topology == b.vh_topology
         and a.placement == b.placement
+        and a.placement_unresolved == b.placement_unresolved
     )

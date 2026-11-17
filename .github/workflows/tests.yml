@@ -74,5 +74,8 @@ jobs:
           .venv/bin/python -m pip install pytest pyyaml
           make native-build
 
+      - name: Native unit tests
+        run: make native-test
+
       - name: Default suite
         run: .venv/bin/python -m pytest tests/ -q

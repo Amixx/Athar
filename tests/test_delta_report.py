@@ -1,4 +1,4 @@
-from athar.bottom.types import ParseDiagnostics, PropertyEntry, SignatureBundle, SignatureVector
+from athar.bottom.types import Coverage, ParseDiagnostics, PropertyEntry, SignatureBundle, SignatureVector
 from athar.delta.report import _property_deltas, build_delta_report
 from athar.matcher.types import MatchedPair
 
@@ -51,6 +51,7 @@ def _bundle(
             warnings=list(warnings or []),
         ),
         edge_stats={"semantic": 3},
+        coverage=Coverage(),
         property_index=property_index,
     )
 

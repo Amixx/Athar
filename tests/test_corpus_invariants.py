@@ -248,12 +248,19 @@ def test_dangling_ref_corruption_diffs_cleanly_instead_of_crashing(dangling_ref_
     report = diff_files(corpus_path("bl_v2"), dangling_ref_variant)
     assert_report_invariants(report)
     stats = report["stats"]
-    # The corruption empties one aggregation; entities must stay matched and
-    # the difference must surface as transitive topology change only.
+    # The corruption empties the project-to-site aggregation: both ends stay
+    # matched and lose a neighbour, and the site also loses the content the
+    # relationship carried (its Name).
     assert stats["added"] == 0
     assert stats["deleted"] == 0
-    assert stats["modified_change_scope"]["intrinsic"] == 0
-    assert stats["modified_change_scope"]["mixed"] == 0
+    changed = {
+        item["new"]["class"]: {a for a in ("geometry", "data", "topology", "placement") if item["aspects"][a] == "changed"}
+        for item in report["modified"]
+    }
+    assert changed == {"IfcProject": {"topology"}, "IfcSite": {"data", "topology"}}
+    site = next(item for item in report["modified"] if item["new"]["class"] == "IfcSite")
+    assert [delta["path"].split(".")[-1] for delta in site["data_delta"]] == ["Name"]
+    assert site["data_delta"][0]["path"].startswith("IfcRelAggregates[")
 
 
 def test_id_above_ifcopenshell_range_fails_with_a_named_cause(tmp_path):

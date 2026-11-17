@@ -1,4 +1,9 @@
+from dataclasses import replace
+
+import ifcopenshell
+
 from athar.bottom.types import SignatureVector
+from athar.engine import diff_files
 from athar.matcher.core import match_signatures
 
 
@@ -278,3 +283,84 @@ def test_diagnostics_account_for_every_entity():
     assert diag["pools"] == {"old": 3, "new": 2}
     assert len(matches) + len(unmatched_old) == diag["pools"]["old"]
     assert len(matches) + len(unmatched_new) == diag["pools"]["new"]
+
+
+# --- unresolved (grid) placements ---
+
+
+def test_unique_guid_with_a_different_unresolved_placement_is_not_a_full_vector_match():
+    old = {1: replace(_sig(1, guid="A"), placement_unresolved="at-a1")}
+    new = {10: replace(_sig(10, guid="A"), placement_unresolved="at-b1")}
+
+    matches, _, _, _ = match_signatures(old, new)
+
+    assert _by_pair(matches)[(1, 10)].score == 0.9
+
+
+def _grid_model(path, intersections: list[tuple[str, str]], guid_prefix: str) -> None:
+    """One identical proxy per `(u axis, v axis)` grid intersection, in list order."""
+    f = ifcopenshell.file(schema="IFC4")
+    c = f.create_entity
+    origin = c("IfcAxis2Placement3D", c("IfcCartesianPoint", (0.0, 0.0, 0.0)), None, None)
+    context = c("IfcGeometricRepresentationContext", None, "Model", 3, 1e-5, origin, None)
+    units = c("IfcUnitAssignment", [c("IfcSIUnit", None, "LENGTHUNIT", None, "METRE")])
+    c("IfcProject", "project".ljust(22, "0"), None, "P", None, None, None, None, [context], units)
+
+    def axis(tag, start, direction):
+        line = c("IfcLine", c("IfcCartesianPoint", start), c("IfcVector", c("IfcDirection", direction), 10.0))
+        return c("IfcGridAxis", tag, line, True)
+
+    axes = {
+        "A": axis("A", (0.0, 0.0), (0.0, 1.0)),
+        "B": axis("B", (5.0, 0.0), (0.0, 1.0)),
+        "C": axis("C", (9.0, 0.0), (0.0, 1.0)),
+        "1": axis("1", (0.0, 0.0), (1.0, 0.0)),
+    }
+    c(
+        "IfcGrid",
+        GlobalId="grid".ljust(22, "0"),
+        Name="G",
+        ObjectPlacement=c("IfcLocalPlacement", None, origin),
+        UAxes=[axes["A"], axes["B"], axes["C"]],
+        VAxes=[axes["1"]],
+    )
+    for number, (u, v) in enumerate(intersections):
+        on_grid = c("IfcGridPlacement", c("IfcVirtualGridIntersection", [axes[u], axes[v]], (0.0, 0.0, 0.0)), None)
+        c("IfcBuildingElementProxy", GlobalId=f"{guid_prefix}{number}".ljust(22, "0"), Name="Bollard", ObjectPlacement=on_grid)
+    f.write(str(path))
+
+
+def _intersection_of_proxy(path) -> dict[int, str]:
+    return {
+        proxy.id(): proxy.ObjectPlacement.PlacementLocation.IntersectingAxes[0].AxisTag
+        for proxy in ifcopenshell.open(str(path)).by_type("IfcBuildingElementProxy")
+    }
+
+
+def test_identical_grid_placed_twins_pair_by_intersection_not_by_step_order(tmp_path):
+    old, new = tmp_path / "old.ifc", tmp_path / "new.ifc"
+    _grid_model(old, [("A", "1"), ("B", "1")], "old")
+    _grid_model(new, [("B", "1"), ("A", "1")], "new")
+
+    report = diff_files(str(old), str(new))
+
+    assert report["added"] == [] and report["deleted"] == [] and report["modified"] == []
+    old_at, new_at = _intersection_of_proxy(old), _intersection_of_proxy(new)
+    pairs = [item for item in report["unchanged"] if item["new"]["class"] == "IfcBuildingElementProxy"]
+    assert len(pairs) == 2
+    for item in pairs:
+        assert item["match"]["reason"] == "geometry_hash"
+        assert old_at[item["old"]["step_id"]] == new_at[item["new"]["step_id"]]
+
+
+def test_grid_placed_twin_moved_to_another_intersection_is_added_and_deleted(tmp_path):
+    old, new = tmp_path / "old.ifc", tmp_path / "new.ifc"
+    _grid_model(old, [("A", "1"), ("B", "1")], "old")
+    _grid_model(new, [("A", "1"), ("C", "1")], "new")
+
+    report = diff_files(str(old), str(new))
+
+    old_at, new_at = _intersection_of_proxy(old), _intersection_of_proxy(new)
+    assert report["modified"] == []
+    assert [old_at[item["step_id"]] for item in report["deleted"]] == ["B"]
+    assert [new_at[item["step_id"]] for item in report["added"]] == ["C"]

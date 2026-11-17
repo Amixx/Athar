@@ -27,17 +27,18 @@ def test_engine_diff_detects_changes_between_versions():
     # Pins observed behavior on the frozen Building-Landscaping v1/v2 exports:
     # one proxy element was deleted; with radius-1 class-only WL gossip the
     # deletion ripples only to its direct spatial container, which reports as
-    # the single transitive modification. Everything else stays unchanged.
+    # the single transitive modification. Everything else, the project
+    # included, stays unchanged.
     report = diff_files(OLD_IFC, NEW_IFC)
     assert report["engine"] == "athar"
     assert report["schemas"] == {"old": "IFC4", "new": "IFC4"}
-    assert report["stats"]["old_signatures"] == 8
-    assert report["stats"]["new_signatures"] == 7
+    assert report["stats"]["old_signatures"] == 9
+    assert report["stats"]["new_signatures"] == 8
     assert report["stats"]["added"] == 0
     assert report["stats"]["deleted"] == 1
     assert report["stats"]["modified"] == 1
-    assert report["stats"]["unchanged"] == 6
-    assert report["stats"]["matcher_diagnostics"]["matched_by_tier"] == {"guid": 7, "geometry_hash": 0}
+    assert report["stats"]["unchanged"] == 7
+    assert report["stats"]["matcher_diagnostics"]["matched_by_tier"] == {"guid": 8, "geometry_hash": 0}
     assert report["stats"]["modified_change_scope"] == {"intrinsic": 0, "transitive": 1, "mixed": 0}
 
 
@@ -67,15 +68,16 @@ def test_schema_mismatch_error_is_typed_and_structured():
     assert "IFC2X3" in str(err) and "IFC4" in str(err)
 
 
-def test_engine_model_without_products_yields_empty_report(tmp_path):
+def test_engine_model_without_products_reports_only_its_project(tmp_path):
     copy = tmp_path / "empty-copy.ifc"
     shutil.copyfile(EMPTY_MODEL, copy)
     report = diff_files(EMPTY_MODEL, str(copy))
-    for section in SECTIONS:
+    for section in ("added", "deleted", "modified"):
         assert report["stats"][section] == 0
         assert report[section] == []
-    assert report["stats"]["old_signatures"] == 0
-    assert report["stats"]["matcher_diagnostics"]["matched_by_tier"]["guid"] == 0
+    assert [item["new"]["class"] for item in report["unchanged"]] == ["IfcProject"]
+    assert report["stats"]["old_signatures"] == 1
+    assert report["stats"]["matcher_diagnostics"]["matched_by_tier"]["guid"] == 1
 
 
 def test_engine_output_is_byte_identical_across_runs():

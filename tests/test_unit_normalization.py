@@ -112,7 +112,7 @@ def _build(path: str, scale: float, prefix: str | None) -> None:
     f.write(path)
 
 
-def test_metre_and_millimetre_models_are_semantically_identical(tmp_path):
+def test_metre_and_millimetre_models_differ_only_in_the_project_units(tmp_path):
     metre = str(tmp_path / "cube_m.ifc")
     millimetre = str(tmp_path / "cube_mm.ifc")
     _build(metre, scale=1.0, prefix=None)
@@ -120,13 +120,18 @@ def test_metre_and_millimetre_models_are_semantically_identical(tmp_path):
 
     report = diff_files(metre, millimetre)
     assert_report_invariants(report)
-    # A perfect unit conversion changed nothing semantically.
-    assert_zero_diff(report)
-    assert report["stats"]["old_signatures"] == 1
+    # The unit assignment itself is project content; nothing else changed.
+    assert report["stats"]["added"] == 0
+    assert report["stats"]["deleted"] == 0
+    assert [(item["new"]["class"], item["change_scope"]) for item in report["modified"]] == [
+        ("IfcProject", "intrinsic")
+    ]
+    assert report["modified"][0]["aspects"]["data"] == "changed"
+    assert report["stats"]["old_signatures"] == 2
 
-    # And the one product is matched by GlobalId with every aspect unchanged —
-    # geometry and data length values both normalized across the unit switch.
-    item = report["unchanged"][0]
+    # The one product is matched by GlobalId with every aspect unchanged:
+    # geometry and data length values both normalize across the unit switch.
+    (item,) = report["unchanged"]
     assert item["match"]["reason"] == "guid"
     assert item["old"]["guid"] == _GUID
     for aspect in ("geometry", "data", "topology", "placement"):
