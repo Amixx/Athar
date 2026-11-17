@@ -88,13 +88,14 @@ and `athar_native.reference_policy()`:
   placement plane (of a 2D placement too) equals its projection. The axis
   references produce no edge. A frame the rules leave undefined (axes parallel
   within `1e-12` after normalization, an axis reference that is not a
-  direction) keeps the attribute-wise encoding. `IfcFirstProjAxis` takes
-  `(0,1,0)` as the default X for a Z axis within `1e-9` of either X direction;
-  for -X the schema's own default `(1,0,0)` is parallel to Z. An `Axis`
+  direction) keeps the attribute-wise encoding. Without a
+  `RefDirection`, native takes `(0,1,0)` as the default X when `|Z.x| > 1 -
+  1e-9`; the schema's `IfcFirstProjAxis` does so only for exactly +X, and for
+  -X its default `(1,0,0)` is parallel to Z. An `Axis`
   without `RefDirection` (or the reverse) is invalid in every schema (IFC2X3
   WR5, IFC4 `AxisAndRefDirProvision`) and is still hashed through
   `IfcBuildAxes`.
-- Spatial coordinates are converted to metres without quantization before placement-chain composition. World and local matrices are quantized at `PLACEMENT_SCALE = 1e6` (one micrometre for translations, `1e-6` for rotation entries). IfcOpenShell's `get_local_placement` returns file units; crosschecks scale its translation to metres and allow one quantum plus `1e-9` relative. IfcOpenShell's helper retains a non-perpendicular RefDirection; the engine uses the IFC-derived projection. IfcOpenShell's geometry kernel (`create_shape` on a placement with `convert-back-units`, then scaled the same way) projects like the engine; its divergences on invalid or degenerate frames (its own fallback X for an `Axis` without `RefDirection`, a kept Z axis for an undefined frame) are listed in `tests/test_ifcopenshell_crosscheck.py`.
+- Spatial coordinates are converted to metres without quantization before placement-chain composition. World and local matrices are quantized at `PLACEMENT_SCALE = 1e6` (one micrometre for translations, `1e-6` for rotation entries). IfcOpenShell's `get_local_placement` returns file units; crosschecks scale its translation to metres and allow one quantum plus `1e-9` relative. IfcOpenShell's helper retains a non-perpendicular RefDirection; the engine uses the IFC-derived projection. IfcOpenShell's geometry kernel (`create_shape` on a placement with `convert-back-units`, then scaled the same way) projects like the engine; its divergences on invalid or degenerate frames (a +Z fallback X for an `Axis` along X without `RefDirection`, defects in 0.9.0.post1 for such an `Axis` along -X or with an X ratio of 1, a kept Z axis for an undefined frame) are listed in `tests/test_ifcopenshell_crosscheck.py`.
 - `spatial.rs` builds placement matrices from the same axes (`placement_axes`
   in `canon.rs`). A relative placement whose frame is undefined, including an
   axis attribute set to a zero, malformed or missing direction, has a zero
