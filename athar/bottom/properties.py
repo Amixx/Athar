@@ -1,9 +1,11 @@
 """Property and quantity value extraction from an IFC file.
 
 Captures property values for human-readable delta reports through
-ifcopenshell, without quantization. A measure with a unit type is converted
-from the file's unit, or the unit the property names, to SI, which the entry
-names; the entry keeps the value as written beside it.
+ifcopenshell. A measure with a unit type is converted from the file's unit,
+or the unit the property names, to SI, which the entry names; a converted
+value is rounded to the resolution the native signatures quantize at, so the
+report and the hashes agree on what is a change. The entry keeps the value as
+written beside it.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ _SI_SYMBOLS = {
     "TIMEUNIT": "s",
     "MASSUNIT": "kg",
 }
+# Steps per SI unit of the native quantization of a unit-bearing real (`Measure::scale` in canon.rs).
+_NATIVE_RESOLUTION = 1_000_000.0
 _QUANTITIES = {
     "IfcQuantityLength": ("LengthValue", "IfcLengthMeasure"),
     "IfcQuantityArea": ("AreaValue", "IfcAreaMeasure"),
@@ -71,7 +75,9 @@ def _si_value(value, measure: str | None, own_unit, units: _Units):
     factor = units.factors.get(unit_type) if own_unit is None else unit_factor(own_unit)
     if factor is None:
         return value, None
-    return float(f"{value * factor:.12g}"), _SI_SYMBOLS.get(unit_type, unit_type)
+    if factor != 1:
+        value = round(value * factor * _NATIVE_RESOLUTION) / _NATIVE_RESOLUTION
+    return value, _SI_SYMBOLS.get(unit_type, unit_type)
 
 
 def _entry(pset: str, name: str, written, measure, own_unit, units: _Units, inherited: bool, pset_guid) -> PropertyEntry:
