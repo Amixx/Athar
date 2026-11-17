@@ -275,3 +275,37 @@ def test_a_measure_with_unit_takes_its_value_in_its_own_unit(tmp_path):
     _with_measures(path, [_mass_unit(True), _year_unit], [])
     facts = {value for signature in build_signature_bundle(str(path)).signatures.values() for _, value in signature.data_facts}
     assert {"IFCMASSMEASURE: 1000 kg", "IFCTIMEMEASURE: 31556926 s"} <= facts
+
+
+def _product_facts(path):
+    from athar.bottom.signatures import build_signature_bundle
+
+    (signature,) = [s for s in build_signature_bundle(str(path)).signatures.values() if s.guid == _GUID]
+    return signature.data_facts
+
+
+def _millimetre_model_with(path, build_properties):
+    _build(str(path), 1000.0, "MILLI")
+    model = ifcopenshell.open(str(path))
+    pset = model.by_type("IfcPropertySet")[0]
+    pset.HasProperties = list(pset.HasProperties) + build_properties(model)
+    model.write(str(path))
+    return _product_facts(path)
+
+
+def _metre(model):
+    return model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE")
+
+
+def test_an_enumeration_unit_applies_to_the_selected_and_enumeration_values(tmp_path):
+    def properties(model):
+        lengths = [model.create_entity("IfcLengthMeasure", value) for value in (3.0, 6.0)]
+        enumeration = model.create_entity("IfcPropertyEnumeration", Name="Widths", EnumerationValues=lengths, Unit=_metre(model))
+        return [model.create_entity("IfcPropertyEnumeratedValue", Name="Width", EnumerationReference=enumeration,
+                                    EnumerationValues=[model.create_entity("IfcLengthMeasure", 3.0)])]
+
+    facts = _millimetre_model_with(tmp_path / "enumerated.ifc", properties)
+    assert sorted((path.rsplit("/", 1)[-1], value) for path, value in facts if path.endswith("EnumerationValues")) == [
+        ("IfcPropertyEnumeratedValue.EnumerationValues", "[IFCLENGTHMEASURE: 3 m]"),
+        ("IfcPropertyEnumeration.EnumerationValues", "[IFCLENGTHMEASURE: 3 m, IFCLENGTHMEASURE: 6 m]"),
+    ]

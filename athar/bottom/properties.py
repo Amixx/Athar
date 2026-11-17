@@ -77,19 +77,38 @@ _OWN_UNIT_VALUES = {
     "IfcPropertySingleValue": ("NominalValue",),
     "IfcPropertyBoundedValue": ("UpperBoundValue", "LowerBoundValue", "SetPointValue"),
     "IfcPropertyListValue": ("ListValues",),
+    "IfcPropertyEnumeratedValue": ("EnumerationValues",),
+    "IfcPropertyEnumeration": ("EnumerationValues",),
 }
 
 
+def _own_unit(entity):
+    """The unit a property, enumeration, quantity or measure with unit names for its values, or ``None``."""
+    if entity.is_a("IfcMeasureWithUnit"):
+        return entity.UnitComponent
+    if entity.is_a("IfcPropertyEnumeratedValue"):
+        reference = entity.EnumerationReference
+        return reference.Unit if reference is not None else None
+    return _safe_get(entity, "Unit")
+
+
 def own_unit_factors(ifc) -> dict[int, dict[str, float]]:
-    """Per property, quantity or measure with unit naming its own unit: the factor of that unit by the unit type of its values.
+    """Per property, enumeration, quantity or measure with unit naming its own unit: the factor of that unit by the unit type of its values.
 
     The unit takes the place of the file's unit assignment for that record; a
     unit without a multiplicative factor leaves the values as written (factor 1).
+    An enumerated value takes the unit of the enumeration it references.
     """
     schema = ifc.schema_identifier
     factors: dict[int, dict[str, float]] = {}
-    for entity in ifc.by_type("IfcSimpleProperty") + ifc.by_type("IfcPhysicalSimpleQuantity") + ifc.by_type("IfcMeasureWithUnit"):
-        own_unit = _safe_get(entity, "UnitComponent" if entity.is_a("IfcMeasureWithUnit") else "Unit")
+    records = (
+        ifc.by_type("IfcSimpleProperty")
+        + ifc.by_type("IfcPropertyEnumeration")
+        + ifc.by_type("IfcPhysicalSimpleQuantity")
+        + ifc.by_type("IfcMeasureWithUnit")
+    )
+    for entity in records:
+        own_unit = _own_unit(entity)
         if own_unit is None:
             continue
         if entity.is_a("IfcMeasureWithUnit"):
