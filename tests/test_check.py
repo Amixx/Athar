@@ -774,6 +774,17 @@ def test_cohort_share_requires_a_fraction(limit):
         evaluate_report(_report(), {"max_placement_cohort_share": limit})
 
 
+@pytest.mark.parametrize("angle", [None, True, -1, 181, float("nan"), float("inf"), "1.2"])
+def test_cohort_rule_rejects_invalid_rotation(angle):
+    report = _report()
+    steps = [item["new"]["step_id"] for item in report["modified"]]
+    report["stats"]["placement_cohorts"] = [
+        {"delta_mm": [0, 0, 0], "rotation_deg": angle, "count": len(steps), "members": steps}
+    ]
+    with pytest.raises(ValueError, match="rotation_deg"):
+        evaluate_report(report, {"max_placement_cohort_share": 0.5})
+
+
 def test_cohort_rule_requires_detail():
     report = _report()
     del report["stats"]["placement_cohorts"]

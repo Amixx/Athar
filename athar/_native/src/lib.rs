@@ -1548,6 +1548,7 @@ fn athar_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(parse_step_file, m)?)?;
     m.add_function(wrap_pyfunction!(rekey_step_file, m)?)?;
+    m.add_function(wrap_pyfunction!(spatial::placement_motion, m)?)?;
     m.add_function(wrap_pyfunction!(build_signature_bundle, m)?)?;
     m.add_function(wrap_pyfunction!(relationship_policy, m)?)?;
     m.add_function(wrap_pyfunction!(reference_policy, m)?)?;

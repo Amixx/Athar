@@ -320,8 +320,8 @@ def test_build_delta_report_groups_shared_translation_deltas_into_placement_coho
 
     cohorts = report["stats"]["placement_cohorts"]
     assert cohorts == [
-        {"delta_mm": [100.0, 0.0, 0.0], "count": 3, "members": [10, 20, 30]},
-        {"delta_mm": [0.0, 0.0, 50.0], "count": 2, "members": [40, 50]},
+        {"delta_mm": [100.0, 0.0, 0.0], "rotation_deg": 0.0, "count": 3, "members": [10, 20, 30]},
+        {"delta_mm": [0.0, 0.0, 50.0], "rotation_deg": 0.0, "count": 2, "members": [40, 50]},
     ]
     member_ids = {step for cohort in cohorts for step in cohort["members"]}
     assert {60, 70, 80}.isdisjoint(member_ids)

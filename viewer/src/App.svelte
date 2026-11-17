@@ -499,10 +499,10 @@
       {#if cohorts.length}
         <span class="microlabel">group moves</span>
         <div class="classrows">
-          {#each cohorts as cohort (cohort.delta_mm.join(','))}
+          {#each cohorts as cohort (cohort.members.join(','))}
             <div class="classrow cohort" title={fmtDelta(cohort.delta_mm)}>
-              <span class="cls">{cohort.count} moved together</span>
-              <span class="nums mono">Δ {(Math.hypot(...cohort.delta_mm) / 1000).toFixed(2)} m</span>
+              <span class="cls">{cohort.count} moved {cohort.root_cause ? `with ${cohort.root_cause.class.replace(/^Ifc/, '').toLowerCase()} ${cohort.root_cause.name || `#${cohort.root_cause.step_id}`}` : 'together'}</span>
+              <span class="nums mono">Δ {(Math.hypot(...cohort.delta_mm) / 1000).toFixed(2)} m{cohort.rotation_deg ? `, ${Number(cohort.rotation_deg.toFixed(2))}°` : ''}</span>
             </div>
           {/each}
         </div>
