@@ -22,6 +22,9 @@ surface is thin glue:
 - `signatures.py` — opens the file once via `ifcopenshell` for the schema name
   and unit factors, releases it, runs the native pipeline, and wraps the result
   in `SignatureVector` / `SignatureBundle`.
+  `IfcMapConversion` lengths are in the target `IfcProjectedCRS.MapUnit`, so
+  `record_unit_factors` overrides the length factor for that record's step id;
+  without a `MapUnit` the project length unit applies.
 
 The Rust side (`athar/_native/src/`): `step.rs` tokenize → `canon.rs`
 canonicalize (NFC, round-half-even quantization, `data_facts`) → `edges.rs`
@@ -322,3 +325,4 @@ comparable within one version.
 | v13 | `vh_geometry` of a root does not cover the root's class |
 | v14 | hashes as in v13; `data_facts` paths label an owner below the root by class and `Name`; related entities say whether their GlobalId is shared; property values without a declared or convertible unit stay as written |
 | v15 | spatial coordinates remain unquantized until frame composition; world/local matrices and relative feature-position hashes use the composed frame |
+| v16 | `IfcMapConversion` lengths scale by the target CRS `MapUnit` when it is set |

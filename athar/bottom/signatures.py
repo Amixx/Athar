@@ -44,6 +44,7 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
     _assert_supported_schema(schema)
     unit_context = _extract_unit_context(ifc)
     unit_factors = unit_context.get("unit_factors", {})
+    record_unit_factors = unit_context["record_unit_factors"]
     property_index = extract_properties(ifc, unit_context["property_unit_factors"])
     orphan_property_sets = extract_orphan_property_sets(ifc)
     del ifc
@@ -55,7 +56,7 @@ def _build_signature_bundle_native(filepath: str, native_mod) -> SignatureBundle
         (dangling, cycle_breaks, warnings),
         (unknown_relationships, unreached, ignored_by_design),
         (relation_labels, related_entities),
-    ) = native_mod.build_signature_bundle(filepath, schema_json, unit_factors)
+    ) = native_mod.build_signature_bundle(filepath, schema_json, unit_factors, record_unit_factors)
 
     signatures: dict[int, SignatureVector] = {}
     for (
