@@ -2,8 +2,6 @@
 
 Semantic diff for IFC files. Compares BIM models at the entity/property level — not line-by-line text.
 
-*Athar (Arabic: أثار) — a trace left behind.*
-
 ## How it works
 
 For each IFC file, Athar builds a **signature vector** per product, spatial element and the project:
