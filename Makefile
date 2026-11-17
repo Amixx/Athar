@@ -7,6 +7,7 @@ BENCHMARK_PAGE ?= $(BENCHMARK_DIR)/site/index.html
 BENCHMARK_REPEATS ?= 3
 BENCHMARK_TIMEOUT_S ?= 300
 BENCHMARK_ARGS ?=
+SPECKLE_VENV ?= $(BENCHMARK_DIR)/speckle-venv
 
 .PHONY: help dev-setup benchmark-setup benchmark-ui-setup benchmark-run benchmark-page benchmark-ui benchmark-ui-refresh test test-large-acceptance native-build native-clean viewer-build viewer-package-static viewer-test publish
 
@@ -14,7 +15,7 @@ help:
 	@printf "%s\n" \
 	"Targets:" \
 	"  make dev-setup              Install runtime/dev deps into the active venv" \
-	"  make benchmark-setup        Install optional benchmark deps" \
+	"  make benchmark-setup        Install optional benchmark deps (Speckle gets its own venv)" \
 	"  make benchmark-ui-setup     Install optional benchmark UI deps" \
 	"  make benchmark-run          Generate local benchmark JSON artifact, Revit round-trip pairs included" \
 	"                              (BENCHMARK_ARGS=--large adds 76 MB and 180 MB same-file parse-stress pairs)" \
@@ -36,6 +37,8 @@ dev-setup:
 
 benchmark-setup:
 	$(PYTHON) -m pip --isolated install '.[benchmark]'
+	$(PYTHON) -m venv $(SPECKLE_VENV)
+	$(SPECKLE_VENV)/bin/python -m pip --isolated install -r scripts/explore/speckle-requirements.txt
 
 benchmark-ui-setup:
 	$(PYTHON) -m pip --isolated install '.[benchmark-ui]'
@@ -47,6 +50,7 @@ benchmark-run:
 		--workdir $(BENCHMARK_WORKDIR) \
 		--timeout-s $(BENCHMARK_TIMEOUT_S) \
 		--repeats $(BENCHMARK_REPEATS) \
+		--speckle-python $(SPECKLE_VENV)/bin/python \
 		--revit $(BENCHMARK_ARGS)
 
 benchmark-page:

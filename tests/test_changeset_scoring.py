@@ -395,3 +395,10 @@ def test_provenance_commit_names_head_and_marks_tracked_edits():
         text=True,
     ).stdout.strip()
     assert bench._provenance({})["athar_commit"] == (f"{head}-dirty" if dirty else head)
+
+
+def test_speckle_run_without_its_interpreter_is_reported_not_installed(tmp_path):
+    missing = tmp_path / "no-venv" / "bin" / "python"
+    run = bench._run_speckle(missing, "old.ifc", "new.ifc", 5)
+    assert run["status"] == "not_installed"
+    assert str(missing) in run["reason"]

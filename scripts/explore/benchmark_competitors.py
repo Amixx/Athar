@@ -582,7 +582,12 @@ def main() -> int:
     parser.add_argument("--revit", action="store_true", help="include Revit round-trip corpus pairs")
     parser.add_argument("--only", default=None, help="run only pairs whose name contains this substring")
     parser.add_argument("--no-ifcfast", action="store_true", help="disable optional ifcfast runner even if installed")
-    parser.add_argument("--no-speckle", action="store_true", help="disable optional Speckle runner even if installed")
+    parser.add_argument("--no-speckle", action="store_true", help="disable the Speckle runner")
+    parser.add_argument(
+        "--speckle-python",
+        default=str(DEFAULT_SPECKLE_PYTHON),
+        help="interpreter of the Speckle environment (specklepy[speckleifc] needs an older ifcopenshell)",
+    )
     parser.add_argument("--no-ifcgit", action="store_true", help="disable the IfcGit-port runner")
     args = parser.parse_args()
 
@@ -593,6 +598,7 @@ def main() -> int:
     tools = _tool_inventory(
         include_ifcfast=not args.no_ifcfast,
         include_speckle=not args.no_speckle,
+        speckle_python=Path(args.speckle_python),
         include_ifcgit=not args.no_ifcgit,
     )
     results = {
@@ -664,9 +670,9 @@ def main() -> int:
         }
         if tools.get("ifcfast", {}).get("available"):
             entry["runs"]["ifcfast"] = _repeat(lambda: _run_ifcfast(old_path, new_path, args.timeout_s), args.repeats)
-        if tools.get("speckle_local", {}).get("available"):
+        if "speckle_local" in tools:
             entry["runs"]["speckle_local"] = _repeat(
-                lambda: _run_json_runner(_SPECKLE_RUNNER, old_path, new_path, args.timeout_s), args.repeats
+                lambda: _run_speckle(Path(args.speckle_python), old_path, new_path, args.timeout_s), args.repeats
             )
         if tools.get("ifcgit_port", {}).get("available"):
             entry["runs"]["ifcgit_port"] = _repeat(
@@ -842,10 +848,20 @@ def _run_ifcdiff(
 
 _SPECKLE_RUNNER = REPO_ROOT / "scripts" / "explore" / "speckle_diff_runner.py"
 _IFCGIT_RUNNER = REPO_ROOT / "scripts" / "explore" / "ifcgit_diff_runner.py"
+DEFAULT_SPECKLE_PYTHON = REPO_ROOT / ".athar-benchmark" / "speckle-venv" / "bin" / "python"
 
 
-def _run_json_runner(runner: Path, old_path: str, new_path: str, timeout_s: int) -> dict:
-    argv = [sys.executable, str(runner), old_path, new_path]
+def _run_speckle(python: Path, old_path: str, new_path: str, timeout_s: int) -> dict:
+    if not python.is_file():
+        return {
+            "status": "not_installed",
+            "reason": f"Speckle interpreter {python} not found; run make benchmark-setup",
+        }
+    return _run_json_runner(_SPECKLE_RUNNER, old_path, new_path, timeout_s, python=python)
+
+
+def _run_json_runner(runner: Path, old_path: str, new_path: str, timeout_s: int, *, python: Path | None = None) -> dict:
+    argv = [str(python or sys.executable), str(runner), old_path, new_path]
     start = time.perf_counter()
     completed = _run_subprocess(argv, timeout_s)
     seconds = round(time.perf_counter() - start, 3)
@@ -1208,7 +1224,9 @@ def _run_counts(run: dict) -> dict | None:
     return run.get("counts") or run.get("sections")
 
 
-def _tool_inventory(*, include_ifcfast: bool, include_speckle: bool = True, include_ifcgit: bool = True) -> dict:
+def _tool_inventory(
+    *, include_ifcfast: bool, speckle_python: Path, include_speckle: bool = True, include_ifcgit: bool = True
+) -> dict:
     tools = {
         "athar": {"status": "subprocess", "version": athar_engine.package_version()},
         "ifcopenshell": {"version": _package_version("ifcopenshell")},
@@ -1228,8 +1246,9 @@ def _tool_inventory(*, include_ifcfast: bool, include_speckle: bool = True, incl
     if include_speckle:
         tools["speckle_local"] = {
             "runner": str(_SPECKLE_RUNNER.relative_to(REPO_ROOT)),
-            "available": importlib.util.find_spec("speckleifc") is not None,
-            "version": _package_version("specklepy"),
+            "available": speckle_python.is_file(),
+            "version": _interpreter_package_version(speckle_python, "specklepy"),
+            "ifcopenshell_version": _interpreter_package_version(speckle_python, "ifcopenshell"),
             "notes": (
                 "speckleifc (Speckle's production IFC importer, ships in specklepy) converts locally; "
                 "specklepy serializer computes object hashes; Speckle version-diff semantics "
@@ -1282,6 +1301,14 @@ def _package_version(package: str) -> str | None:
         return importlib.metadata.version(package)
     except importlib.metadata.PackageNotFoundError:
         return None
+
+
+def _interpreter_package_version(python: Path, package: str) -> str | None:
+    if not python.is_file():
+        return None
+    code = f"import importlib.metadata as m; print(m.version({package!r}))"
+    completed = subprocess.run([str(python), "-c", code], capture_output=True, text=True)
+    return completed.stdout.strip() if completed.returncode == 0 else None
 
 
 def _input_summary(path: str) -> dict:

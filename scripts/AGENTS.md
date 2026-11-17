@@ -87,13 +87,18 @@ Scripts are for inspection and repeatable investigation.
     - The JSON's `provenance` (shown on the dashboard) records the Athar
       commit (`-dirty` when tracked files differ from it), `CANON_VERSION`,
       each tool's installed version and the run date. Competitor versions are
-      pinned in the `benchmark` extra.
+      pinned in the `benchmark` extra (ifcdiff, ifcfast) and in
+      `explore/speckle-requirements.txt` (Speckle).
     - `--only SUBSTRING` restricts a run to pairs whose name contains the
       substring (combine with `--revit`/`--large` to reach one gated pair
       cheaply, e.g. `--revit --only r8_r9 --repeats 1`).
   - `explore/speckle_diff_runner.py` runs Speckle's diff semantics locally:
     speckleifc conversion (ships in `specklepy`) + serializer hashes +
-    applicationId/id classification. No Speckle server involved.
+    applicationId/id classification. No Speckle server involved. It runs in
+    its own venv (`make benchmark-setup` builds `.athar-benchmark/speckle-venv`,
+    passed as `--speckle-python`) because `specklepy[speckleifc]` needs an older
+    `ifcopenshell` than Athar's. A missing interpreter records the runs as
+    `not_installed` with the reason.
   - `explore/ifcgit_diff_runner.py` is a headless port of Bonsai IfcGit's
     diff (git text diff of STEP lines, propagated to products); the original
     is Blender-bound. Both runners print one JSON object to stdout and are
