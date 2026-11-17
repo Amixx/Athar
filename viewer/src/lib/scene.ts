@@ -2,8 +2,8 @@
  * Imperative three.js scene for the diff overlay. Lives entirely outside
  * Svelte reactivity — the UI talks to it through this class only.
  *
- * Rendering model: entities are merged into one THREE.Mesh per visual bucket
- * (per-entity colors are uniform within a bucket), so a slider drag updates a
+ * Rendering model: entities are merged into filled and edge-only objects per
+ * visual bucket (colors are uniform within a bucket), so a slider drag updates a
  * handful of materials instead of touching entities. Per-entity identity is
  * kept as index ranges into the merged buffers for picking and highlighting.
  */
@@ -13,7 +13,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { MeshData } from '@ifc-lite/geometry'
 import type { Vec3 } from './frame'
 import type { ModelGeometry } from './ifc'
-import { BUCKET_SIDE, type Appearance, type Bucket } from './renderState'
+import { BUCKET_SIDE, isVoidingFeature, type Appearance, type Bucket } from './renderState'
 import type { Side } from './types'
 
 export interface PickHit {
@@ -36,15 +36,15 @@ interface EntityRange {
 
 interface BucketEntry {
   bucket: Bucket
-  mesh: THREE.Mesh
-  material: THREE.MeshLambertMaterial
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial> | THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>
+  material: THREE.MeshLambertMaterial | THREE.LineBasicMaterial
   ranges: EntityRange[]
   pickable: boolean
   highlightGeometry: THREE.BufferGeometry
 }
 
 interface EntityLocation {
-  bucket: Bucket
+  key: string
   start: number
   count: number
 }
@@ -64,7 +64,7 @@ export class DiffScene {
   private rafId = 0
   private needsRender = true
 
-  private buckets = new Map<Bucket, BucketEntry>()
+  private buckets = new Map<string, BucketEntry>()
   private entityLocations: Record<Side, Map<number, EntityLocation>> = {
     old: new Map(),
     new: new Map(),
@@ -76,7 +76,8 @@ export class DiffScene {
   private modelBox = new THREE.Box3()
   private changesBox = new THREE.Box3()
   private displacement: THREE.Group | null = null
-  private highlight: THREE.Mesh | null = null
+  private highlight: THREE.Mesh | THREE.LineSegments | null = null
+  private readonly highlightLineMaterial = new THREE.LineBasicMaterial({ color: HIGHLIGHT_COLOR, depthTest: false })
   private readonly highlightMaterial = new THREE.MeshBasicMaterial({
     color: HIGHLIGHT_COLOR,
     transparent: true,
@@ -151,28 +152,32 @@ export class DiffScene {
     bucketOf: (side: Side, stepId: number) => Bucket | null,
     displacementGroups: Array<{ pairs: Array<{ oldId: number; newId: number }> }>,
     translations: Record<Side, Vec3>,
+    classOf: (side: Side, stepId: number) => string | undefined,
   ): SceneStats {
     this.clearModels()
 
-    const grouped = new Map<Bucket, Array<{ stepId: number; meshes: MeshData[] }>>()
+    const grouped = new Map<string, { bucket: Bucket; outlined: boolean; entities: Array<{ stepId: number; meshes: MeshData[] }> }>()
     const collect = (side: Side, geometry: ModelGeometry) => {
       for (const [stepId, meshes] of geometry.byEntity) {
         const bucket = bucketOf(side, stepId)
         if (bucket === null || BUCKET_SIDE[bucket] !== side) continue
-        let list = grouped.get(bucket)
-        if (!list) grouped.set(bucket, (list = []))
-        list.push({ stepId, meshes })
+        const outlined = isVoidingFeature(classOf(side, stepId) ?? meshes[0]?.ifcType)
+        if (outlined && (bucket === 'unchanged' || bucket === 'extra')) continue
+        const key = `${bucket}:${outlined}`
+        let group = grouped.get(key)
+        if (!group) grouped.set(key, (group = { bucket, outlined, entities: [] }))
+        group.entities.push({ stepId, meshes })
       }
     }
     collect('old', oldGeometry)
     collect('new', newGeometry)
 
     const counts: Partial<Record<Bucket, number>> = {}
-    for (const [bucket, entities] of grouped) {
-      const entry = this.buildBucket(bucket, entities, translations[BUCKET_SIDE[bucket]])
-      this.buckets.set(bucket, entry)
+    for (const [key, { bucket, outlined, entities }] of grouped) {
+      const entry = this.buildBucket(bucket, entities, translations[BUCKET_SIDE[bucket]], outlined, key)
+      this.buckets.set(key, entry)
       this.scene.add(entry.mesh)
-      counts[bucket] = entities.length
+      counts[bucket] = (counts[bucket] ?? 0) + entities.length
       entry.mesh.geometry.computeBoundingBox()
       const box = entry.mesh.geometry.boundingBox
       if (box && !box.isEmpty()) {
@@ -191,7 +196,24 @@ export class DiffScene {
     bucket: Bucket,
     entities: Array<{ stepId: number; meshes: MeshData[] }>,
     translation: Vec3,
+    outlined: boolean,
+    key: string,
   ): BucketEntry {
+    if (outlined) {
+      entities = entities.map(entity => ({
+        ...entity,
+        meshes: entity.meshes.map(mesh => {
+          const source = new THREE.BufferGeometry()
+          source.setAttribute('position', new THREE.BufferAttribute(mesh.positions, 3))
+          source.setIndex(new THREE.BufferAttribute(mesh.indices, 1))
+          const edges = new THREE.EdgesGeometry(source)
+          const positions = edges.getAttribute('position').array as Float32Array
+          source.dispose()
+          edges.dispose()
+          return { ...mesh, positions, normals: new Float32Array(positions.length), indices: Uint32Array.from({ length: positions.length / 3 }, (_, i) => i) }
+        }),
+      }))
+    }
     const side = BUCKET_SIDE[bucket]
     let vertexFloats = 0
     let indexCount = 0
@@ -232,7 +254,7 @@ export class DiffScene {
       }
       const count = indexOffset - start
       ranges.push({ start, count, stepId: entity.stepId })
-      this.entityLocations[side].set(entity.stepId, { bucket, start, count })
+      this.entityLocations[side].set(entity.stepId, { key, start, count })
       this.entityBoxes[side].set(entity.stepId, box)
     }
 
@@ -241,10 +263,10 @@ export class DiffScene {
     geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
     geometry.setIndex(new THREE.BufferAttribute(indices, 1))
 
-    const material = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide })
-    const mesh = new THREE.Mesh(geometry, material)
-    mesh.name = `bucket:${bucket}`
-    mesh.userData.bucket = bucket
+    const mesh = createBucketObject(geometry, outlined)
+    const material = mesh.material
+    mesh.name = `bucket:${key}`
+    mesh.userData.key = key
     const highlightGeometry = new THREE.BufferGeometry()
     highlightGeometry.setAttribute('position', geometry.getAttribute('position'))
     highlightGeometry.setAttribute('normal', geometry.getAttribute('normal'))
@@ -306,13 +328,16 @@ export class DiffScene {
   }
 
   applyAppearances(appearances: Record<Bucket, Appearance>, showLines: boolean): void {
-    for (const [bucket, entry] of this.buckets) {
+    for (const entry of this.buckets.values()) {
+      const bucket = entry.bucket
       const appearance = appearances[bucket]
       entry.mesh.visible = appearance.visible
       entry.pickable = appearance.visible && !(bucket === 'unchanged' && appearance.opacity < 1)
       entry.material.color.set(appearance.color)
-      entry.material.emissive.set(appearance.color)
-      entry.material.emissiveIntensity = bucket === 'unchanged' || bucket === 'extra' ? 0.28 : 0.06
+      if (entry.material instanceof THREE.MeshLambertMaterial) {
+        entry.material.emissive.set(appearance.color)
+        entry.material.emissiveIntensity = bucket === 'unchanged' || bucket === 'extra' ? 0.28 : 0.06
+      }
       entry.material.opacity = appearance.opacity
       const solid = appearance.opacity >= 0.999
       entry.material.transparent = !solid
@@ -333,13 +358,13 @@ export class DiffScene {
     const targets = [...this.buckets.values()].filter((b) => b.pickable).map((b) => b.mesh)
     const hits = this.raycaster.intersectObjects(targets, false)
     for (const hit of hits) {
-      if (hit.faceIndex === undefined || hit.faceIndex === null) continue
-      const bucket = hit.object.userData.bucket as Bucket
-      const entry = this.buckets.get(bucket)
+      const entry = this.buckets.get(hit.object.userData.key)
       if (!entry) continue
-      const range = findRange(entry.ranges, hit.faceIndex * 3)
+      const index = hit.object instanceof THREE.LineSegments ? hit.index : hit.faceIndex == null ? undefined : hit.faceIndex * 3
+      if (index === undefined) continue
+      const range = findRange(entry.ranges, index)
       if (!range) continue
-      return { side: BUCKET_SIDE[bucket], stepId: range.stepId, bucket }
+      return { side: BUCKET_SIDE[entry.bucket], stepId: range.stepId, bucket: entry.bucket }
     }
     return null
   }
@@ -352,7 +377,7 @@ export class DiffScene {
       return
     }
     const location = this.entityLocations[target.side].get(target.stepId)
-    const entry = location && this.buckets.get(location.bucket)
+    const entry = location && this.buckets.get(location.key)
     if (!location || !entry) {
       if (this.highlight) this.highlight.visible = false
       this.invalidate()
@@ -360,8 +385,15 @@ export class DiffScene {
     }
     const geometry = entry.highlightGeometry
     geometry.setDrawRange(location.start, location.count)
+    const outlined = entry.mesh instanceof THREE.LineSegments
+    if (this.highlight && (this.highlight instanceof THREE.LineSegments) !== outlined) {
+      this.scene.remove(this.highlight)
+      this.highlight = null
+    }
     if (!this.highlight) {
-      this.highlight = new THREE.Mesh(geometry, this.highlightMaterial)
+      this.highlight = outlined
+        ? new THREE.LineSegments(geometry, this.highlightLineMaterial)
+        : new THREE.Mesh(geometry, this.highlightMaterial)
       this.highlight.renderOrder = 999
       this.scene.add(this.highlight)
     } else {
@@ -371,9 +403,15 @@ export class DiffScene {
     this.invalidate()
   }
 
-  highlightObjects(): { geometry: string; material: string } | null {
+  highlightObjects(): { geometry: string; material: string; type: string } | null {
     if (!this.highlight?.visible) return null
-    return { geometry: this.highlight.geometry.uuid, material: (this.highlight.material as THREE.Material).uuid }
+    return { geometry: this.highlight.geometry.uuid, material: (this.highlight.material as THREE.Material).uuid, type: this.highlight.type }
+  }
+
+  entityDrawing(side: Side, stepId: number): { type: string; vertices: number } | null {
+    const location = this.entityLocations[side].get(stepId)
+    const entry = location && this.buckets.get(location.key)
+    return entry && location ? { type: entry.mesh.type, vertices: location.count } : null
   }
 
   entityBox(side: Side, stepId: number): THREE.Box3 | undefined {
@@ -443,9 +481,16 @@ export class DiffScene {
     this.clearModels()
     this.controls.dispose()
     this.highlightMaterial.dispose()
+    this.highlightLineMaterial.dispose()
     this.renderer.clear()
     this.renderer.dispose()
   }
+}
+
+export function createBucketObject(geometry: THREE.BufferGeometry, outlined: boolean) {
+  return outlined
+    ? new THREE.LineSegments(geometry, new THREE.LineBasicMaterial())
+    : new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ side: THREE.DoubleSide }))
 }
 
 function expandBox(box: THREE.Box3, x: number, y: number, z: number): void {

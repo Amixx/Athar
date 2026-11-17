@@ -520,7 +520,7 @@ button.active {
 
 .stepnav {
   position: absolute;
-  bottom: 14px;
+  bottom: 70px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -722,6 +722,44 @@ button.active {
 .banner.error {
   color: #f3b0b3;
   border-color: rgba(229, 72, 77, 0.5);
+}
+
+@media (width < 1280px) {
+  .app {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .app > .panel,
+  .brand-stack,
+  .viewport {
+    position: relative;
+    inset: auto;
+    transform: none;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    max-height: none;
+    flex-shrink: 0;
+  }
+
+  .brand-stack { order: 0; }
+  .sliderbar { order: 1; flex-wrap: wrap; gap: 10px; }
+  .banner, .stepnav { order: 2; }
+  .viewport { order: 3; height: 45svh; min-height: 280px; }
+  .toolbar { order: 4; }
+  .viewbtns { order: 5; flex-wrap: wrap; }
+  .summary { order: 6; overflow: visible; }
+  .inspector { order: 7; overflow: visible; }
+
+  .sliderbar input[type='range'] { min-width: 60px; }
+  .filechip { min-width: 0; }
+  .filechip .mono { min-width: 0; }
+  .legendrow { flex-wrap: wrap; }
 }
 
 input[type='file'] {

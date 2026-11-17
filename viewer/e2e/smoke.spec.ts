@@ -80,6 +80,89 @@ async function waitReady(page: Page): Promise<Record<string, any>> {
   return state
 }
 
+for (const width of [375, 800, 1280, 1920]) {
+  test(`panels do not overlap at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    const step = {
+      label: 'Revision comparison',
+      old: { name: 'ammerforum-v1-1237.ifc', url: '/old.ifc' },
+      new: { name: 'ammerforum-v2-1347.ifc', url: '/new.ifc' },
+      report: { url: '/report.json' },
+    }
+    await page.route(`${srcOrigin}/manifest.json`, route => route.fulfill({ json: {
+      athar_viewer_manifest: 1, schema_version: 999, steps: [step, step], active_step: 0,
+    } }))
+    await page.goto(`/?src=${srcOrigin}`)
+    await waitReady(page)
+    await page.getByTestId('undrawn').getByRole('button').filter({ hasText: 'Storey' }).click()
+    const layout = await page.evaluate(() => {
+      const panels = Array.from(document.querySelectorAll('.app > .panel, .brand-stack > .panel'))
+        .map(el => ({ name: el.className, rect: el.getBoundingClientRect() }))
+        .filter(({ rect }) => rect.width > 0 && rect.height > 0)
+      const overlaps: string[] = []
+      for (let i = 0; i < panels.length; i++) {
+        for (const b of panels.slice(i + 1)) {
+          const a = panels[i]
+          if (Math.min(a.rect.right, b.rect.right) > Math.max(a.rect.left, b.rect.left) + 1 &&
+              Math.min(a.rect.bottom, b.rect.bottom) > Math.max(a.rect.top, b.rect.top) + 1) {
+            overlaps.push(`${a.name} / ${b.name}`)
+          }
+        }
+      }
+      return { overlaps, width: document.documentElement.scrollWidth, panels: panels.map(({ rect }) => ({ left: rect.left, right: rect.right })) }
+    })
+    expect(layout.overlaps).toEqual([])
+    expect(layout.width).toBe(width)
+    for (const rect of layout.panels) {
+      expect(rect.left).toBeGreaterThanOrEqual(0)
+      expect(rect.right).toBeLessThanOrEqual(width)
+    }
+    for (const button of await page.locator('.toolbar button, .viewbtns button, .inspector .close').all()) {
+      await button.scrollIntoViewIfNeeded()
+      await button.click({ trial: true })
+    }
+  })
+}
+
+test('voiding features outline changes and hide unchanged or unreported meshes', async ({ page }) => {
+  const report = JSON.parse(await readFile(join(FIXTURES, 'report.json'), 'utf8'))
+  for (const item of [...report.modified, ...report.unchanged]) {
+    item.old.class = item.new.class = 'IfcOpeningElement'
+  }
+  for (const item of [...report.added, ...report.deleted]) item.class = 'IfcOpeningStandardCase'
+  await page.route(`${srcOrigin}/report.json`, route => route.fulfill({ json: report }))
+  await page.goto(`/?src=${srcOrigin}`)
+  await waitReady(page)
+  expect(await page.evaluate(() => (window as any).__athar_viewer.entityDrawing('new', 53))).toEqual({ type: 'LineSegments', vertices: 24 })
+  expect(await page.evaluate(() => (window as any).__athar_viewer.entityDrawing('old', 53))).toEqual({ type: 'LineSegments', vertices: 24 })
+  expect(await page.evaluate(() => (window as any).__athar_viewer.entityDrawing('new', 37))).toEqual({ type: 'LineSegments', vertices: 24 })
+  for (const [side, summary] of [['old', report.deleted[0]], ['new', report.added[0]]] as const) {
+    expect(await page.evaluate(({ side, id }) => (window as any).__athar_viewer.entityDrawing(side, id), { side, id: summary.step_id })).toEqual({ type: 'LineSegments', vertices: 24 })
+  }
+  await page.screenshot({ path: 'test-results/openings-outlined.png' })
+
+  const viewport = page.viewportSize()!
+  await page.mouse.click(viewport.width / 2, viewport.height / 2)
+  await expect(page.locator('.inspector')).toBeVisible()
+  expect(await page.evaluate(() => (window as any).__athar_viewer.highlightObjects?.type)).toBe('LineSegments')
+
+  report.unchanged.push(...report.modified)
+  report.modified = []
+  await page.reload()
+  await waitReady(page)
+  expect(await page.evaluate(() => (window as any).__athar_viewer.entityDrawing('new', 53))).toBeNull()
+
+  await page.route(`${srcOrigin}/new.ifc`, async route => {
+    const ifc = await readFile(join(FIXTURES, 'new.ifc'), 'utf8')
+    await route.fulfill({ body: ifc.replace('#37=IFCWALL(', '#37=IFCOPENINGELEMENT(') })
+  })
+  report.unchanged = report.unchanged.filter((item: any) => item.new.step_id !== 37)
+  await page.reload()
+  await waitReady(page)
+  expect(await page.evaluate(() => (window as any).__athar_viewer.entityBounds('new', 37))).not.toBeNull()
+  expect(await page.evaluate(() => (window as any).__athar_viewer.entityDrawing('new', 37))).toBeNull()
+})
+
 test('loads a pair via ?src= hand-off and buckets entities', async ({ page }) => {
   await page.goto(`/?src=${srcOrigin}`)
   const state = await waitReady(page)
