@@ -328,6 +328,7 @@ def test_kernel_placement_agreement(source):
 
 
 _ZERO_FRAME = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+_NOT_TOGETHER = "Invalid input: Axis and RefDirection not given together (IFC2X3 WR5, IFC4 AxisAndRefDirProvision)"
 _PARALLEL = "Undefined frame (RefDirection parallel to Axis): native has a zero rotation, the kernel keeps Z with zero X and Y"
 # (Axis, RefDirection, native (X, Z) where it differs from the kernel, reason).
 # A 2-tuple Axis is an IfcAxis2Placement2D with that RefDirection.
@@ -344,16 +345,18 @@ _AXES = [
     ((0.0, 0.0, 1.0), (0.0, 1.0), None, ""),
     ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), None, ""),
     ((1.0, 0.0, 0.0), None, ((0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
-     "IfcFirstProjAxis takes (0,1,0) for Z=(1,0,0); the kernel keeps OCC's default X (0,0,1)"),
+     f"{_NOT_TOGETHER}; native takes the schema's default (0,1,0) for Z=(1,0,0), the kernel falls back to (0,0,1)"),
     ((1.0, 1.0, 1.0), None, ((2 / 6**0.5, -1 / 6**0.5, -1 / 6**0.5), (3**-0.5,) * 3),
-     "IfcFirstProjAxis projects (1,0,0) onto the plane of Z; the kernel keeps OCC's default X (-1,-1,2)/sqrt(6)"),
+     f"{_NOT_TOGETHER}; native projects the schema's default (1,0,0) onto the plane of Z. The 0.9.0.post1 kernel tests "
+     "the unnormalised Axis for being parallel to +X, takes (1,1,1) as parallel and projects (0,0,1) to (-1,-1,2)/sqrt(6); "
+     "fixed upstream in 0a29ae037, after which this row agrees"),
     ((-1.0, 0.0, 0.0), None, ((0.0, 1.0, 0.0), (-1.0, 0.0, 0.0)),
-     "IfcFirstProjAxis is undefined (its default (1,0,0) is parallel to Z); native takes (0,1,0) as for +X, "
-     "the kernel returns zero X and Y axes"),
-    (None, (0.0, 0.0, 3.0), _ZERO_FRAME, _PARALLEL),
+     f"{_NOT_TOGETHER}, and the schema's default (1,0,0) is parallel to Z; native takes (0,1,0) as for +X. "
+     "The 0.9.0.post1 kernel returns zero X and Y axes; fixed upstream in 0a29ae037, which falls back to (0,0,1)"),
+    (None, (0.0, 0.0, 3.0), _ZERO_FRAME, f"{_NOT_TOGETHER}; {_PARALLEL}"),
     ((0.0, 0.0, 1.0), (0.0, 0.0, -1.0), _ZERO_FRAME, _PARALLEL),
     ((0.0, 0.0, 1e-300), (1.0, 0.0, 0.0), ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
-     "The kernel squares the ratios before normalising and underflows; IfcNormalise is defined for any nonzero direction"),
+     "The kernel squares the ratios before normalising and underflows (IfcOpenShell #10240); IfcNormalise is defined for any nonzero direction"),
     ((3.0, 4.0), None, None, ""),
     ((1.0, 1.0, 1.0), None, None, ""),
     ((0.0, 0.0), None, _ZERO_FRAME, "Zero RefDirection: native has a zero rotation, the kernel keeps Z with zero X and Y"),
