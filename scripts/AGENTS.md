@@ -27,7 +27,7 @@ Scripts are for inspection and repeatable investigation.
       (`{"added": [...], "deleted": [...], "modified": [...]}`). When present,
       every runner that emits `reported_guids` is scored for precision/recall/
       F1 against it via `athar_dev.changeset_scoring.score_changeset`; results
-      land in each pair's `changeset_scores`. Athar, `speckle_local`,
+      land in each pair's `changeset_scores`. Athar, `speckle_digest`,
       `ifcgit_port`, `ifcdiff_default`/`ifcdiff_relationships`, and `ifcfast`
       all emit `reported_guids` (ifcfast's runner passes `sample=0` so its
       added/removed/changed arrays are unclipped, since its `sample=5` default
@@ -54,13 +54,14 @@ Scripts are for inspection and repeatable investigation.
       pairs diff a byte-identical copy at a second path, since
       `diff_files` parses once when both arguments name one file.
     - Run statuses: `ok`, `refused` (Athar's schema refusal), `error`,
-      `timeout`, `not_installed`. `not_installed` is shown and left out of
-      every average. `error` and `timeout` are a miss on that pair: assessed
+      `timeout`. A tool that is not installed is an `error` carrying the
+      install hint. `error` and `timeout` are a miss on that pair: assessed
       as such, counted in the judged pairs, and scored precision = recall =
       F1 = 0 where GUID truth exists. A failure on any repeat is the tool's
       outcome for the pair. The JSON's `aggregates[set][tool]` holds the
       per-tool figures the dashboard shows, including coverage (pairs
-      completed out of pairs attempted), changeset precision/recall/F1 both
+      completed out of pairs attempted) and `failure_reasons` (error message
+      to pair count), changeset precision/recall/F1 both
       macro (mean of per-pair values) and micro (from TP/FP/FN summed over
       pairs), and time/peak-RSS/GB-seconds as the geometric mean of per-pair
       ratios to Athar. Status, counts and reported GUID sets must agree
@@ -87,13 +88,21 @@ Scripts are for inspection and repeatable investigation.
     - The JSON's `provenance` (shown on the dashboard) records the Athar
       commit (`-dirty` when tracked files differ from it), `CANON_VERSION`,
       each tool's installed version and the run date. Competitor versions are
-      pinned in the `benchmark` extra.
+      pinned in the `benchmark` extra (ifcdiff, ifcfast) and in
+      `explore/speckle-requirements.txt` (Speckle).
     - `--only SUBSTRING` restricts a run to pairs whose name contains the
       substring (combine with `--revit`/`--large` to reach one gated pair
       cheaply, e.g. `--revit --only r8_r9 --repeats 1`).
-  - `explore/speckle_diff_runner.py` runs Speckle's diff semantics locally:
-    speckleifc conversion (ships in `specklepy`) + serializer hashes +
-    applicationId/id classification. No Speckle server involved.
+  - `explore/speckle_diff_runner.py` (tool key `speckle_digest`, dashboard
+    label "Speckle conversion, Athar digest") is not Speckle's own change
+    detection: speckleifc conversion (ships in `specklepy`) + an Athar-defined
+    SHA-256 digest over the Parquet bundle + applicationId correlation. Speckle
+    itself compares serialized object IDs, which this does not compute. No
+    Speckle server involved. It runs in
+    its own venv (`make benchmark-setup` builds `.athar-benchmark/speckle-venv`,
+    passed as `--speckle-python`) because `specklepy[speckleifc]` needs an older
+    `ifcopenshell` than Athar's. A missing interpreter records the runs as
+    `error` with the reason.
   - `explore/ifcgit_diff_runner.py` is a headless port of Bonsai IfcGit's
     diff (git text diff of STEP lines, propagated to products); the original
     is Blender-bound. Both runners print one JSON object to stdout and are

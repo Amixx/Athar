@@ -1,25 +1,21 @@
 #!/usr/bin/env python3
-"""Run Speckle's IFC diff semantics on two IFC files, fully locally.
+"""Diff two IFC files by converting them with Speckle's importer and comparing an Athar-defined digest.
 
 Conversion uses ``speckleifc`` — Speckle's production IFC importer, shipped
-inside ``specklepy`` and itself built on ifcopenshell. Object ids are the
-content hashes computed by specklepy's ``BaseObjectSerializer``; a Speckle
-server only stores those hashes, so no server is involved here.
+inside ``specklepy`` and itself built on ifcopenshell. The importer writes a
+Parquet bundle (EAV property rows, instance/definition/material nodes,
+geometry blobs and the relations between them) that a Speckle server ingests;
+no server is involved here.
 
-Classification mirrors Speckle's version-diff semantics (viewer and the
-official "Version Diffing with Python" tutorial): per object,
-``applicationId`` (= IFC GlobalId for elements) is the correlation key and the
-content hash decides the verdict — same id on both sides is unchanged, same
-applicationId with a different id is modified, the rest is added/deleted.
-Child hashes bubble into parents (Merkle-style), so a container whose child
-changed also counts as modified — that is Speckle behavior, not an artifact.
-
-Counts cover DataObjects only — the visible elements Speckle's viewer diff
-colors. Meshes, chunks, and instance proxies influence their parents' hashes
-but are not counted. Collections (project/spatial grouping) are excluded:
-speckleifc's proxy lists (render materials, instance definitions) have
-nondeterministic ordering, so Collection hashes differ even between two
-imports of the identical file. Objects without an applicationId are excluded.
+Each object's content digest is a SHA-256 over its own property rows, its type
+rows, and everything reachable through its outgoing relations: geometry bytes,
+placement transforms, materials, levels and containers resolved by content,
+other objects by applicationId. The digest is defined here, not by Speckle:
+Speckle itself compares serialized object IDs, which this runner does not
+compute. Per object, ``applicationId`` (= IFC GlobalId) is the correlation
+key and the digest decides the verdict — same digest on both sides is
+unchanged, same applicationId with a different digest is modified, the rest
+is added/deleted. Objects without an applicationId are excluded.
 
 Usage:
     python scripts/explore/speckle_diff_runner.py old.ifc new.ifc
@@ -29,13 +25,19 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fnmatch
+import hashlib
 import importlib.metadata
 import json
+import os
 import sys
+import tempfile
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 
-_ELEMENT_TYPES = ("Objects.Data.DataObject",)
+import pyarrow.parquet as pq
+
+_BUNDLE_NAME = "bundle"
 
 
 class _NoProgress:
@@ -47,30 +49,75 @@ class _NoProgress:
 
 
 def _convert_and_hash(path: str) -> dict[str, list[str]]:
-    """Convert one IFC file and return {applicationId: [object ids]} for elements."""
+    """Convert one IFC file and return {applicationId: [content digests]}."""
     from speckleifc.ifc_geometry_processing import open_ifc
     from speckleifc.importer import ImportJob
-    from specklepy.serialization.base_object_serializer import BaseObjectSerializer
-    from specklepy.transports.memory import MemoryTransport
 
     # speckleifc prints progress to stdout; stdout must stay JSON-only.
-    with contextlib.redirect_stdout(sys.stderr):
-        ifc_file = open_ifc(path)
-        root = ImportJob(ifc_file, _NoProgress()).convert()
+    with contextlib.redirect_stdout(sys.stderr), tempfile.TemporaryDirectory(prefix="speckle-bundle-") as bundle_dir:
+        ImportJob(open_ifc(path), bundle_dir, _BUNDLE_NAME, _NoProgress()).run()
+        return _object_digests(bundle_dir)
 
-    transport = MemoryTransport()
-    serializer = BaseObjectSerializer(write_transports=[transport])
-    serializer.traverse_base(root)
+
+def _rows(directory: str, pattern: str) -> list[dict]:
+    names = sorted(name for name in os.listdir(directory) if fnmatch.fnmatch(name, pattern))
+    return [row for name in names for row in pq.read_table(os.path.join(directory, name)).to_pylist()]
+
+
+def _object_digests(directory: str) -> dict[str, list[str]]:
+    paths = {row["path_index"]: row["path"] for row in _rows(directory, "*.eav.paths.parquet")}
+
+    def property_rows(pattern: str, key: str) -> dict[int, list]:
+        grouped: dict[int, list] = defaultdict(list)
+        for row in _rows(directory, pattern):
+            value = (paths[row["path_index"]], row["value_string"], row["value_double"], row["value_boolean"], row["unit"])
+            grouped[row[key]].append(value)
+        return {k: sorted(values, key=repr) for k, values in grouped.items()}
+
+    instance_properties = property_rows("*.eav.eav.parquet", "object_index")
+    type_properties = property_rows("*.eav.type_eav.parquet", "type_index")
+    type_of = {row["object_index"]: row["type_index"] for row in _rows(directory, "*.eav.object_type.parquet")}
+    app_ids = {row["object_index"]: row["application_id"] for row in _rows(directory, "*.eav.objects.parquet")}
+    nodes = {row["id"]: row for row in _rows(directory, "*.envelope.nodes.parquet")}
+    geometry_bytes = {
+        row["geometryIndex"]: (row["type"], hashlib.sha256(row["content"] or b"").hexdigest())
+        for row in _rows(directory, "*.geometries*.parquet")
+    }
+    namespaces = {row["rel"]: (row["src_ns"], row["dst_ns"]) for row in _rows(directory, "*.envelope.rel_types.parquet")}
+    edges: dict[tuple[str, int], list[tuple[int, int, str, int]]] = defaultdict(list)
+    for row in _rows(directory, "*.envelope.relations.parquet"):
+        src_ns, dst_ns = namespaces[row["rel"]]
+        edges[(src_ns, row["src"])].append((row["rel"], row["ord"], dst_ns, row["dst"]))
+
+    memo: dict[tuple[str, int], str] = {}
+
+    def digest(namespace: str, key: int) -> str:
+        if namespace == "object":
+            return f"object:{app_ids[key]}"
+        if (namespace, key) in memo:
+            return memo[(namespace, key)]
+        memo[(namespace, key)] = "cycle"
+        if namespace == "node":
+            node = nodes[key]
+            definition = digest("node", node["def_ref"]) if node["def_ref"] is not None else None
+            own = ([(name, value) for name, value in sorted(node.items()) if name not in ("id", "def_ref")], definition)
+        else:
+            own = geometry_bytes[key]
+        out = sorted((rel, ordinal, digest(dst_ns, dst)) for rel, ordinal, dst_ns, dst in edges[(namespace, key)])
+        result = hashlib.sha256(repr((own, out)).encode()).hexdigest()
+        memo[(namespace, key)] = result
+        return result
 
     elements: dict[str, list[str]] = {}
-    for object_id in transport.objects:
-        payload = json.loads(transport.get_object(object_id))
-        if payload.get("speckle_type") not in _ELEMENT_TYPES:
-            continue
-        application_id = payload.get("applicationId")
+    for key, application_id in app_ids.items():
         if not application_id:
             continue
-        elements.setdefault(application_id, []).append(object_id)
+        content = (
+            instance_properties.get(key, []),
+            type_properties.get(type_of.get(key), []),
+            sorted((rel, ordinal, digest(dst_ns, dst)) for rel, ordinal, dst_ns, dst in edges[("object", key)]),
+        )
+        elements.setdefault(application_id, []).append(hashlib.sha256(repr(content).encode()).hexdigest())
     return elements
 
 
@@ -117,7 +164,7 @@ def main() -> int:
 
     counts, reported_guids = _classify(old_elements, new_elements)
     result = {
-        "tool": "speckle_local",
+        "tool": "speckle_digest",
         "specklepy_version": importlib.metadata.version("specklepy"),
         "counts": counts,
         "reported_guids": reported_guids,

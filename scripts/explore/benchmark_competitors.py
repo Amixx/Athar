@@ -582,7 +582,12 @@ def main() -> int:
     parser.add_argument("--revit", action="store_true", help="include Revit round-trip corpus pairs")
     parser.add_argument("--only", default=None, help="run only pairs whose name contains this substring")
     parser.add_argument("--no-ifcfast", action="store_true", help="disable optional ifcfast runner even if installed")
-    parser.add_argument("--no-speckle", action="store_true", help="disable optional Speckle runner even if installed")
+    parser.add_argument("--no-speckle", action="store_true", help="disable the Speckle runner")
+    parser.add_argument(
+        "--speckle-python",
+        default=str(DEFAULT_SPECKLE_PYTHON),
+        help="interpreter of the Speckle environment (specklepy[speckleifc] needs an older ifcopenshell)",
+    )
     parser.add_argument("--no-ifcgit", action="store_true", help="disable the IfcGit-port runner")
     args = parser.parse_args()
 
@@ -593,6 +598,7 @@ def main() -> int:
     tools = _tool_inventory(
         include_ifcfast=not args.no_ifcfast,
         include_speckle=not args.no_speckle,
+        speckle_python=Path(args.speckle_python),
         include_ifcgit=not args.no_ifcgit,
     )
     results = {
@@ -662,16 +668,9 @@ def main() -> int:
                 ),
             },
         }
-        if tools.get("ifcfast", {}).get("available"):
-            entry["runs"]["ifcfast"] = _repeat(lambda: _run_ifcfast(old_path, new_path, args.timeout_s), args.repeats)
-        if tools.get("speckle_local", {}).get("available"):
-            entry["runs"]["speckle_local"] = _repeat(
-                lambda: _run_json_runner(_SPECKLE_RUNNER, old_path, new_path, args.timeout_s), args.repeats
-            )
-        if tools.get("ifcgit_port", {}).get("available"):
-            entry["runs"]["ifcgit_port"] = _repeat(
-                lambda: _run_json_runner(_IFCGIT_RUNNER, old_path, new_path, args.timeout_s), args.repeats
-            )
+        entry["runs"].update(
+            _optional_runs(tools, old_path, new_path, Path(args.speckle_python), args.timeout_s, args.repeats)
+        )
         results["pairs"].append(entry)
         results["summary"].append(finish_pair(entry, expected))
         results["aggregates"] = aggregate_tools(results["summary"])
@@ -684,6 +683,19 @@ def main() -> int:
 
 def _repeat(fn: Callable[[], dict], repeats: int) -> dict:
     return combine_repeats([fn() for _ in range(repeats)])
+
+
+def _optional_runs(
+    tools: dict, old_path: str, new_path: str, speckle_python: Path, timeout_s: int, repeats: int
+) -> dict[str, dict]:
+    runs = {}
+    if "ifcfast" in tools:
+        runs["ifcfast"] = _repeat(lambda: _run_ifcfast(old_path, new_path, timeout_s), repeats)
+    if "speckle_digest" in tools:
+        runs["speckle_digest"] = _repeat(lambda: _run_speckle(speckle_python, old_path, new_path, timeout_s), repeats)
+    if tools.get("ifcgit_port", {}).get("available"):
+        runs["ifcgit_port"] = _repeat(lambda: _run_json_runner(_IFCGIT_RUNNER, old_path, new_path, timeout_s), repeats)
+    return runs
 
 
 def combine_repeats(runs: list[dict]) -> dict:
@@ -799,7 +811,7 @@ def _run_ifcdiff(
     relationships: str | None = None,
 ) -> dict:
     if importlib.util.find_spec("ifcdiff") is None:
-        return {"status": "not_installed", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
+        return {"status": "error", "error": "install benchmark extra: python -m pip install '.[benchmark]'"}
 
     output_path = workdir / "ifcdiff.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -842,10 +854,20 @@ def _run_ifcdiff(
 
 _SPECKLE_RUNNER = REPO_ROOT / "scripts" / "explore" / "speckle_diff_runner.py"
 _IFCGIT_RUNNER = REPO_ROOT / "scripts" / "explore" / "ifcgit_diff_runner.py"
+DEFAULT_SPECKLE_PYTHON = REPO_ROOT / ".athar-benchmark" / "speckle-venv" / "bin" / "python"
 
 
-def _run_json_runner(runner: Path, old_path: str, new_path: str, timeout_s: int) -> dict:
-    argv = [sys.executable, str(runner), old_path, new_path]
+def _run_speckle(python: Path, old_path: str, new_path: str, timeout_s: int) -> dict:
+    if not python.is_file():
+        return {
+            "status": "error",
+            "error": f"Speckle interpreter {python} not found; run make benchmark-setup",
+        }
+    return _run_json_runner(_SPECKLE_RUNNER, old_path, new_path, timeout_s, python=python)
+
+
+def _run_json_runner(runner: Path, old_path: str, new_path: str, timeout_s: int, *, python: Path | None = None) -> dict:
+    argv = [str(python or sys.executable), str(runner), old_path, new_path]
     start = time.perf_counter()
     completed = _run_subprocess(argv, timeout_s)
     seconds = round(time.perf_counter() - start, 3)
@@ -879,7 +901,7 @@ _IFCFAST_RUNNER = (
 
 def _run_ifcfast(old_path: str, new_path: str, timeout_s: int) -> dict:
     if importlib.util.find_spec("ifcfast") is None:
-        return {"status": "not_installed", "reason": "install benchmark extra: python -m pip install '.[benchmark]'"}
+        return {"status": "error", "error": "ifcfast is not installed: python -m pip install '.[benchmark]'"}
     argv = [sys.executable, "-c", _IFCFAST_RUNNER, old_path, new_path]
     start = time.perf_counter()
     completed = _run_subprocess(argv, timeout_s)
@@ -1020,8 +1042,6 @@ def finish_pair(entry: dict, expected: Expected | None) -> dict:
 
 def assess_run(name: str, run: dict, expected: Expected | None) -> str:
     status = run.get("status")
-    if status == "not_installed":
-        return "not_installed"
     if status in FAILED_STATUSES:
         return status
     if expected is None:
@@ -1077,8 +1097,6 @@ def score_pair(entry: dict, expected: Expected | None) -> dict[str, dict]:
     scores = {}
     for name, run in entry.get("runs", {}).items():
         status = run.get("status")
-        if status == "not_installed":
-            continue
         if status == "ok":
             if run.get("reported_guids") is None:
                 raise ValueError(f"{name}: completed run carries no reported_guids to score")
@@ -1115,6 +1133,8 @@ def _summary_row(entry: dict) -> dict:
             "gb_seconds_median": run.get("gb_seconds_median", run.get("gb_seconds")),
             "nondeterministic": "nondeterministic" in run,
         }
+        if run.get("error"):
+            row[name]["error"] = run["error"]
         score = scores.get(name)
         if score is not None:
             row[name]["changeset"] = {
@@ -1126,8 +1146,9 @@ def _summary_row(entry: dict) -> dict:
 def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
     """Per dataset and tool: coverage, correctness and changeset averages over the summary rows.
 
-    A pair counts as attempted for a tool unless the tool is not installed; an error or
-    timeout stays in every denominator (correctness, coverage, changeset average).
+    Every pair counts as attempted for a tool; an error or timeout (including a tool that
+    is not installed) stays in every denominator (correctness, coverage, changeset average),
+    and ``failure_reasons`` counts the distinct error messages of its failed pairs.
     Changeset scores are averaged both macro (mean of per-pair values) and micro (from
     TP/FP/FN summed over pairs). Time and memory are the geometric mean of per-pair
     ratios to ``TIMING_REFERENCE``, over pairs both completed.
@@ -1141,8 +1162,6 @@ def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
             if not isinstance(result, dict) or "status" not in result:
                 continue
             status = result["status"]
-            if status == "not_installed":
-                continue
             stats = out.setdefault(dataset, {}).setdefault(
                 tool,
                 {
@@ -1153,6 +1172,7 @@ def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
                     "expected": 0,
                     "unexpected": 0,
                     "nondeterministic": 0,
+                    "failure_reasons": {},
                     "_scores": [],
                     "_ratios": {metric: [] for metric in RATIO_METRICS},
                 },
@@ -1167,6 +1187,8 @@ def aggregate_tools(rows: list[dict]) -> dict[str, dict[str, dict]]:
                         values.append(mine / theirs)
             stats["completed"] += status in COMPLETED_STATUSES
             stats["failed"] += status in FAILED_STATUSES
+            if status in FAILED_STATUSES and result.get("error"):
+                stats["failure_reasons"][result["error"]] = stats["failure_reasons"].get(result["error"], 0) + 1
             assessment = row.get("assessment", {}).get(tool)
             if assessment in {"expected", "unexpected"} or (row.get("has_expectation") and status in FAILED_STATUSES):
                 stats["judged"] += 1
@@ -1208,7 +1230,9 @@ def _run_counts(run: dict) -> dict | None:
     return run.get("counts") or run.get("sections")
 
 
-def _tool_inventory(*, include_ifcfast: bool, include_speckle: bool = True, include_ifcgit: bool = True) -> dict:
+def _tool_inventory(
+    *, include_ifcfast: bool, speckle_python: Path, include_speckle: bool = True, include_ifcgit: bool = True
+) -> dict:
     tools = {
         "athar": {"status": "subprocess", "version": athar_engine.package_version()},
         "ifcopenshell": {"version": _package_version("ifcopenshell")},
@@ -1226,14 +1250,15 @@ def _tool_inventory(*, include_ifcfast: bool, include_speckle: bool = True, incl
             "notes": "Model.diff is GUID/product-table based; output normalized to added/deleted/modified counts.",
         }
     if include_speckle:
-        tools["speckle_local"] = {
+        tools["speckle_digest"] = {
             "runner": str(_SPECKLE_RUNNER.relative_to(REPO_ROOT)),
-            "available": importlib.util.find_spec("speckleifc") is not None,
-            "version": _package_version("specklepy"),
+            "available": speckle_python.is_file(),
+            "version": _interpreter_package_version(speckle_python, "specklepy"),
+            "ifcopenshell_version": _interpreter_package_version(speckle_python, "ifcopenshell"),
             "notes": (
                 "speckleifc (Speckle's production IFC importer, ships in specklepy) converts locally; "
-                "specklepy serializer computes object hashes; Speckle version-diff semantics "
-                "(applicationId=GlobalId correlation, hash equality) — no server involved."
+                "modified/unchanged is decided by an Athar-defined content digest over the Parquet bundle, "
+                "not by Speckle's own object IDs; applicationId=GlobalId correlation; no server involved."
             ),
         }
     if include_ifcgit:
@@ -1282,6 +1307,14 @@ def _package_version(package: str) -> str | None:
         return importlib.metadata.version(package)
     except importlib.metadata.PackageNotFoundError:
         return None
+
+
+def _interpreter_package_version(python: Path, package: str) -> str | None:
+    if not python.is_file():
+        return None
+    code = f"import importlib.metadata as m; print(m.version({package!r}))"
+    completed = subprocess.run([str(python), "-c", code], capture_output=True, text=True)
+    return completed.stdout.strip() if completed.returncode == 0 else None
 
 
 def _input_summary(path: str) -> dict:
